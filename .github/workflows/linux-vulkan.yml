@@ -64,6 +64,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           artifact-ids: ${{ needs.build.outputs.artifact-id }}
+          merge-multiple: true
       - name: Verify and extract the same-run build
         run: |
           sha256sum --check linux-runtime.tar.sha256
