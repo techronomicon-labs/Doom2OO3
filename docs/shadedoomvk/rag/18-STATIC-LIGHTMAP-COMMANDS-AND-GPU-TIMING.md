@@ -29,7 +29,7 @@ Command: `vktool lightmap build ... -sdvkobservegpu`. On the actual tool path, t
 
 PR #202 reports an earlier GTX 1650 SUPER **100 W** controlled fixture: 12-tile bake median **1.188 ms**; two six-tile invalidations **2.01 / 3.59 ms**; same-map reload **0.90 ms**; 60 probe intervals median **26.81 ms** (range 22.71–32.96). Raw local hardware logs are **not reviewer-accessible as GitHub artifacts** and these runs used an earlier runtime SHA, not the final correction. Do **not** recast these values as independently reproduced, full-frame GPU cost or broad representative measurements.
 
-[SDVK-014-GPU-TIMING-BOUNDARY.md](../SDVK-014-GPU-TIMING-BOUNDARY.md) explicitly records the owner's authorisation for the bounded measurement-enablement merge only. The **physical GPU STOP remains active** and no new physical trials, acceptance, hardware fault disposition or closing of #14 follow from these numbers.
+[SDVK-014-GPU-TIMING-BOUNDARY.md](../SDVK-014-GPU-TIMING-BOUNDARY.md) explicitly records the owner's authorisation for the bounded measurement-enablement merge only. That statement describes **the historical approval scope of PR #202**, not today's blanket GPU operating policy. The owner subsequently directed normal local use of available GPUs without per-run permission on 15 November; see [current workflow](../LOCAL-GPU-WORKFLOW-20261115.md). Those earlier numbers still do not establish physical acceptance, hardware fault resolution or closure of #14.
 
 ## Safety and follow-ons
 

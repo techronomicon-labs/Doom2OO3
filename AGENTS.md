@@ -126,6 +126,12 @@ No emergency cache flush may leave LevelMesh/material structures pointing at sta
 
 All fixed/reserved descriptor-range arithmetic must be bounds-checked against actual runtime/device capacity.
 
+### Current GPU workflow — owner direction of 15 November 2026
+
+On a machine equipped with an available GPU, **use that GPU as the normal development and evaluation path**. This authorises ordinary local rendering, gameplay, visual qualification, benchmarking and relevant hardware tests without asking for separate permission on every invocation. Do not impose generic launch blockers, CPU-only substitutes or print-only launchers. A playable evaluation build should exercise the mutually compatible implemented renderer features with meaningful quality defaults.
+
+Historical driver crashes remain real engineering evidence, **not a blanket prohibition**. Treat an identified crash-inducing stress case specifically: do not blindly repeat an unchanged fault or manipulate hardware power/firmware/driver state. Retain provenance and investigate failures without preventing unrelated ordinary GPU work. Current operational guidance: [LOCAL-GPU-WORKFLOW-20261115.md](docs/shadedoomvk/LOCAL-GPU-WORKFLOW-20261115.md).
+
 ## 11. Materials
 
 Treat material channels semantically. Albedo, normal, height, roughness, metallic, AO and emissive data may require different color spaces, sampling, mip and filtering behavior. Do not force all layers through the albedo sampler policy for convenience.

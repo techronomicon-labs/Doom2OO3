@@ -38,7 +38,7 @@
 
 **#199 — Reverse-portal tolerance:** Only a named oracle assertion changes, accepting float coefficient rounding for a specific authored receiver while preserving strict camera/identity and image/state controls. Not evidence of a portal renderer bugfix; no generic tolerance expansion. See [RAG 20](20-REVERSE-PORTAL-NUMERIC-REGRESSION.md).
 
-**#202 — GPU timing:** Adds `-sdvkobservegpu` on a Vulkan lightmap commandlet and guards query reset, nested timestamp capacity and unsupported-GPU messages. Historical reported bake/probe measurements use an earlier executable; their raw hardware artifacts are not GitHub reviewer-accessible and **must not** be transferred as independent exact-head physical acceptance. #14 and physical STOP remain open. See [RAG 18](18-STATIC-LIGHTMAP-COMMANDS-AND-GPU-TIMING.md).
+**#202 — GPU timing:** Adds `-sdvkobservegpu` on a Vulkan lightmap commandlet and guards query reset, nested timestamp capacity and unsupported-GPU messages. Historical reported bake/probe measurements use an earlier executable; their raw hardware artifacts are not GitHub reviewer-accessible and **must not** be transferred as independent exact-head physical acceptance. #14 remains open. The earlier STOP language is a historical state at the PR #202 decision; subsequent 15 November owner direction authorises ordinary GPU-equipped local work. See [RAG 18](18-STATIC-LIGHTMAP-COMMANDS-AND-GPU-TIMING.md).
 
 ## Review findings in priority order
 
@@ -50,6 +50,8 @@
 
 ## Adjacent but outside the closure window
 
-[PR #186](https://github.com/techrote/ShadeDoomVK/pull/186) (merged 7 November) supplies viewmodel lighting and gameplay-smoke foundations; read [SDVK-011](../SDVK-011-VIEWMODEL-LIGHTING.md). The owner-approved raster-first [campaign](https://github.com/techrote/ShadeDoomVK/blob/planning/lost-2003-remaster-20261114/docs/shadedoomvk/REMASTER-2003-CAMPAIGN.md) provides artistic direction; it does not grant GPU permission. [PR #210](https://github.com/techrote/ShadeDoomVK/pull/210), [#211](https://github.com/techrote/ShadeDoomVK/pull/211), and [#212](https://github.com/techrote/ShadeDoomVK/pull/212) were **open, not in the closed-PR set** at review.
+[PR #186](https://github.com/techrote/ShadeDoomVK/pull/186) (merged 7 November) supplies viewmodel lighting and gameplay-smoke foundations; read [SDVK-011](../SDVK-011-VIEWMODEL-LIGHTING.md). The owner-approved raster-first [campaign](https://github.com/techrote/ShadeDoomVK/blob/planning/lost-2003-remaster-20261114/docs/shadedoomvk/REMASTER-2003-CAMPAIGN.md) provides artistic direction; it did not itself grant GPU permission at the time. The owner subsequently made normal GPU-equipped local use an explicit standing default on 15 November; see [current workflow](../LOCAL-GPU-WORKFLOW-20261115.md). [PR #210](https://github.com/techrote/ShadeDoomVK/pull/210), [#211](https://github.com/techrote/ShadeDoomVK/pull/211), and [#212](https://github.com/techrote/ShadeDoomVK/pull/212) were **open, not in the closed-PR set** at review.
+
+**15 November owner operating decision:** For ordinary development/evaluation on a GPU-equipped system, GPU execution is expected and already authorised, not a separate STOP-gated ritual. Known fault-triggering stress scenarios remain individual engineering risks rather than a global ban. [Current workflow](../LOCAL-GPU-WORKFLOW-20261115.md).
 
 **Unchanged:** No PR was merged/closed/reopened by this documentation review. Master remains untouched pending an explicit future merge; this record and README live on a separate Draft documentation PR.
