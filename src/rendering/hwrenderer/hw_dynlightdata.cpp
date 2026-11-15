@@ -33,6 +33,10 @@
 #include "v_video.h"
 #include "hwrenderer/scene/hw_drawstructs.h"
 #include "g_levellocals.h"
+#include <array>
+#include <cmath>
+#include <cstdint>
+#include <limits>
 
 // If we want to share the array to avoid constant allocations it needs to be thread local unless it'd be littered with expensive synchronization.
 thread_local FDynLightData lightdata;
@@ -48,7 +52,98 @@ CVAR (Bool, gl_light_sprites, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
 CVAR (Bool, gl_light_particles, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
 
 CVAR (Bool, gl_light_shadow_nearest_dither, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
+// Opt-in during qualification; the owner-facing visual profile enables this.
+CVAR (Bool, gl_actor_light_shadows, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
 
+
+
+// The new actor blocker is a true light-to-receiver occluder, not a decal.
+// This geometric first slice deliberately has NO alpha silhouette claim.
+// Source alpha and frame mirroring must be qualified before visual acceptance.
+namespace
+{
+struct ActorShadowCacheEntry
+{
+	const FDynamicLight* light = nullptr;
+	const FLevelLocals* level = nullptr;
+	int group = 0;
+	uint64_t timestamp = 0;
+	int count = 0;
+	FActorShadowCaster casters[MaxActorShadowCastersPerLight] = {};
+};
+thread_local std::array<ActorShadowCacheEntry, 64> actorShadowCache;
+thread_local size_t actorShadowCacheNext = 0;
+
+void CollectActorShadowCasters(FDynLightInfo& info, FDynamicLight* light, int group)
+{
+	if (!gl_actor_light_shadows || !light || !light->Level || light->GetRadius() <= 0 ||
+		light->GetRadius() >= HWLightCompat::SunProxyRadius)
+		return;
+	const auto frameTimestamp = uint64_t(screen->FrameTime);
+	for (const auto& cached : actorShadowCache)
+	{
+		if (cached.light == light && cached.level == light->Level && cached.group == group &&
+			cached.timestamp == frameTimestamp)
+		{
+			info.actorShadowCount = cached.count;
+			for (int i = 0; i < cached.count; ++i) info.actorShadowCasters[i] = cached.casters[i];
+			return;
+		}
+	}
+
+	ActorShadowCacheEntry fresh;
+	fresh.light = light;
+	fresh.level = light->Level;
+	fresh.group = group;
+	fresh.timestamp = frameTimestamp;
+	float ranks[MaxActorShadowCastersPerLight];
+	for (float& rank : ranks) rank = std::numeric_limits<float>::infinity();
+	const DVector3 origin = light->PosRelative(group);
+	const float reach = float(light->GetRadius());
+	auto iter = light->Level->GetThinkerIterator<AActor>();
+	for (AActor* candidate = iter.Next(); candidate != nullptr; candidate = iter.Next())
+	{
+		if (candidate == light->target || !candidate->Sector ||
+			candidate->Sector->PortalGroup != group || !(candidate->flags & MF_SHOOTABLE))
+			continue;
+		const float radius = float(candidate->radius);
+		const float height = float(candidate->Height);
+		if (!std::isfinite(radius) || !std::isfinite(height) || radius <= 0.0f ||
+			height <= 0.0f || radius > 128.0f || height > 512.0f)
+			continue;
+		const DVector3 pos = candidate->PosRelative(group);
+		const float x = float(pos.X);
+		const float y = float(pos.Z) + height * 0.5f;
+		const float z = float(pos.Y);
+		const float dx = float(origin.X) - x;
+		const float dy = float(origin.Z) - y;
+		const float dz = float(origin.Y) - z;
+		const float dist2 = dx*dx + dy*dy + dz*dz;
+		const float range = reach + radius;
+		if (!(dist2 < range*range))
+			continue;
+		const FActorShadowCaster caster = { x, y, z, radius, float(pos.Z), float(pos.Z) + height, 0, 0 };
+		for (int i = 0; i < MaxActorShadowCastersPerLight; ++i)
+		{
+			if (dist2 < ranks[i])
+			{
+				for (int j = MaxActorShadowCastersPerLight - 1; j > i; --j)
+				{
+					ranks[j] = ranks[j - 1];
+					fresh.casters[j] = fresh.casters[j - 1];
+				}
+				ranks[i] = dist2;
+				fresh.casters[i] = caster;
+				if (fresh.count < MaxActorShadowCastersPerLight) ++fresh.count;
+				break;
+			}
+		}
+	}
+	actorShadowCache[actorShadowCacheNext++ % actorShadowCache.size()] = fresh;
+	info.actorShadowCount = fresh.count;
+	for (int i = 0; i < fresh.count; ++i) info.actorShadowCasters[i] = fresh.casters[i];
+}
+} // namespace
 
 //==========================================================================
 //
@@ -166,6 +261,7 @@ void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, bool f
 
 	info.strength = light->GetStrength();
 
+	CollectActorShadowCasters(info, light, group);
 	dld.arrays[i].Push(info);
 }
 

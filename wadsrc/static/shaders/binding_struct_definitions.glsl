@@ -153,6 +153,17 @@ struct Fogball
 #define LIGHTINFO_TRACE 8
 #define LIGHTINFO_SUN 16
 
+// std430 layout must match FActorShadowCaster in hw_dynlightdata.h.
+struct ActorShadowCaster
+{
+	vec3 center;
+	float radius;
+	float bottom;
+	float top;
+	float padding0;
+	float padding1;
+};
+
 struct DynLightInfo
 {
 	vec3 pos; float padding0;
@@ -166,6 +177,11 @@ struct DynLightInfo
 	float spotOuterAngle;
 	int shadowIndex;
 	int flags;
+	int actorShadowCount;
+	int actorShadowPad0;
+	int actorShadowPad1;
+	int actorShadowPad2;
+	ActorShadowCaster actorShadowCasters[4];
 };
 
 struct LightTileBlock

@@ -36,6 +36,16 @@ enum FDynLightInfoFlags
 	LIGHTINFO_SUN = 16,
 };
 
+// A bounded analytic actor occluder supplied to each packed dynamic light.
+// Coordinates use the renderer's x, height, y order. No sprite texture is
+// sampled and this first increment is NOT an alpha-silhouette shadow.
+constexpr int MaxActorShadowCastersPerLight = 4;
+struct FActorShadowCaster
+{
+	float x, y, z, radius;
+	float bottom, top, padding0, padding1;
+};
+
 struct FDynLightInfo
 {
 	float x;
@@ -58,7 +68,14 @@ struct FDynLightInfo
 	float spotOuterAngle;
 	int shadowIndex;
 	int flags; // 20
+	int actorShadowCount;
+	int actorShadowPad0;
+	int actorShadowPad1;
+	int actorShadowPad2; // 24
+	FActorShadowCaster actorShadowCasters[MaxActorShadowCastersPerLight]; // 56
 };
+static_assert(sizeof(FActorShadowCaster) == 32, "Actor shadow buffer ABI changed");
+static_assert(sizeof(FDynLightInfo) == 224, "Dynamic-light buffer ABI changed");
 
 enum FDynLightDataArrays
 {

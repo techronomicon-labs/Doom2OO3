@@ -1,6 +1,56 @@
 
 // Check if light is in shadow
 
+float ActorOccluderRayVisibility(vec3 lightPos, vec3 receiver, ActorShadowCaster caster)
+{
+	// Genuine line-of-light blocker. The blocker is bounded in height and
+	// must lie strictly between the actual emitting light and the fragment.
+	vec3 ray = receiver - lightPos;
+	vec2 d = ray.xz;
+	vec2 c = lightPos.xz - caster.center.xz;
+	float a = dot(d, d);
+	if (a <= 0.0001 || caster.radius <= 0.0 || caster.bottom >= caster.top)
+		return 1.0;
+	float halfB = dot(c, d);
+	float discriminant = halfB * halfB - a * (dot(c, c) - caster.radius * caster.radius);
+	if (discriminant <= 0.0)
+		return 1.0;
+	float root = sqrt(discriminant);
+	float entry = max((-halfB - root) / a, 0.002);
+	float exit = min((-halfB + root) / a, 0.998);
+	if (exit <= entry)
+		return 1.0;
+	// Do not shadow an actor's own material merely because its surface lies
+	// within this coarse geometric blocker; visible sprite shading stays intact.
+	vec2 receiverXY = receiver.xz - caster.center.xz;
+	if (dot(receiverXY, receiverXY) <= caster.radius * caster.radius &&
+		receiver.y >= caster.bottom && receiver.y <= caster.top)
+		return 1.0;
+	if (lightPos.y >= caster.bottom && lightPos.y <= caster.top &&
+		dot(c, c) <= caster.radius * caster.radius)
+		return 1.0;
+	float y0 = lightPos.y + ray.y * entry;
+	float y1 = lightPos.y + ray.y * exit;
+	if (max(y0, y1) <= caster.bottom || min(y0, y1) >= caster.top)
+		return 1.0;
+	return 0.0;
+}
+
+float ActorLightShadowVisibility(DynLightInfo light)
+{
+	if (light.actorShadowCount <= 0 || (light.flags & LIGHTINFO_SUN) != 0)
+		return 1.0;
+	int count = min(light.actorShadowCount, 4);
+	for (int i = 0; i < count; ++i)
+	{
+		if (ActorOccluderRayVisibility(light.pos.xyz, SDVK_LIGHTING_POSITION,
+			light.actorShadowCasters[i]) < 0.5)
+			return 0.0;
+	}
+	return 1.0;
+}
+
+
 #include <shaders/scene/light_trace.glsl> // needed always to do per-pixel tracing of lightmap lights for sprites
 
 
