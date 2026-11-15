@@ -51,6 +51,23 @@ class NativeActorShadowContracts(unittest.TestCase):
             else:
                 self.assertAlmostEqual(point[1], native_scene.WALL_Y)
 
+    def test_receiver_patch_excludes_foreground_card_with_pixel_margin(self):
+        for variant in ("base", "orbit"):
+            origin, yaw = native_scene.camera(variant)
+            for name, sample in native_scene.witnesses(variant).items():
+                if not name.startswith("sprite_"):
+                    self.assertTrue(native_scene.receiver_patch_is_clear(sample, origin, yaw), name)
+        # Retained native failure: the old left-side camera sampled the visible
+        # sprite at (370,331), not the intended floor behind it. The source and
+        # world receiver are unchanged; this camera must fail authoring checks.
+        old = dict(native_scene.witnesses()["floor_opaque"],
+                   pixel=[369.74181950256633, 330.69994281677447])
+        self.assertFalse(native_scene.receiver_patch_is_clear(old, (-64, -256, 96), 80))
+        # Its center ray clears the card, but the complete
+        # 3x3 pixel patch overlaps. A center-only visibility test is insufficient.
+        edge = dict(native_scene.witnesses()["floor_opaque"], pixel=[358, 335])
+        self.assertFalse(native_scene.receiver_patch_is_clear(edge, (0, -280, 96), 90))
+
     def test_animation_replaces_only_the_notch_and_uses_real_tic_pacing(self):
         members = native_scene.members(variant="animated")
         self.assertIn(b"SH02 A 10; SH02 B -1", members["ZSCRIPT"])

@@ -16,7 +16,7 @@ EXTENT = (640, 480)
 RED_LIGHT = (-144.0, -96.0, 96.0)
 BLUE_LIGHT = (256.0, 96.0, 128.0)
 CAMERA = (0.0, -256.0, 96.0)
-ORBIT_CAMERA = (-64.0, -256.0, 96.0)
+ORBIT_CAMERA = (64.0, -256.0, 96.0)
 WALL_Y = 160.0
 ACTOR_TID = 21502
 SOURCE_SIZE = (64, 96)
@@ -36,7 +36,7 @@ def opaque(x, y, *, solid=False):
 
 
 def camera(variant):
-    return (ORBIT_CAMERA, 80.0) if variant == "orbit" else (CAMERA, 90.0)
+    return (ORBIT_CAMERA, 100.0) if variant == "orbit" else (CAMERA, 90.0)
 
 
 def source_to_world(x, y, *, receiver, flip=False):
@@ -80,6 +80,43 @@ def project(point, *, variant="base", extent=EXTENT):
             extent[1] * 0.5 - dz * focal / depth)
 
 
+def receiver_patch_is_clear(sample, origin, yaw, *, extent=EXTENT):
+    """Conservatively exclude the foreground sprite from every sampled pixel.
+
+    With gl_billboard_faces_camera=false the actual visible card is parallel to
+    the view plane. Intersect the outer edges of the full 3x3 pixel patch with
+    that plane, then exclude its entire expanded source rectangle, including
+    transparent margins. No alpha hole is used to claim an unobstructed view.
+    """
+    angle = math.radians(yaw)
+    forward, right = (math.cos(angle), math.sin(angle)), (math.sin(angle), -math.cos(angle))
+    card_depth = -sum(origin[i] * forward[i] for i in range(2))
+    if card_depth <= 0:
+        return True
+    cx, cy = (round(value) for value in sample["pixel"])
+    half, focal = sample["half_extent"], extent[0] * 0.5
+    floor = abs(sample["world"][2]) < 0.000001
+    if not floor and abs(sample["world"][1] - WALL_Y) >= 0.000001:
+        raise ValueError("Receiver witness does not lie on the authored floor or wall")
+    sides, heights, receiver_depths = [], [], []
+    for x in (cx - half, cx + half + 1):
+        for y in (cy - half, cy + half + 1):
+            u, v = (x - extent[0] * 0.5) / focal, (extent[1] * 0.5 - y) / focal
+            ray = (forward[0] + right[0] * u, forward[1] + right[1] * u, v)
+            depth = -origin[2] / ray[2] if floor else (WALL_Y - origin[1]) / ray[1]
+            if depth <= 0:
+                raise ValueError("Receiver patch is behind the camera")
+            receiver_depths.append(depth)
+            hit = tuple(origin[i] + card_depth * ray[i] for i in range(3))
+            sides.append(sum(hit[i] * right[i] for i in range(2)))
+            heights.append(hit[2])
+    if max(receiver_depths) <= card_depth:
+        return True
+    # Original 64x96 pixels, offset (32,96), plus the rendering expansion.
+    return (max(sides) < -33 or min(sides) > 33
+            or max(heights) < -1 or min(heights) > 97)
+
+
 def witnesses(variant="base"):
     samples = {}
     for receiver, label, xy in (
@@ -90,10 +127,13 @@ def witnesses(variant="base"):
         world = source_to_world(*xy, receiver=receiver)
         samples[f"{receiver}_{label}"] = {"source_xy": list(xy), "world": list(world),
             "pixel": list(project(world, variant=variant)), "half_extent": 1}
+    origin, yaw = camera(variant)
+    for label, sample in samples.items():
+        if not receiver_patch_is_clear(sample, origin, yaw):
+            raise ValueError("Foreground sprite occludes receiver witness: " + label)
     # Visible source sprite control: this mid-height opaque strip is clear of
     # both holes and must not darken itself when its own caster is enabled.
-    origin, _ = camera(variant)
-    facing = math.atan2(-origin[1], -origin[0])
+    facing = math.radians(yaw)
     right = (math.sin(facing), -math.cos(facing))
     for label, horizontal in (("left", -20.0), ("middle", 0.0), ("right", 20.0)):
         world = (horizontal * right[0], horizontal * right[1], 42.0)
@@ -110,6 +150,7 @@ def settings(enabled):
         "gl_levelmesh": False, "lm_dynlights": False, "vk_rayquery": False,
         "gl_lightprobe": False, "gl_lights": True, "gl_light_sprites": True,
         "gl_spritelight": 2, "gl_light_shadows": 0,
+        "gl_billboard_mode": 0, "gl_billboard_faces_camera": False,
         "gl_actor_light_shadows": bool(enabled), "gl_customshader": True,
         "gl_bloom": False, "gl_ssao": 0, "gl_tonemap": 0, "gl_fxaa": 0,
         "gl_lens": False, "gl_multisample": 0, "gl_texture_filter": 0,
