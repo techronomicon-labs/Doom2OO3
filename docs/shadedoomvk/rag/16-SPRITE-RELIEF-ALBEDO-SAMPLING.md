@@ -35,4 +35,4 @@ The PR records 93 MSVC-focused CPU/source tests and GLSL→SPIR-V compilation/va
 
 **Do not infer:** all sprite relief variants accepted, authorable height maps in the #190 add-ons, POM active by default, profile-wide performance approval, or elimination of separate driver-risk gates.
 
-Cross-references: [material contract](04-MATERIAL-SHADER-CONTRACT.md), [known traps](10-KNOWN-TRAPS-DORMANT-PATHS.md), [campaign art rules](../REMASTER-2003-CAMPAIGN.md).
+Cross-references: [material contract](04-MATERIAL-SHADER-CONTRACT.md), [known traps](10-KNOWN-TRAPS-DORMANT-PATHS.md), [campaign art rules](https://github.com/techrote/ShadeDoomVK/blob/planning/lost-2003-remaster-20261114/docs/shadedoomvk/REMASTER-2003-CAMPAIGN.md).

@@ -31,4 +31,4 @@ PR #193 also reports CPU `RenderView` medians (0.140, 0.252, 0.513, 0.497 ms acr
 
 **Status truth:** shader optimisation and measurement harness are **merged**; general many-light throughput, PBR path optimisation, physical stability, shadow-on scaling and the 1,025-light driver-timeout root cause remain **unaccepted/held**. Keep the physical STOP and original failed packets intact. Avoid defaulting an untested many-light stress case into a user-facing/nightly playtest.
 
-Cross-references: [lighting truth table](05-LIGHTING-SHADOW-TRUTH-TABLE.md), [historical shadow-off protocol](../SDVK-009-SHADOWOFF-SCALING.md), [campaign goal](../REMASTER-2003-CAMPAIGN.md).
+Cross-references: [lighting truth table](05-LIGHTING-SHADOW-TRUTH-TABLE.md), [historical shadow-off protocol](../SDVK-009-SHADOWOFF-SCALING.md), [campaign goal](https://github.com/techrote/ShadeDoomVK/blob/planning/lost-2003-remaster-20261114/docs/shadedoomvk/REMASTER-2003-CAMPAIGN.md).
