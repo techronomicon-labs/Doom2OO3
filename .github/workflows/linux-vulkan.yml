@@ -1,0 +1,120 @@
+name: Linux Vulkan
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: Build Linux runtime
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    outputs:
+      artifact-id: ${{ steps.runtime.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y libsdl2-dev libvpx-dev libgtk-3-dev libwebp-dev libdbus-1-dev libbz2-dev libx11-dev
+          python3 tools/fetch_build_deps.py --platform linux --output build/deps
+      - name: Build once and package the source-matched runtime
+        run: |
+          cmake -S . -B build/linux -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_PREFIX_PATH="$PWD/build/deps/zmusic" -DPK3_QUIET_ZIPDIR=ON
+          cmake --build build/linux --parallel 4
+          mkdir -p runtime/lib
+          cp build/linux/{vkdoom,vkdoom.pk3,game_support.pk3,lights.pk3,brightmaps.pk3,game_widescreen_gfx.pk3} runtime/
+          cp build/deps/zmusic/lib/libzmusic*.so* runtime/lib/
+          strip --strip-debug runtime/vkdoom
+          git rev-parse HEAD > runtime/source-sha
+          test "$(cat runtime/source-sha)" = "$GITHUB_SHA"
+          tar -cf linux-runtime.tar -C runtime .
+          sha256sum linux-runtime.tar > linux-runtime.tar.sha256
+      - uses: actions/upload-artifact@v4
+        id: runtime
+        with:
+          name: linux-runtime-${{ github.run_attempt }}
+          path: |
+            linux-runtime.tar
+            linux-runtime.tar.sha256
+          if-no-files-found: error
+          retention-days: 3
+
+  vulkan:
+    name: Vulkan smoke (${{ matrix.map }})
+    needs: build
+    runs-on:
+      group: 8core
+      labels: ubuntu-latest-m
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        map: [MAP01, MAP02]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact-id }}
+          merge-multiple: true
+      - name: Verify and extract the same-run build
+        run: |
+          sha256sum --check linux-runtime.tar.sha256
+          mkdir runtime
+          tar -xf linux-runtime.tar -C runtime
+          test "$(cat runtime/source-sha)" = "$GITHUB_SHA"
+      - name: Install software Vulkan and free fixture content
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y mesa-vulkan-drivers libsdl2-2.0-0 libvpx9 libgtk-3-0t64 libwebp7 xvfb xauth freedoom python3-pil
+      - name: Render Freedoom on llvmpipe
+        env:
+          SMOKE_MAP: ${{ matrix.map }}
+        run: |
+          mkdir evidence
+          printf '[GlobalSettings]\nvk_rayquery=false\n' > evidence/smoke.ini
+          shopt -s nullglob
+          icds=(/usr/share/vulkan/icd.d/lvp_icd*.json)
+          test "${#icds[@]}" -eq 1
+          export VK_DRIVER_FILES="${icds[0]}"
+          export LD_LIBRARY_PATH="$PWD/runtime/lib"
+          nproc
+          free -m
+          xvfb-run -a -s '-screen 0 640x480x24 -nolisten tcp' timeout --kill-after=5s 120s \
+            ./runtime/vkdoom -iwad /usr/share/games/doom/freedoom2.wad \
+            -stdout -nostartup -noautoload -noautoexec -nosound -nojoy -rngseed 2002 \
+            -window -width 640 -height 480 -config "$PWD/evidence/smoke.ini" \
+            -sdvkobserve "$PWD/evidence/smoke" -sdvkobservemode state \
+            -sdvkobservewarmup 4 -sdvkobserveframes 2 -sdvkobservequit \
+            +vid_rendermode 4 \
+            +gl_light_shadows 0 +gl_levelmesh false +map "$SMOKE_MAP" \
+            > evidence/engine.log 2>&1
+          /usr/bin/python3 tools/ci/check_vulkan_smoke.py evidence "$SMOKE_MAP" "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vulkan-${{ matrix.map }}-${{ github.run_attempt }}
+          path: evidence/
+          retention-days: 5
+
+  result:
+    name: Linux Vulkan result
+    needs: [build, vulkan]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require the producer and both smoke jobs
+        env:
+          BUILD: ${{ needs.build.result }}
+          VULKAN: ${{ needs.vulkan.result }}
+        run: |
+          printf 'Linux build: %s\n\nVulkan matrix: %s\n' "$BUILD" "$VULKAN" >> "$GITHUB_STEP_SUMMARY"
+          test "$BUILD" = success && test "$VULKAN" = success
