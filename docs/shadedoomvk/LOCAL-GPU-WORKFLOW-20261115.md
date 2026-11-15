@@ -1,15 +1,23 @@
-# ShadeDoomVK: Local GPU development is the default
+# ShadeDoomVK — hosted software Vulkan and local GPU evaluation
 
-**Owner direction: 15 November 2026. Current operational guidance for project work on GPU-equipped computers.**
+**Owner clarification, 15 November 2026.** There are two normal, complementary execution environments. Do not confuse them or require either to imitate the other.
 
-**Intent:** If a ShadeDoomVK development or evaluation task is executed on a machine with a usable GPU, **use that GPU** for rendering, visual iteration, playable test builds, feature integration, performance profiling and relevant validation. This is standing owner authorisation for ordinary project GPU work; **do not request a fresh, ceremonial permission for each run**.
+## 1. Assistant and CI: software Vulkan is normal
 
-- Real native rendering and an interactive, playable build are the expected default. Do not ship a launcher that only *prints* a command, disables input/audio or quietly disables supported visual features and call it a graphics evaluation.
-- Nightly/evaluation handoffs should exercise the fullest mutually compatible implemented feature set, with practical quality defaults and simple toggles. Generate/load user-owned PBR assets locally, include local-light add-ons, preserve movement/HUD, and clearly describe any missing or incompatible effect. Diagnostic capture fixtures must be separate.
-- GPU-equipped local runners should use hardware for the tests they exist to perform; software Vulkan is useful as additional portable CI coverage, **not a compulsory substitute** for real-GPU verification.
-- Keep useful build, driver, feature and artifact provenance and report real crashes/failed checks. **A known repeatable driver-timeout or destructive stress reproducer is a *specific* engineering hazard**: do not blindly loop the same failure or alter hardware firmware/power settings without direction. Investigate that scenario with proportionate precautions, rather than declaring all GPU work forbidden.
-- Historical GPU STOP / supervisor documents remain **unaltered records of their original dates and incidents**. They do not impose a general GPU ban on current ordinary owner-authorised local tasks. No historical failed attempt is changed into PASS; an ordinary GPU run alone still does not prove general hardware stability.
+Autonomous implementation, regression testing, reproduction, instrumentation and visual capture on **CPU-only VPS / GitHub-hosted runners** should continue with **lavapipe/llvmpipe software Vulkan**, ordinary CPU fixtures and other available tools. These environments do not need a discrete GPU to be useful. No blanket obligation to obtain physical hardware, no suppression of software Vulkan and no demand to run every developer check locally.
 
-This operational direction supersedes earlier blanket *permission* interpretations for current work. It does **not** retroactively change historical data, merge any pending PR, or waive meaningful technical acceptance tests.
+Hosted software-Vulkan qualification may prove that particular shader/render paths actually executed and emitted valid frames, state and resources. **Do not label it a physical GPU benchmark**, hardware driver-stability demonstration, Windows input playtest or user acceptance.
 
-Context: [AGENTS.md](../../AGENTS.md), [RAG index](rag/README.md), [owner-approved visual campaign](https://github.com/techrote/ShadeDoomVK/blob/planning/lost-2003-remaster-20261114/docs/shadedoomvk/REMASTER-2003-CAMPAIGN.md), [historical #202 measurement boundary](SDVK-014-GPU-TIMING-BOUNDARY.md).
+## 2. Owner's local Windows machine: use the actual GPU
+
+When the owner runs a ShadeDoomVK development task or evaluation build on their GPU-equipped computer, **real GPU rendering is the entire point**. It is normal and intended, not a separately authorised exception. Do not install generic launch blockers, force software rendering, ship print-only commands, disable control/audio/HUD, or suppress implemented visual features just to meet a historic testing ritual.
+
+A user-facing development build should launch normally with the **mutually compatible implemented visual features enabled and deliberately tuned**, with PBR layers generated from user-owned IWADs, dynamic lighting/flashlight present, correct gameplay input and explicit optional-effect switches. Distinguish the integrated playtest from synthetic screenshot fixtures and report any unavailable, unmerged or content-dependent features plainly.
+
+## 3. Preserve useful technical caution without a blanket STOP
+
+Historical driver errors are evidence about specific workloads, not a general prohibition on local GPU use. If a **particular reproducible heavy stress test** caused a device timeout, avoid blindly looping it unchanged; keep the fault details, select an informative bounded investigation and do not change firmware, drivers or power settings without direction. Ordinary gameplay, native evaluation, visual tuning and relevant GPU profiling are not thereby forbidden.
+
+Existing dated supervisor/physical-test documents retain their exact historical meaning and their failures remain failures. No new run is automatically proof of long-term stability or representative performance. This guidance does not merge pending PRs or rewrite earlier evidence.
+
+Related: [AGENTS.md](../../AGENTS.md), [renderer RAG index](rag/README.md), [Lost 2003 campaign](https://github.com/techrote/ShadeDoomVK/blob/planning/lost-2003-remaster-20261114/docs/shadedoomvk/REMASTER-2003-CAMPAIGN.md).

@@ -128,7 +128,7 @@ All fixed/reserved descriptor-range arithmetic must be bounds-checked against ac
 
 ### Current GPU workflow — owner direction of 15 November 2026
 
-On a machine equipped with an available GPU, **use that GPU as the normal development and evaluation path**. This authorises ordinary local rendering, gameplay, visual qualification, benchmarking and relevant hardware tests without asking for separate permission on every invocation. Do not impose generic launch blockers, CPU-only substitutes or print-only launchers. A playable evaluation build should exercise the mutually compatible implemented renderer features with meaningful quality defaults.
+**Two complementary execution paths are expected:** assistants and GitHub/CPU-only hosted runners routinely develop and qualify with software Vulkan (lavapipe/llvmpipe) and CPU fixtures; the owner runs real-GPU visual evaluation and gameplay on their own GPU-equipped Windows machine. **Neither path replaces the other.** Do not require a GPU for the hosted software-rendering workflow or restrict ordinary local GPU use. Never ship print-only launchers or controls-disabled capture fixtures as owner-facing gameplay builds. An integrated owner evaluation should exercise mutually compatible implemented visual features with meaningful quality defaults.
 
 Historical driver crashes remain real engineering evidence, **not a blanket prohibition**. Treat an identified crash-inducing stress case specifically: do not blindly repeat an unchanged fault or manipulate hardware power/firmware/driver state. Retain provenance and investigate failures without preventing unrelated ordinary GPU work. Current operational guidance: [LOCAL-GPU-WORKFLOW-20261115.md](docs/shadedoomvk/LOCAL-GPU-WORKFLOW-20261115.md).
 

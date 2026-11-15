@@ -45,7 +45,7 @@
 - **fallback:** deliberate compatibility route for missing, unsupported or disabled conditions.
 - **dormant:** scaffolding exists but production does not use it.
 - **proposed/unmerged:** owner-approved plan or candidate in separate PR, **not master**.
-- **current GPU workflow:** use a GPU-equipped host's GPU for normal project rendering, gameplay, quality evaluation and profiling without per-run permission; a historical fault record is not a general ban. See [15 November owner direction](../LOCAL-GPU-WORKFLOW-20261115.md).
+- **two normal execution environments:** CPU-only hosted assistants/GitHub CI use software Vulkan (lavapipe/llvmpipe); the owner plays and evaluates on actual Windows GPU hardware. Neither path is a substitute for the other, and ordinary local GPU use needs no ceremonial permission. See [15 November owner clarification](../LOCAL-GPU-WORKFLOW-20261115.md).
 - **historical GPU fault record:** evidence of a prior specific incident, not a reclassification of today's ordinary GPU work.
 
 ## Editorial and maintenance rules
