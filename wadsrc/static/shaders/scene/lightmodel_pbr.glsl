@@ -89,7 +89,7 @@ vec3 ProcessLight(const DynLightInfo light, vec3 albedo, float metallic, float r
 		
 		// cook-torrance brdf
 		float NDF = DistributionGGX(N, H, roughness);
-		float G = GeometrySmith(N, V, L, roughness);
+		float G = GeometrySmith(N, viewDir, L, roughness);
 		vec3 F = fresnelSchlick(clamp(dot(H, viewDir), 0.0, 1.0), F0);
 		
 		vec3 kS = F;
