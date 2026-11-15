@@ -87,9 +87,8 @@ def prepare(out, mode):
         target = "flat" if kind == "tile" else "texture"
         declarations.append(f'material {target} {name} {{ {" ".join(layers)} }}')
     members["gldefs"] = "\n".join(declarations).encode()
-    actors = ['version "4.10"']
-    mapinfo = ['DoomEdNums { 17001 = VPFrontLight 17002 = VPGrazingLight }']
-    for index, (map_name, camera, light) in enumerate(SCENES.values()):
+    mapinfo = []
+    for map_name, camera, light in SCENES.values():
         mapinfo.append(f'map {map_name} "{map_name}" {{ next = "{map_name}" }}')
         room = Map()
         sector = room.sector(ft="VPTILE", light=80)
@@ -103,22 +102,10 @@ def prepare(out, mode):
         x, y, yaw = camera
         room.thing(1, x, y, angle=yaw)
         x, y, z, yaw, pitch = light
-        room.thing(17001 if index == 0 else 17002, x, y, z, angle=yaw)
+        room.thing(9840, x, y, z, angle=yaw, pitch=pitch, arg0=0xFFF0D8,
+                   arg1=18, arg2=35, arg3=150, light_noshadowmap=True)
         members[f"maps/{map_name}.wad"] = wad(map_name, room.text())
-        if index < 2:
-            cls = ("VPFrontLight", "VPGrazingLight")[index]
-            actors.append(f"""class {cls} : SpotLight {{
-                Default {{
-                    Args 255, 240, 216, 150;
-                    DynamicLight.SpotInnerAngle 18;
-                    DynamicLight.SpotOuterAngle 35;
-                    +DYNAMICLIGHT.NOSHADOWMAP
-                }}
-                override void PostBeginPlay() {{ Super.PostBeginPlay(); Pitch = {pitch}; }}
-                States {{ Spawn: TNT1 A -1; Stop; }}
-            }}""")
     members["mapinfo"] = "\n".join(mapinfo).encode()
-    members["zscript"] = "\n".join(actors).encode()
     package = out / f"{mode}.pk3"
     with ZipFile(package, "w") as archive:
         for name, data in sorted(members.items()):
