@@ -191,7 +191,7 @@ public:
     }
 private:
     struct Row { std::string Kind; uint64_t Frame, Count; std::string Data; };
-    bool Reject(const char* reason) { Error = reason; ++Dropped; return false; }
+    bool Reject(const std::string& reason) { Error = reason; ++Dropped; return false; }
     mutable std::mutex Mutex;
     std::vector<Row> Rows;
     size_t MaxRecords, MaxBytes, Bytes = 0;
