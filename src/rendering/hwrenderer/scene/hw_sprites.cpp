@@ -159,6 +159,19 @@ struct HWProjectedSpriteShadow
 	float strength;
 };
 
+static bool HasOrdinarySpriteShadowReceiver(sector_t* sourceSector, sector_t* renderSector)
+{
+	// PORTS_SKYVIEWPOINT is also the ordinary sector's default portal type.
+	// PortalBlocksView is NOT a generic "this floor is solid" query: it
+	// returns false for every non-linked portal, including an ordinary floor.
+	return !sourceSector->floorplane.isSlope() && !sourceSector->GetHeightSec() &&
+		sourceSector->e->XFloor.ffloors.Size() == 0 &&
+		sourceSector->GetPortalType(sector_t::floor) == PORTS_SKYVIEWPOINT &&
+		sourceSector->GetAlpha(sector_t::floor) >= 1 && sourceSector->GetReflect(sector_t::floor) <= 0 &&
+		sourceSector->GetTexture(sector_t::floor) != skyflatnum &&
+		renderSector->floorplane.D == sourceSector->floorplane.D;
+}
+
 // Returns false only to request the untouched inherited grounding fallback.
 // No actor/light pointers or portal state are retained beyond this frame.
 bool HWSprite::ProjectSpriteShadow(HWDrawInfo* di, AActor* thing, sector_t* sector, int thruportal,
@@ -182,11 +195,7 @@ bool HWSprite::ProjectSpriteShadow(HWDrawInfo* di, AActor* thing, sector_t* sect
 		thing->RenderStyle != DefaultRenderStyle() || thing->InterpolatedAlpha(di->Viewpoint.TicFrac) < .999 ||
 		!V_IsTrueColor() || scale.X <= 0 || scale.Y <= 0 ||
 		!std::isfinite(scale.X) || !std::isfinite(scale.Y)) return fallback("unsupported-caster");
-	if (sourceSector->floorplane.isSlope() || sourceSector->GetHeightSec() ||
-		sourceSector->e->XFloor.ffloors.Size() || !sourceSector->PortalBlocksView(sector_t::floor) ||
-		sourceSector->GetAlpha(sector_t::floor) < 1 || sourceSector->GetReflect(sector_t::floor) > 0 ||
-		sourceSector->GetTexture(sector_t::floor) == skyflatnum ||
-		sector->floorplane.D != sourceSector->floorplane.D) return fallback("unsupported-receiver");
+	if (!HasOrdinarySpriteShadowReceiver(sourceSector, sector)) return fallback("unsupported-receiver");
 	if (!di->Level->levelMesh || !thing->section) return fallback("world-occlusion-unavailable");
 	if (di->projectedShadowCount.load(std::memory_order_relaxed) >= 8) return fallback("caster-budget");
 

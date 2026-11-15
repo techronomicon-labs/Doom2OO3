@@ -20,6 +20,64 @@ class SpriteShadowProjectionTests(unittest.TestCase):
         run_fixture("tools/pf_oracle/tests/sprite_shadow_projection_fixture.cpp", root=ROOT,
                     includes=("src/rendering/hwrenderer/scene", "src/common/textures"))
 
+    def test_production_receiver_guard_accepts_ordinary_floor_and_rejects_portals(self):
+        """Regression for native 750eaa94: ordinary floors were all rejected.
+
+        Compile both the actual sector query and the actual replacement guard
+        with minimal sector storage; no hand-copied eligibility expression.
+        """
+        source = (ROOT / "src/rendering/hwrenderer/scene/hw_sprites.cpp").read_text()
+        guard = block(source, "static bool HasOrdinarySpriteShadowReceiver(")
+        old_query = block((ROOT / "src/g_levellocals.h").read_text(), "inline bool sector_t::PortalBlocksView(")
+        code = r'''
+#include <cassert>
+enum { PORTS_SKYVIEWPOINT, PORTS_STACKEDSECTORTHING, PORTS_PORTAL,
+       PORTS_LINKEDPORTAL, PORTS_PLANE, PORTS_HORIZON };
+enum { PLANEF_NORENDER = 1, PLANEF_DISABLED = 2, PLANEF_OBSTRUCTED = 4 };
+constexpr int skyflatnum = -1;
+struct sector_t {
+    enum { floor, ceiling };
+    struct { bool slope = false; double D = 0; bool isSlope() const { return slope; } } floorplane;
+    struct { int Flags = 0; } planes[2];
+    struct Extra { struct { struct { unsigned count = 0; unsigned Size() const { return count; } } ffloors; } XFloor; } extra;
+    Extra* e = &extra;
+    int portal = PORTS_SKYVIEWPOINT, texture = 1;
+    double alpha = 1, reflect = 0;
+    bool fakeHeight = false;
+    sector_t* GetHeightSec() { return fakeHeight ? this : nullptr; }
+    int GetPortalType(int) const { return portal; }
+    double GetAlpha(int) const { return alpha; }
+    double GetReflect(int) const { return reflect; }
+    int GetTexture(int) const { return texture; }
+    bool PortalBlocksView(int plane);
+};
+''' + old_query + "\n" + guard + r'''
+int main() {
+    sector_t floor, rendered;
+    // The inherited query is false on ordinary floors. Negating it in a
+    // rejection guard was the native failure; do not change its semantics.
+    assert(!floor.PortalBlocksView(sector_t::floor));
+    assert(HasOrdinarySpriteShadowReceiver(&floor, &rendered));
+    for (int portal = PORTS_STACKEDSECTORTHING; portal <= PORTS_HORIZON; ++portal) {
+        floor.portal = portal;
+        assert(!HasOrdinarySpriteShadowReceiver(&floor, &rendered));
+    }
+    floor.portal = PORTS_SKYVIEWPOINT;
+    floor.texture = skyflatnum; assert(!HasOrdinarySpriteShadowReceiver(&floor, &rendered)); floor.texture = 1;
+    floor.floorplane.slope = true; assert(!HasOrdinarySpriteShadowReceiver(&floor, &rendered)); floor.floorplane.slope = false;
+    floor.fakeHeight = true; assert(!HasOrdinarySpriteShadowReceiver(&floor, &rendered)); floor.fakeHeight = false;
+    floor.extra.XFloor.ffloors.count = 1; assert(!HasOrdinarySpriteShadowReceiver(&floor, &rendered)); floor.extra.XFloor.ffloors.count = 0;
+    floor.alpha = .5; assert(!HasOrdinarySpriteShadowReceiver(&floor, &rendered)); floor.alpha = 1;
+    floor.reflect = .5; assert(!HasOrdinarySpriteShadowReceiver(&floor, &rendered)); floor.reflect = 0;
+    rendered.floorplane.D = 1; assert(!HasOrdinarySpriteShadowReceiver(&floor, &rendered));
+}
+'''
+        with tempfile.TemporaryDirectory(prefix="shadow001-receiver-") as temporary:
+            program = Path(temporary) / "receiver.cpp"
+            program.write_text(code)
+            executable = compile_fixture(program, output_dir=temporary, root=ROOT)
+            subprocess.run([str(executable)], check=True, timeout=30)
+
     def test_actual_trace_range_rejects_near_endpoint_occluder(self):
         """Compile the production Trace body, not a second range formula.
 
