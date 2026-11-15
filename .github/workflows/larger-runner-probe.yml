@@ -1,0 +1,24 @@
+name: Larger runner connection probe
+on:
+  push:
+    branches: [ci/8core-connection-probe]
+permissions: {}
+jobs:
+  linux:
+    runs-on:
+      group: 8core
+      labels: ubuntu-latest-m
+    timeout-minutes: 2
+    steps:
+      - run: |
+          nproc
+          free -m
+  windows:
+    runs-on:
+      group: 8core
+      labels: windows-latest-l
+    timeout-minutes: 2
+    steps:
+      - shell: pwsh
+        run: |
+          Get-CimInstance Win32_ComputerSystem | Format-List NumberOfLogicalProcessors,TotalPhysicalMemory
