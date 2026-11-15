@@ -78,6 +78,50 @@ int main() {
             executable = compile_fixture(program, output_dir=temporary, root=ROOT)
             subprocess.run([str(executable)], check=True, timeout=30)
 
+    def test_production_subsector_guard_accepts_one_sided_room_and_rejects_hacks(self):
+        """Native b46807a8 failure: a normal boundary carries hacked bit 2."""
+        source = (ROOT / "src/rendering/hwrenderer/scene/hw_sprites.cpp").read_text()
+        guard = block(source, "static bool HasOrdinarySpriteShadowSubsector(")
+        code = r'''
+#include <cassert>
+#include "hw_sprite_shadow_math.h"
+struct sector_t {};
+struct subsector_t {
+    sector_t* sector;
+    sector_t* render_sector;
+    void* polys = nullptr;
+    char hacked = 0;
+    unsigned numlines = 4;
+};
+''' + guard + r'''
+int main() {
+    sector_t sector, other;
+    subsector_t room{&sector, &sector};
+    assert(HasOrdinarySpriteShadowSubsector(&room, &sector));
+    // PrepareSectorData marks a one-sided wall with 2, not a render hack.
+    room.hacked = 2;
+    assert(HasOrdinarySpriteShadowSubsector(&room, &sector));
+    for (int flags : {1, 3, 4, 5, 6, 7, 8}) {
+        room.hacked = flags;
+        assert(!HasOrdinarySpriteShadowSubsector(&room, &sector));
+    }
+    room.hacked = 2;
+    assert(!HasOrdinarySpriteShadowSubsector(nullptr, &sector));
+    room.sector = &other; assert(!HasOrdinarySpriteShadowSubsector(&room, &sector)); room.sector = &sector;
+    room.render_sector = &other; assert(!HasOrdinarySpriteShadowSubsector(&room, &sector)); room.render_sector = &sector;
+    room.polys = &sector; assert(!HasOrdinarySpriteShadowSubsector(&room, &sector)); room.polys = nullptr;
+    room.numlines = 2; assert(!HasOrdinarySpriteShadowSubsector(&room, &sector));
+    room.numlines = HWSpriteShadow::MaxReceiverEdges + 1; assert(!HasOrdinarySpriteShadowSubsector(&room, &sector));
+    room.numlines = HWSpriteShadow::MaxReceiverEdges; assert(HasOrdinarySpriteShadowSubsector(&room, &sector));
+}
+'''
+        with tempfile.TemporaryDirectory(prefix="shadow001-subsector-") as temporary:
+            program = Path(temporary) / "subsector.cpp"
+            program.write_text(code)
+            executable = compile_fixture(program, output_dir=temporary, root=ROOT,
+                                         includes=("src/rendering/hwrenderer/scene",))
+            subprocess.run([str(executable)], check=True, timeout=30)
+
     def test_actual_trace_range_rejects_near_endpoint_occluder(self):
         """Compile the production Trace body, not a second range formula.
 

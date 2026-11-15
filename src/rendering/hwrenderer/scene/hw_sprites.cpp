@@ -172,6 +172,15 @@ static bool HasOrdinarySpriteShadowReceiver(sector_t* sourceSector, sector_t* re
 		renderSector->floorplane.D == sourceSector->floorplane.D;
 }
 
+static bool HasOrdinarySpriteShadowSubsector(subsector_t* sub, sector_t* sourceSector)
+{
+	// "hacked" is a bitmask: bit 2 means a normal one-sided boundary wall,
+	// set by PrepareSectorData even for a plain closed room. Only that bit is
+	// allowed; actual rendering-hack bits (1 and 4) remain unsupported.
+	return sub && sub->sector == sourceSector && sub->render_sector == sourceSector && !sub->polys &&
+		!(sub->hacked & ~2) && sub->numlines >= 3 && sub->numlines <= HWSpriteShadow::MaxReceiverEdges;
+}
+
 // Returns false only to request the untouched inherited grounding fallback.
 // No actor/light pointers or portal state are retained beyond this frame.
 bool HWSprite::ProjectSpriteShadow(HWDrawInfo* di, AActor* thing, sector_t* sector, int thruportal,
@@ -203,8 +212,7 @@ bool HWSprite::ProjectSpriteShadow(HWDrawInfo* di, AActor* thing, sector_t* sect
 	Point anchor{position.X + thing->WorldOffset.X, position.Y + thing->WorldOffset.Y, position.Z + thing->WorldOffset.Z};
 	if (!std::isfinite(floor) || anchor.z < floor - .01 || anchor.z - floor > 128) return fallback("actor-floor-range");
 	auto sub = di->Level->PointInRenderSubsector(DVector2(anchor.x, anchor.y));
-	if (!sub || sub->sector != sourceSector || sub->render_sector != sourceSector || sub->polys || sub->hacked ||
-		sub->numlines < 3 || sub->numlines > MaxReceiverEdges) return fallback("unsupported-subsector");
+	if (!HasOrdinarySpriteShadowSubsector(sub, sourceSector)) return fallback("unsupported-subsector");
 	std::vector<Edge> receiver;
 	Point inside{0, 0, floor};
 	for (unsigned i = 0; i < sub->numlines; ++i)
