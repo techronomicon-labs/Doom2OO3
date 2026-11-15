@@ -41,4 +41,6 @@ Build system dependencies under `tools/lemon`, `tools/re2c`, `tools/zipdir` and 
 ## Checks
 A focused Windows Actions build compiles and invokes `vkdoom --version`, and creates the standalone flashlight archive. For graphical changes add relevant *short* negative tests (stale descriptors, invalid resource reuse, portal leakage, broken render fallback) and provide a runnable Windows result. There is no blanket full renderer publication campaign; do not remove safety checks that actually implicate changed code.
 
+The Linux Vulkan workflow builds one runtime on a standard Ubuntu runner, then runs two independent Freedoom map smokes on the `ubuntu-latest-m` runners in the `8core` group. Each worker verifies the runtime archive and source SHA before launching native Vulkan through Mesa llvmpipe. The workflow checks rendered geometry, a nonblank screenshot and clean completion, and retains the engine log and screenshot per map. This is a short correctness check. Windows playtesting and GPU performance measurements are separate.
+
 The Git history includes the old ShadeDoomVK investigation, but it is deliberately outside this project's active planning scope.
