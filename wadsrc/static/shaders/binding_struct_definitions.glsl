@@ -156,12 +156,16 @@ struct Fogball
 // std430 layout must match FActorShadowCaster in hw_dynlightdata.h.
 struct ActorShadowCaster
 {
-	vec3 center;
-	float radius;
+	vec3 center; float radius;
 	float bottom;
 	float top;
-	float padding0;
-	float padding1;
+	float planeNx;
+	float planeNz;
+	float left;
+	float right;
+	float mirrorX;
+	float mirrorY;
+	uint alphaWords[16];
 };
 
 struct DynLightInfo

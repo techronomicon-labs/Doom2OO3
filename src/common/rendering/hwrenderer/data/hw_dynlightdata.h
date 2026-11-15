@@ -36,14 +36,20 @@ enum FDynLightInfoFlags
 	LIGHTINFO_SUN = 16,
 };
 
-// A bounded analytic actor occluder supplied to each packed dynamic light.
-// Coordinates use the renderer's x, height, y order. No sprite texture is
-// sampled and this first increment is NOT an alpha-silhouette shadow.
+// Light-facing source-alpha silhouette, sampled into a 16x32 binary mask.
+// Actor x/y/z positions use renderer space (x, height, map-y). The visible
+// sprite image stays unchanged: only its independently projected shadow alpha
+// is downsampled. Each pair of 16-pixel rows packs into one uint32 mask word.
 constexpr int MaxActorShadowCastersPerLight = 4;
+constexpr int ActorShadowMaskWidth = 16;
+constexpr int ActorShadowMaskHeight = 32;
+constexpr int ActorShadowMaskWords = ActorShadowMaskWidth * ActorShadowMaskHeight / 32;
 struct FActorShadowCaster
 {
-	float x, y, z, radius;
-	float bottom, top, padding0, padding1;
+	float x, y, z, radius;   // sprite anchor; radius used only for selection
+	float bottom, top, planeNx, planeNz;
+	float left, right, mirrorX, mirrorY;
+	uint32_t alphaWords[ActorShadowMaskWords];
 };
 
 struct FDynLightInfo
@@ -74,8 +80,8 @@ struct FDynLightInfo
 	int actorShadowPad2; // 24
 	FActorShadowCaster actorShadowCasters[MaxActorShadowCastersPerLight]; // 56
 };
-static_assert(sizeof(FActorShadowCaster) == 32, "Actor shadow buffer ABI changed");
-static_assert(sizeof(FDynLightInfo) == 224, "Dynamic-light buffer ABI changed");
+static_assert(sizeof(FActorShadowCaster) == 112, "Actor shadow buffer ABI changed");
+static_assert(sizeof(FDynLightInfo) == 544, "Dynamic-light buffer ABI changed");
 
 enum FDynLightDataArrays
 {

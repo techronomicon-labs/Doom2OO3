@@ -7,8 +7,13 @@ struct ActorShadowCaster
 	vec3 center; float radius;
 	float bottom;
 	float top;
-	float padding0;
-	float padding1;
+	float planeNx;
+	float planeNz;
+	float left;
+	float right;
+	float mirrorX;
+	float mirrorY;
+	uint alphaWords[16];
 };
 
 struct DynLightInfo
