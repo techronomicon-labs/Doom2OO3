@@ -33,6 +33,9 @@
 #include "v_video.h"
 #include "hwrenderer/scene/hw_drawstructs.h"
 #include "g_levellocals.h"
+#include "sprites.h"
+#include "texturemanager.h"
+#include "textures.h"
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -57,9 +60,11 @@ CVAR (Bool, gl_actor_light_shadows, false, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
 
 
 
-// The new actor blocker is a true light-to-receiver occluder, not a decal.
-// This geometric first slice deliberately has NO alpha silhouette claim.
-// Source alpha and frame mirroring must be qualified before visual acceptance.
+// Shadow sampling uses an independently downsampled source *alpha* mask.
+// It never changes the original sprite's texture/albedo or creates a decal.
+// The light-facing sprite rotation and mirrored frame follow GetSpriteFrame.
+extern TArray<spritedef_t> sprites;
+
 namespace
 {
 struct ActorShadowCacheEntry
@@ -71,8 +76,136 @@ struct ActorShadowCacheEntry
 	int count = 0;
 	FActorShadowCaster casters[MaxActorShadowCastersPerLight] = {};
 };
+
+struct ActorMaskCacheEntry
+{
+	const FGameTexture* texture = nullptr;
+	const FLevelLocals* level = nullptr;
+	uint64_t timestamp = 0;
+	bool valid = false;
+	uint32_t words[ActorShadowMaskWords] = {};
+};
+
 thread_local std::array<ActorShadowCacheEntry, 64> actorShadowCache;
 thread_local size_t actorShadowCacheNext = 0;
+thread_local std::array<ActorMaskCacheEntry, 64> actorMaskCache;
+thread_local size_t actorMaskCacheNext = 0;
+
+bool SourceAlphaMask(const FLevelLocals* level, uint64_t timestamp,
+	FGameTexture* texture, uint32_t (&words)[ActorShadowMaskWords])
+{
+	for (const auto& cached : actorMaskCache)
+	{
+		if (cached.texture == texture && cached.level == level &&
+			cached.timestamp == timestamp)
+		{
+			if (cached.valid)
+				for (int w = 0; w < ActorShadowMaskWords; ++w) words[w] = cached.words[w];
+			return cached.valid;
+		}
+	}
+
+	ActorMaskCacheEntry entry;
+	entry.texture = texture;
+	entry.level = level;
+	entry.timestamp = timestamp;
+	if (texture && texture->GetTexture() && texture->GetTexelWidth() > 0 &&
+		texture->GetTexelHeight() > 0 && texture->GetTexelWidth() <= 2048 &&
+		texture->GetTexelHeight() <= 2048)
+	{
+		// Real image data, not a procedural solid silhouette. This operation
+		// is cached across different lights selecting the same animated frame.
+		auto source = texture->GetTexture()->CreateTexBuffer(0);
+		const int width = source.mWidth, height = source.mHeight;
+		if (source.mBuffer && width > 0 && width <= 2048 &&
+			height > 0 && height <= 2048)
+		{
+			int onPixels = 0;
+			for (int y = 0; y < ActorShadowMaskHeight; ++y)
+			{
+				int py = std::min(height - 1, (2 * y + 1) * height / (2 * ActorShadowMaskHeight));
+				for (int x = 0; x < ActorShadowMaskWidth; ++x)
+				{
+					int px = std::min(width - 1, (2 * x + 1) * width / (2 * ActorShadowMaskWidth));
+					const uint8_t a = source.mBuffer[4 * (py * width + px) + 3];
+					if (a >= 96)
+					{
+						entry.words[y / 2] |= uint32_t(1) << ((y % 2) * ActorShadowMaskWidth + x);
+						++onPixels;
+					}
+				}
+			}
+			entry.valid = onPixels > 0;
+		}
+	}
+	actorMaskCache[actorMaskCacheNext++ % actorMaskCache.size()] = entry;
+	if (entry.valid)
+		for (int w = 0; w < ActorShadowMaskWords; ++w) words[w] = entry.words[w];
+	return entry.valid;
+}
+
+bool BuildActorSilhouette(FActorShadowCaster& caster, AActor* actor,
+	const DVector3& origin, const DVector3& pos, const FLevelLocals* level,
+	uint64_t timestamp)
+{
+	// The authored source-alpha renderer can only reproduce upright facesprites
+	// at present; models, wall/flat sprites and picnum overrides need their own
+	// source-relative geometry contracts rather than solid fake blockers.
+	if ((actor->renderflags & RF_SPRITETYPEMASK) != RF_FACESPRITE ||
+		actor->sprite < 0 || actor->sprite >= int(sprites.Size()))
+		return false;
+
+	const DVector2 toActor(pos.X - origin.X, pos.Y - origin.Y);
+	const double distance = toActor.Length();
+	if (distance < 1.0 || !std::isfinite(distance))
+		return false;
+	bool mirror = false;
+	const DAngle lightFacing = actor->GetSpriteAngle(toActor.Angle(), 0.0);
+	const FTextureID pic = sprites[actor->sprite].GetSpriteFrame(
+		actor->frame, -1, lightFacing, &mirror, !!(actor->renderflags & RF_SPRITEFLIP));
+	if (!pic.isValid()) return false;
+	FGameTexture* texture = TexMan.GetGameTexture(pic, false);
+	if (!texture || !texture->isValid() || !texture->GetTexture()) return false;
+
+	uint32_t alpha[ActorShadowMaskWords] = {};
+	if (!SourceAlphaMask(level, timestamp, texture, alpha))
+		return false;
+
+	auto rect = texture->GetSpritePositioning(true).GetSpriteRect();
+	const DVector2 scale = actor->InterpolatedScale(0.0);
+	const float sx = float(scale.X), sy = float(scale.Y);
+	if (!std::isfinite(sx) || !std::isfinite(sy) || sx <= 0.0f || sy <= 0.0f ||
+		sx > 8.0f || sy > 8.0f)
+		return false;
+	// Match the real sprite quad's offset and display size, not collision radius.
+	const bool flipX = mirror ^ bool(actor->renderflags & RF_XFLIP) ^
+		bool(actor->renderflags & RF_SPRITEFLIP);
+	const bool flipY = !!(actor->renderflags & RF_YFLIP);
+	if (flipX) rect.left = -rect.width - rect.left;
+	rect.Scale(sx, sy);
+	const float top = float(pos.Z + actor->WorldOffset.Z) - rect.top;
+	const float bottom = top - rect.height;
+	const float left = -rect.left - rect.width;
+	const float right = -rect.left;
+	if (!std::isfinite(top) || !std::isfinite(bottom) || bottom >= top ||
+		!std::isfinite(left) || !std::isfinite(right) || left >= right)
+		return false;
+
+	caster.x = float(pos.X + actor->WorldOffset.X);
+	caster.y = float(pos.Z + actor->WorldOffset.Z);
+	caster.z = float(pos.Y + actor->WorldOffset.Y);
+	caster.radius = float(actor->radius);
+	caster.bottom = bottom;
+	caster.top = top;
+	caster.planeNx = float(toActor.X / distance);
+	caster.planeNz = float(toActor.Y / distance);
+	caster.left = left;
+	caster.right = right;
+	caster.mirrorX = flipX ? 1.0f : 0.0f;
+	caster.mirrorY = flipY ? 1.0f : 0.0f;
+	for (int w = 0; w < ActorShadowMaskWords; ++w) caster.alphaWords[w] = alpha[w];
+	return true;
+}
 
 void CollectActorShadowCasters(FDynLightInfo& info, FDynamicLight* light, int group)
 {
@@ -122,7 +255,11 @@ void CollectActorShadowCasters(FDynLightInfo& info, FDynamicLight* light, int gr
 		const float range = reach + radius;
 		if (!(dist2 < range*range))
 			continue;
-		const FActorShadowCaster caster = { x, y, z, radius, float(pos.Z), float(pos.Z) + height, 0, 0 };
+
+		FActorShadowCaster caster = {};
+		if (!BuildActorSilhouette(caster, candidate, origin, pos,
+			light->Level, frameTimestamp))
+			continue;
 		for (int i = 0; i < MaxActorShadowCastersPerLight; ++i)
 		{
 			if (dist2 < ranks[i])
