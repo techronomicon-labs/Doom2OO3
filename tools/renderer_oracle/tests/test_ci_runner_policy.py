@@ -25,7 +25,12 @@ class GithubHostedRunnerPolicyTests(unittest.TestCase):
         self.assertIn("native_renderer: true", block)
         self.assertNotIn("SDVK_REQUESTED_RUNNER", text)
         self.assertNotIn("sdvk009-avrea-ci.py", text)
-        self.assertIn("sdvk009_publication qualify", text)
+        self.assertIn("tools/ci/routine_native.py", text)
+        self.assertNotIn("sdvk009_publication qualify", text)
+        deep = (ROOT / ".github" / "workflows" / "renderer_deep.yml").read_text()
+        self.assertIn("sdvk009_publication qualify", deep)
+        self.assertIn("workflow_dispatch:", deep)
+        self.assertNotIn("  pull_request:", deep)
 
     def test_shared_native_guard_requires_github_hosted(self):
         text = (ROOT / "tools" / "renderer_oracle" / "sdvk010_sun_native.py").read_text()

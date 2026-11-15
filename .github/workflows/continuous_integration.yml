@@ -9,13 +9,55 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   pf_oracle:
     name: PF renderer contract oracle
     runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    outputs:
+      native: ${{ steps.route.outputs.native }}
+      actors: ${{ steps.route.outputs.actors }}
+      materials: ${{ steps.route.outputs.materials }}
+      resources: ${{ steps.route.outputs.resources }}
+      lightmaps: ${{ steps.route.outputs.lightmaps }}
+      portals: ${{ steps.route.outputs.portals }}
+      lighting: ${{ steps.route.outputs.lighting }}
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.pull_request.head.sha || github.sha }}
+        fetch-depth: 0
+        persist-credentials: false
+
+    - name: Validate CI routing and negative controls
+      run: python3 -m unittest discover -s tools/ci -p 'test_*.py' -v
+
+    - name: Select routine and targeted coverage from exact changed paths
+      id: route
+      shell: bash
+      run: |
+        python3 tools/ci/route.py --event-path "$GITHUB_EVENT_PATH" --event-name "$GITHUB_EVENT_NAME" --out build/ci-routing.json --github-output "$GITHUB_OUTPUT"
+        cat build/ci-routing.json >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Reject missing or malformed routing outputs
+      shell: bash
+      env:
+        ROUTE_NATIVE: ${{ steps.route.outputs.native }}
+        ROUTE_ACTORS: ${{ steps.route.outputs.actors }}
+        ROUTE_MATERIALS: ${{ steps.route.outputs.materials }}
+        ROUTE_RESOURCES: ${{ steps.route.outputs.resources }}
+        ROUTE_LIGHTMAPS: ${{ steps.route.outputs.lightmaps }}
+        ROUTE_PORTALS: ${{ steps.route.outputs.portals }}
+        ROUTE_LIGHTING: ${{ steps.route.outputs.lighting }}
+      run: |
+        set -euo pipefail
+        for route_value in "$ROUTE_NATIVE" "$ROUTE_ACTORS" "$ROUTE_MATERIALS" "$ROUTE_RESOURCES" "$ROUTE_LIGHTMAPS" "$ROUTE_PORTALS" "$ROUTE_LIGHTING"; do
+          case "$route_value" in true|false) ;; *) echo 'Missing/invalid CI routing output'; exit 1 ;; esac
+        done
 
     - name: Run CPU contracts and deterministic oracle
       run: python3 tools/check.py --output build/pf-oracle
@@ -25,7 +67,9 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: cpu-contract-checks
+        retention-days: ${{ job.status == 'success' && 7 || 30 }}
         path: |
+          build/ci-routing.json
           build/pf-oracle/*.log
           build/pf-oracle/renderer-corpus/result.json
           build/pf-oracle/renderer-corpus/prepare-*/prepared.json
@@ -34,6 +78,7 @@ jobs:
     name: ${{ matrix.config.name }} | ${{ matrix.config.build_type }}
     needs: pf_oracle
     runs-on: ${{ matrix.config.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -85,6 +130,10 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.pull_request.head.sha || github.sha }}
+        fetch-depth: 0
+        persist-credentials: false
 
     - name: Select Python for Windows CPU containment controls
       if: runner.os == 'Windows' && matrix.config.build_type == 'RelWithDebInfo'
@@ -149,113 +198,147 @@ jobs:
         DYLD_LIBRARY_PATH: ${{ github.workspace }}/build/deps/zmusic/lib
       run: python3 tools/check_build_identity.py --build-dir build --config ${{ matrix.config.build_type }} --expected-state clean
 
-    - name: Qualify software Vulkan corpus and timing collection
-      if: matrix.config.native_renderer
+    - name: Record documentation-only native scope
+      if: matrix.config.native_renderer && needs.pf_oracle.outputs.native == 'false'
+      run: echo 'Native rendering NOT_APPLICABLE to this documented change set; this job still compiled and verified the exact source.'
+
+    - name: Select isolated hosted software Vulkan
+      if: matrix.config.native_renderer && needs.pf_oracle.outputs.native == 'true'
       shell: bash
-      env:
-        LD_LIBRARY_PATH: ${{ github.workspace }}/build/deps/zmusic/lib
       run: |
         set -euo pipefail
+        test "$RUNNER_ENVIRONMENT" = github-hosted
         mapfile -t sdvk_icds < <(python3 -c 'from pathlib import Path; print("\n".join(str(p) for p in sorted(Path("/usr/share/vulkan/icd.d").glob("lvp_icd*.json"))))')
         test "${#sdvk_icds[@]}" -eq 1
-        export VK_DRIVER_FILES="${sdvk_icds[0]}"
-        export VK_ICD_FILENAMES="${sdvk_icds[0]}"
-        export SDL_VIDEODRIVER=x11
-        mkdir -p build/renderer-sdvk008-preflight
-        xvfb-run -a -s '-screen 0 640x480x24 -nolisten tcp' vulkaninfo --summary > build/renderer-sdvk008-preflight/vulkaninfo-summary.txt 2> build/renderer-sdvk008-preflight/vulkaninfo-summary.stderr.txt
-        sdvk_control_device=$(python3 -c 'from pathlib import Path; from tools.renderer_oracle.native_ci import fields; print(fields(Path("build/renderer-sdvk008-preflight/vulkaninfo-summary.txt").read_text(), "deviceName")[0])')
-        xvfb-run -a -s '-screen 0 640x480x24 -nolisten tcp' python3 tools/renderer_oracle/sdvk008_physical.py --exe build/vkdoom --iwad /usr/share/games/doom/freedoom2.wad --out build/renderer-sdvk008-control --device-name "$sdvk_control_device" --vulkan-summary build/renderer-sdvk008-preflight/vulkaninfo-summary.txt --expected-commit "$(git rev-parse HEAD)" --iwad-license /usr/share/doc/freedoom/copyright --execute --correctness-only --software-fixture-control
-        xvfb-run -a -s '-screen 0 640x480x24 -nolisten tcp' python3 tools/renderer_oracle/native_ci.py --exe build/vkdoom --iwad /usr/share/games/doom/freedoom2.wad --out build/renderer-native --full
-        python3 tools/collision_replay.py --snapshot-root build/renderer-native/state/shadow-boundary --output build/renderer-native/collision-review.json --classification reconstructed-hosted-production --replay
+        {
+          printf 'VK_DRIVER_FILES=%s\n' "${sdvk_icds[0]}"
+          printf 'VK_ICD_FILENAMES=%s\n' "${sdvk_icds[0]}"
+          printf 'SDL_VIDEODRIVER=x11\n'
+        } >> "$GITHUB_ENV"
 
-    - name: Qualify SDVK-010 actors and SDVK-009 publication on hosted software Vulkan
-      if: matrix.config.native_renderer
+    - name: Lane A - bounded renderer OFF/ON and gameplay smoke
+      if: matrix.config.native_renderer && needs.pf_oracle.outputs.native == 'true'
+      shell: bash
+      env:
+        LD_LIBRARY_PATH: ${{ github.workspace }}/build/deps/zmusic/lib
+        SDVK_ACTORS: ${{ needs.pf_oracle.outputs.actors }}
+        SDVK_MATERIALS: ${{ needs.pf_oracle.outputs.materials }}
+        SDVK_PORTALS: ${{ needs.pf_oracle.outputs.portals }}
+        SDVK_LIGHTING: ${{ needs.pf_oracle.outputs.lighting }}
+      run: |
+        set -euo pipefail
+        sdvk_extra=()
+        if [[ "$SDVK_ACTORS" == true || "$SDVK_PORTALS" == true ]]; then
+          sdvk_extra+=(--extra-scene sprite-mirror)
+        fi
+        if [[ "$SDVK_MATERIALS" == true ]]; then
+          sdvk_extra+=(--extra-scene material-stress)
+        fi
+        if [[ "$SDVK_LIGHTING" == true ]]; then
+          sdvk_extra+=(--extra-scene shadow-boundary)
+        fi
+        xvfb-run -a -s '-screen 0 640x480x24 -nolisten tcp' python3 tools/ci/routine_native.py \
+          --exe "$PWD/build/vkdoom" --iwad /usr/share/games/doom/freedoom2.wad \
+          --out build/renderer-routine --expected-commit "$(git rev-parse HEAD)" "${sdvk_extra[@]}"
+
+    - name: Authenticate targeted suite content
+      if: matrix.config.native_renderer && (needs.pf_oracle.outputs.actors == 'true' || needs.pf_oracle.outputs.resources == 'true' || needs.pf_oracle.outputs.lightmaps == 'true' || needs.pf_oracle.outputs.portals == 'true')
+      run: python3 tools/renderer_oracle/sdvk009_publication.py fetch-content --out build/renderer-sdvk009-content
+
+    - name: Lane B - actors and sunlight
+      if: matrix.config.native_renderer && needs.pf_oracle.outputs.actors == 'true'
       shell: bash
       env:
         LD_LIBRARY_PATH: ${{ github.workspace }}/build/deps/zmusic/lib
       run: |
-        set -euo pipefail
-        mapfile -t sdvk_publication_icds < <(python3 -c 'from pathlib import Path; print("\n".join(str(p) for p in sorted(Path("/usr/share/vulkan/icd.d").glob("lvp_icd*.json"))))')
-        test "${#sdvk_publication_icds[@]}" -eq 1
-        export VK_DRIVER_FILES="${sdvk_publication_icds[0]}"
-        export VK_ICD_FILENAMES="${sdvk_publication_icds[0]}"
-        export SDL_VIDEODRIVER=x11
-        python3 tools/renderer_oracle/sdvk009_publication.py fetch-content --out build/renderer-sdvk009-content
-        # The combined actor acceptance gate runs here once, on the same normal
-        # software-Vulkan job/build and authenticated content as SDVK-009.
         xvfb-run -a -s '-screen 0 640x480x24 -nolisten tcp' python3 -m tools.renderer_oracle.sdvk010_acceptance \
-          --exe "$PWD/build/vkdoom" \
-          --iwad build/renderer-sdvk009-content/freedoom2.wad \
+          --exe "$PWD/build/vkdoom" --iwad build/renderer-sdvk009-content/freedoom2.wad \
           --iwad-license build/renderer-sdvk009-content/COPYING.txt \
-          --out build/renderer-sdvk010 \
-          --expected-commit "$(git rev-parse HEAD)"
-        # SDVK-150 adds one focused same-process A->B correctness gate to this
-        # existing normal GitHub-hosted build. It is not a duplicate full matrix or benchmark.
-        xvfb-run -a -s '-screen 0 640x480x24 -nolisten tcp' python3 -m tools.renderer_oracle.sdvk150_probe_owner \
-          --exe "$PWD/build/vkdoom" \
-          --iwad build/renderer-sdvk009-content/freedoom2.wad \
-          --iwad-license build/renderer-sdvk009-content/COPYING.txt \
-          --out build/renderer-sdvk150 \
-          --expected-commit "$(git rev-parse HEAD)"
-        # SDVK-153: live sampler-reset correctness/control on this same build.
-        xvfb-run -a -s '-screen 0 640x480x24 -nolisten tcp' python3 -m tools.renderer_oracle.sdvk153_probe_reset \
-          --exe "$PWD/build/vkdoom" \
-          --iwad build/renderer-sdvk009-content/freedoom2.wad \
-          --iwad-license build/renderer-sdvk009-content/COPYING.txt \
-          --out build/renderer-sdvk153 \
-          --expected-commit "$(git rev-parse HEAD)"
-        # SDVK-158: retained-v5 multi-page invalidate/reload correctness on this same build.
-        xvfb-run -a -s '-screen 0 640x480x24 -nolisten tcp' python3 -m tools.renderer_oracle.sdvk158_lightmap_transition \
-          --exe "$PWD/build/vkdoom" \
-          --iwad build/renderer-sdvk009-content/freedoom2.wad \
-          --iwad-license build/renderer-sdvk009-content/COPYING.txt \
-          --out build/renderer-sdvk158 \
-          --expected-commit "$(git rev-parse HEAD)"
-        # SDVK-161: bounded special surfaces with current submitted owners and
-        # exact checkpoint RGB across both maps and their same-map reloads.
-        xvfb-run -a -s '-screen 0 640x480x24 -nolisten tcp' python3 -m tools.renderer_oracle.sdvk161_special_surfaces \
-          --exe "$PWD/build/vkdoom" \
-          --iwad build/renderer-sdvk009-content/freedoom2.wad \
-          --iwad-license build/renderer-sdvk009-content/COPYING.txt \
-          --out build/renderer-sdvk161 \
-          --expected-commit "$(git rev-parse HEAD)"
-        # SDVK-014: independent BOTH-plane source/facing correctness on the
-        # same hosted software build. The accepted SDVK-161 recipe stays intact.
-        xvfb-run -a -s '-screen 0 640x480x24 -nolisten tcp' python3 -m tools.renderer_oracle.sdvk014_controlled_planes \
-          --exe "$PWD/build/vkdoom" \
-          --iwad build/renderer-sdvk009-content/freedoom2.wad \
-          --iwad-license build/renderer-sdvk009-content/COPYING.txt \
-          --out build/renderer-sdvk014-controlled \
-          --expected-commit "$(git rev-parse HEAD)"
-        PYTHONPATH="$PWD" xvfb-run -a -s '-screen 0 640x480x24 -nolisten tcp' python3 -m tools.renderer_oracle.sdvk009_publication qualify \
-          --exe "$PWD/build/vkdoom" \
-          --iwad build/renderer-sdvk009-content/freedoom2.wad \
-          --iwad-license build/renderer-sdvk009-content/COPYING.txt \
-          --out build/renderer-sdvk009-publication \
-          --expected-commit "$GITHUB_SHA"
+          --out build/renderer-sdvk010 --expected-commit "$(git rev-parse HEAD)"
 
-    - name: Package complete software Vulkan evidence losslessly
-      if: always() && matrix.config.native_renderer
+    - name: Lane B - probe owner lifetime
+      if: matrix.config.native_renderer && needs.pf_oracle.outputs.resources == 'true'
+      shell: bash
+      env:
+        LD_LIBRARY_PATH: ${{ github.workspace }}/build/deps/zmusic/lib
+      run: |
+        xvfb-run -a -s '-screen 0 640x480x24 -nolisten tcp' python3 -m tools.renderer_oracle.sdvk150_probe_owner \
+          --exe "$PWD/build/vkdoom" --iwad build/renderer-sdvk009-content/freedoom2.wad \
+          --iwad-license build/renderer-sdvk009-content/COPYING.txt \
+          --out build/renderer-sdvk150 --expected-commit "$(git rev-parse HEAD)"
+
+    - name: Lane B - live sampler and descriptor reset
+      if: matrix.config.native_renderer && needs.pf_oracle.outputs.resources == 'true'
+      shell: bash
+      env:
+        LD_LIBRARY_PATH: ${{ github.workspace }}/build/deps/zmusic/lib
+      run: |
+        xvfb-run -a -s '-screen 0 640x480x24 -nolisten tcp' python3 -m tools.renderer_oracle.sdvk153_probe_reset \
+          --exe "$PWD/build/vkdoom" --iwad build/renderer-sdvk009-content/freedoom2.wad \
+          --iwad-license build/renderer-sdvk009-content/COPYING.txt \
+          --out build/renderer-sdvk153 --expected-commit "$(git rev-parse HEAD)"
+
+    - name: Lane B - retained lightmap lifecycle
+      if: matrix.config.native_renderer && needs.pf_oracle.outputs.lightmaps == 'true'
+      shell: bash
+      env:
+        LD_LIBRARY_PATH: ${{ github.workspace }}/build/deps/zmusic/lib
+      run: |
+        xvfb-run -a -s '-screen 0 640x480x24 -nolisten tcp' python3 -m tools.renderer_oracle.sdvk158_lightmap_transition \
+          --exe "$PWD/build/vkdoom" --iwad build/renderer-sdvk009-content/freedoom2.wad \
+          --iwad-license build/renderer-sdvk009-content/COPYING.txt \
+          --out build/renderer-sdvk158 --expected-commit "$(git rev-parse HEAD)"
+
+    - name: Lane B - special surfaces and portals
+      if: matrix.config.native_renderer && (needs.pf_oracle.outputs.lightmaps == 'true' || needs.pf_oracle.outputs.portals == 'true')
+      shell: bash
+      env:
+        LD_LIBRARY_PATH: ${{ github.workspace }}/build/deps/zmusic/lib
+      run: |
+        xvfb-run -a -s '-screen 0 640x480x24 -nolisten tcp' python3 -m tools.renderer_oracle.sdvk161_special_surfaces \
+          --exe "$PWD/build/vkdoom" --iwad build/renderer-sdvk009-content/freedoom2.wad \
+          --iwad-license build/renderer-sdvk009-content/COPYING.txt \
+          --out build/renderer-sdvk161 --expected-commit "$(git rev-parse HEAD)"
+
+    - name: Lane B - controlled lightmap planes
+      if: matrix.config.native_renderer && needs.pf_oracle.outputs.lightmaps == 'true'
+      shell: bash
+      env:
+        LD_LIBRARY_PATH: ${{ github.workspace }}/build/deps/zmusic/lib
+      run: |
+        xvfb-run -a -s '-screen 0 640x480x24 -nolisten tcp' python3 -m tools.renderer_oracle.sdvk014_controlled_planes \
+          --exe "$PWD/build/vkdoom" --iwad build/renderer-sdvk009-content/freedoom2.wad \
+          --iwad-license build/renderer-sdvk009-content/COPYING.txt \
+          --out build/renderer-sdvk014-controlled --expected-commit "$(git rev-parse HEAD)"
+
+    - name: Package bounded native evidence losslessly
+      if: always() && matrix.config.native_renderer && needs.pf_oracle.outputs.native == 'true'
       shell: bash
       run: |
+        set -euo pipefail
         sdvk_evidence_dirs=()
-        for sdvk_evidence_dir in renderer-native renderer-sdvk008-control renderer-sdvk008-preflight renderer-sdvk009-content renderer-sdvk009-publication renderer-sdvk010 renderer-sdvk150 renderer-sdvk153 renderer-sdvk158 renderer-sdvk161 renderer-sdvk014-controlled; do
+        for sdvk_evidence_dir in renderer-routine renderer-sdvk009-content renderer-sdvk010 renderer-sdvk150 renderer-sdvk153 renderer-sdvk158 renderer-sdvk161 renderer-sdvk014-controlled; do
           if [[ -d "build/$sdvk_evidence_dir" ]]; then
             sdvk_evidence_dirs+=("$sdvk_evidence_dir")
           fi
         done
-        if [[ "${#sdvk_evidence_dirs[@]}" -gt 0 ]]; then
-          XZ_OPT='-6 --lzma2=dict=64MiB' tar -cJf build/renderer-software-vulkan.tar.xz -C build "${sdvk_evidence_dirs[@]}"
-        fi
+        test "${#sdvk_evidence_dirs[@]}" -gt 0
+        XZ_OPT='-1 -T0' tar -cJf build/renderer-software-vulkan.tar.xz -C build "${sdvk_evidence_dirs[@]}"
+        xz -t build/renderer-software-vulkan.tar.xz
+        sha256sum build/renderer-software-vulkan.tar.xz > build/renderer-software-vulkan.sha256
+        du -b build/renderer-software-vulkan.tar.xz >> "$GITHUB_STEP_SUMMARY"
 
-    - name: Upload complete software Vulkan evidence
-      if: always() && matrix.config.native_renderer
+    - name: Upload routine and targeted evidence
+      if: always() && matrix.config.native_renderer && needs.pf_oracle.outputs.native == 'true'
       uses: actions/upload-artifact@v4
       with:
         name: renderer-software-vulkan
-        path: build/renderer-software-vulkan.tar.xz
+        path: |
+          build/renderer-software-vulkan.tar.xz
+          build/renderer-software-vulkan.sha256
         compression-level: 0
-        retention-days: 30
+        retention-days: ${{ job.status == 'success' && 7 || 30 }}
+        if-no-files-found: error
 
     - name: Diagnose macOS startup failure
       if: failure() && runner.os == 'macOS'
@@ -268,71 +351,3 @@ jobs:
           runtime="build/${{ matrix.config.build_type }}/vkdoom.app/Contents/MacOS/vkdoom"
         fi
         lldb --batch -o 'breakpoint set -n __cxa_throw' -o run -o 'thread backtrace all' -- "$runtime" --version
-
-#   - name: Create Package
-#     if: (runner.os == 'Windows' || matrix.config.name == 'Linux GCC 12') && matrix.config.build_type == 'RelWithDebInfo'
-#     shell: bash
-#     run: |
-#       cd build
-#       mkdir package
-#       if [[ "${{ runner.os }}" == 'Windows' ]]; then
-#         cp -r ${{ matrix.config.build_type }}/vkdoom.exe ${{ matrix.config.build_type }}/vktool.exe ${{ matrix.config.build_type }}/*.pk3 ${{ matrix.config.build_type }}/fm_banks ${{ matrix.config.build_type }}/soundfonts package
-#         cp ../bin/licenses.zip ../bin/windows/libsndfile/64bit/libsndfile-1.dll ../bin/windows/openal/64bit/openal32.dll ../bin/windows/zmusic/64bit/zmusic.dll package
-#         cp ${{ matrix.config.build_type }}/vkdoom-stripped.pdb package/vkdoom.pdb
-#         cp ${{ matrix.config.build_type }}/vkdoom-stripped.pdb package/vktool.pdb
-#       elif [[ "${{ runner.os }}" == 'macOS' ]]; then
-#         cp -r vkdoom.app package
-#         cp -r vktool package
-#       elif [[ "${{ runner.os }}" == 'Linux' ]]; then
-#         cp vkdoom vktool *.pk3 zmusic/lib/libzmusic.so package
-#         strip package/vkdoom package/vktool
-#       fi
-#
-#   - name: Upload Package
-#     if: runner.os == 'Windows' || matrix.config.name == 'Linux GCC 12'
-#     uses: actions/upload-artifact@v4
-#     with:
-#       path: build/package
-#       name: ${{ matrix.config.name }} ${{ matrix.config.build_type }}
-#
-#   - name: List Build Directory
-#     if: always()
-#     shell: bash
-#     run: |
-#       git status
-#       ls -lR build
-#
-# deploy:
-#   name: Update Latest successful build
-#   runs-on: ubuntu-latest
-#   needs: build
-#   if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-#
-#   steps:
-#   - name: Download Windows artifact
-#     uses: actions/download-artifact@v4
-#     with:
-#       name: Visual Studio 2022 RelWithDebInfo
-#       path: build/vkdoom-windows-prerelease
-#
-#   - name: Download Linux artifact
-#     uses: actions/download-artifact@v4
-#     with:
-#       name: Linux GCC 12 RelWithDebInfo
-#       path: build/vkdoom-linux-prerelease
-#
-#   - name: Zip artifacts
-#     shell: bash
-#     run: |
-#       cd build
-#       zip -r vkdoom-windows-prerelease.zip vkdoom-windows-prerelease
-#       zip -r vkdoom-linux-prerelease.zip vkdoom-linux-prerelease
-#
-#   - name: Update nightly release
-#     uses: pyTooling/Actions/releaser@r0
-#     with:
-#       tag: nightly
-#       rm: true
-#       token: ${{ secrets.GITHUB_TOKEN }}
-#       files: build/vkdoom-windows-prerelease.zip
-#              build/vkdoom-linux-prerelease.zip
