@@ -1,91 +1,49 @@
-# ShadeDoomVK
+# Doom2OO3
 
-ShadeDoomVK is a Vulkan-first experimental Doom-engine renderer fork based on VKDoom. Its purpose is to push the classic sprite-and-sector presentation toward materially rich, dynamically lit 2.5D rendering while preserving Doom-family gameplay, content semantics and mod compatibility wherever the renderer can do so honestly.
+A stripped-down, **playable** Vulkan Doom II remaster foundation. The visual target is the imagined ultimate 2003 remaster: original crisp Doom art, evocative normal/PBR materials, powerful local lights, a configurable flashlight, and convincing dynamically lit shadows.
 
-The project is focused on:
+**Exact foundation:** [ShadeDoomVK PR #195 merged commit](https://github.com/techrote/ShadeDoomVK/commit/2cc70f33295881f73c7460364c6fa8e4e546efb3). Production engine/shaders, renderer crash/correctness/performance fixes, bundled assets and the #190 material/flashlight generator are preserved from that commit. The later legacy issue programme and its multi-hour verification infrastructure are intentionally *not* part of this checkout. The Git history remains available for targeted recovery.
 
-- dynamic world and actor lighting;
-- normal-mapped and PBR sprite materials;
-- explicit sprite-local tangent-space handling;
-- height/parallax relief for sprites without requiring full 3D replacement models;
-- light probes, baked/static lighting and dynamic lightmaps;
-- ray-query world occlusion combined with sprite-aware projected/contact shadows;
-- modern Vulkan descriptor/material infrastructure and measurable performance tiers;
-- long-term renderer foundations suitable for HDR, bloom, richer volumetrics and later temporal work without sacrificing Doom semantics.
+This is a clean implementation starting point, **not** a claim that dynamic actor shadows were finished in #195. The engine executable is still named `vkdoom`, and internal `ShadeDoomVK` build-identity strings are retained rather than risk breaking a proven runtime.
 
-ShadeDoomVK's project version is `0.1.0-dev`. Build and startup diagnostics identify the project, source commit, working-tree state, founding VKDoom lineage and PF-020 freeze. Executables remain `vkdoom` / `vktool`; resource, configuration, save and protocol identifiers retain their inherited values. See [identity and compatibility policy](docs/shadedoomvk/SDVK-001-FOUNDATION.md).
+## Windows build
 
-## Current implementation gate
+Open **Visual Studio 2022 Developer PowerShell** (Desktop development with C++, x64 Windows SDK) in the repository root:
 
-PF-001 through PF-020 are accepted. Substantial material, sprite, lighting, probe
-and lightmap implementation is integrated; the [execution ledger](docs/shadedoomvk/10-EXECUTION-LEDGER.md)
-records exact accepted commits. SDVK-009-SW permits SDVK-011/014 software work;
-physical acceptance and later dependency releases remain separately tracked.
-
-The [7 November owner correction](docs/shadedoomvk/SDVK-009-PHYSICAL-RESUMPTION-20261107.md)
-authorizes a fresh physical campaign with exact identities and retained failures.
-Instance-only readback does not establish renderer stability or performance.
-
-The [special-surface lifecycle increment](docs/shadedoomvk/SDVK-161-SPECIAL-SURFACE-LIFECYCLE.md)
-is merged; a later master repeatability failure has reopened its software
-qualification, and SDVK-014's physical criteria remain held.
-The [viewmodel increment](docs/shadedoomvk/SDVK-011-VIEWMODEL-LIGHTING.md) and
-[ordinary gameplay smoke](docs/shadedoomvk/INTEGRATED-GAMEPLAY-SMOKE.md) are undergoing
-final integration qualification after ten successful static physical weapon
-captures and a successful movement/firing/map-transition smoke. The owner has
-directed a [programme pause](docs/shadedoomvk/PROGRAMME-PAUSE-20261107.md) after
-this bounded delivery; the special-surface repeatability investigation is deferred.
-The
-[corpus guide](tools/renderer_oracle/README.md) includes legal Freedoom preparation
-and playable launch instructions. Defaults and milestone acceptance follow the
-ledger; candidate features do not imply completion of later renderer gates.
-
-## Canonical programme
-
-The autonomous development programme is defined in:
-
-- `AGENTS.md` — mandatory autonomous execution rules and issue contract;
-- `docs/shadedoomvk/00-FOUNDING-BRIEF.md` — goals, non-goals and invariants;
-- `docs/shadedoomvk/01-INITIAL-IMPLEMENTATION-PLAN.md` — first-pass plan preserved for history;
-- `docs/shadedoomvk/02-PLAN-REVIEW.md` — founding review plus source-audit amendment;
-- `docs/shadedoomvk/03-REVISED-ROADMAP.md` — dependency-ordered PF + SDVK roadmap;
-- `docs/shadedoomvk/04-DONOR-PROVENANCE.md` — donor/upstream audit and corrected provenance;
-- `docs/shadedoomvk/05-AUTONOMOUS-ISSUE-GRAPH.md` — complete PF/SDVK dependency graph and concurrency rules;
-- `docs/shadedoomvk/06-VALIDATION-PERFORMANCE-CONTRACT.md` — correctness/equivalence/performance evidence rules;
-- `docs/shadedoomvk/07-ISSUE-EMISSION-STATUS.md` — stable ID ↔ GitHub issue mapping;
-- `docs/shadedoomvk/08-PREFOUNDATION-HARDENING-PROGRAMME.md` — long pre-SDVK refactor/correctness/performance tranche;
-- `docs/shadedoomvk/09-PLANNING-RECONCILIATION.md` — requirements/preferences/research/decisions/assumptions classification;
-- `docs/shadedoomvk/10-EXECUTION-LEDGER.md` — programme-level execution ledger;
-- `docs/shadedoomvk/rag/` — source-linked renderer architecture/invariant references for autonomous agents.
-
-## Baseline
-
-The founding ShadeDoomVK repository starts from VKDoom commit `09634479ab5bf9adf691074fffe85a006a398cd0`.
-
-Do not assume a donor patch is missing merely because it exists in another VKDoom fork. Several apparently separate forks are ancestral to this baseline. Check Git history, current source and `04-DONOR-PROVENANCE.md` before importing code.
-
-Important source-audit corrections include:
-
-- per-layer material sampling is already inherited;
-- bindless slot reuse is inherited; PF-002/003 hardened lifetime, capacity and reservation boundaries;
-- PF-012 replaced the founding per-lightmap probe-selection stub with bounded selection and explicit fallback;
-- tiled-light infrastructure exists as dormant scaffolding rather than an active clustered-light path;
-- HDR/postprocess/depth/normal infrastructure is stronger than the founding plan initially assumed.
-
-## Building
-
-Follow [Building and running ShadeDoomVK](docs/BUILDING.md) for Windows/Linux commands, dependencies, CPU checks and executable provenance verification. Use a fresh build directory under `build/`; keep historical qualification builds intact.
-
-For the optional flashlight, normal/PBR materials and side-by-side gallery, see [Doom II and DBP50 material showcase](docs/shadedoomvk/DOOM2-SHOWCASE.md).
-
-From a configured C++ developer environment:
-
-```text
-python tools/check.py
+```powershell
+cmake -S . -B build/windows -G "Visual Studio 17 2022" -A x64 -DPK3_QUIET_ZIPDIR=ON
+cmake --build build/windows --config RelWithDebInfo --parallel 4
+& .\build\windows\RelWithDebInfo\vkdoom.exe --version
 ```
 
-Both executables support `--version` without an IWAD or renderer initialization. Ordinary play requires your own supported game IWAD and the resources built from this checkout.
+Play with your own Doom II WAD:
 
-## License
+```powershell
+& .\build\windows\RelWithDebInfo\vkdoom.exe -iwad "C:\doom2.wad"
+```
 
-GPL-3.0, with inherited third-party licensing and contributor notices retained. Donor code must preserve its provenance and compatible license obligations.
+## Original procedural PBR and flashlight (#190)
+
+Generate opt-in local materials from **your own** Doom II WAD (Python 3.11+, NumPy and Pillow):
+
+```powershell
+py -m pip install numpy pillow
+py tools/doom2_showcase/build.py --doom2 "C:\doom2.wad" --out ".\build\addons"
+.\tools\doom2_showcase\launch.ps1 -Game DoomII -Exe ".\build\windows\RelWithDebInfo\vkdoom.exe" -Doom2 "C:\doom2.wad" -Packages ".\build\addons"
+```
+
+Add `--dbp50 "C:\path\to\DBP50.wad"` and `--gallery` if desired; build into a fresh `--out` directory each time. The input-hash checks deliberately reject unsupported/repacked WADs; do not fabricate compatible hashes. No copyrighted game WADs or generated WAD-derived assets are distributed here.
+
+Press **L** for the flashlight and **O** for its options in the supported add-on configuration. See [building notes](docs/BUILDING.md) for dependencies and Linux compilation.
+
+## What is preserved / what is gone
+
+- **Preserved:** unmodified PR #195 engine/CMake source, shaders, tools required for compilation, original game resource packages, GPL/third-party licensing, and `tools/doom2_showcase/` including its flashlight, procedural material maps and gallery.
+- **Removed from the working tree:** historical PF/SDVK programme documents, RAG/ledger and issue graph, multi-hour renderer-oracle/physical-forensic harnesses, obsolete checkers, and legacy CI.
+- **New lightweight validation:** one Windows compile/boot-identity/flashlight smoke workflow. Real graphical quality requires owner playtesting; no synthetic showcase can substitute for it.
+
+## Implementation priority
+
+Ship visible results first, with correctness safeguards. Actor shadows must affect the *right light* on real scene receivers; an easy floor-darkening decal is not an acceptable replacement. Follow [AGENTS.md](AGENTS.md) rather than any old ShadeDoomVK planning document found in Git history.
+
+Licensed under GPL-3.0 with retained upstream and third-party notices. See `LICENSE` and `docs/licenses/`.

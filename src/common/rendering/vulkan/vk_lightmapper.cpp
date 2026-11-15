@@ -102,8 +102,7 @@ void VkLightmapper::Raytrace(const TArray<LightmapTile*>& tiles)
 		lightmapRaytraceLast.active = true;
 
 		lightmapRaytraceLast.ResetAndClock();
-		const auto stage = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
-		bool timing = fb->GetCommands()->PushGroup(fb->GetCommands()->GetTransferCommands(), "lightmap.total", stage);
+		fb->GetCommands()->PushGroup(fb->GetCommands()->GetTransferCommands(), "lightmap.total");
 		UploadUniforms();
 
 		bool firstCall = true;
@@ -121,18 +120,16 @@ void VkLightmapper::Raytrace(const TArray<LightmapTile*>& tiles)
 
 			if (drawindexed.IsFull || copytiles.Pos == drawindexed.BufferSize)
 			{
-				if (timing)
-					fb->GetCommands()->PopGroup(fb->GetCommands()->GetTransferCommands(), stage);
+				fb->GetCommands()->PopGroup(fb->GetCommands()->GetTransferCommands());
 				fb->WaitForCommands(false);
-				timing = fb->GetCommands()->PushGroup(fb->GetCommands()->GetTransferCommands(), "lightmap.total", stage);
+				fb->GetCommands()->PushGroup(fb->GetCommands()->GetTransferCommands(), "lightmap.total");
 				drawindexed.Pos = 0;
 				drawindexed.IsFull = false;
 				copytiles.Pos = 0;
 			}
 		}
 
-		if (timing)
-			fb->GetCommands()->PopGroup(fb->GetCommands()->GetTransferCommands(), stage);
+		fb->GetCommands()->PopGroup(fb->GetCommands()->GetTransferCommands());
 		lightmapRaytraceLast.Unclock();
 	}
 }
@@ -204,7 +201,7 @@ void VkLightmapper::Render()
 	for (const auto& selected : selectedTiles) ValidateSelectedTile(selected);
 	auto cmdbuffer = fb->GetCommands()->GetTransferCommands();
 
-	const bool timing = fb->GetCommands()->PushGroup(cmdbuffer, "lightmap.raytrace");
+	fb->GetCommands()->PushGroup(cmdbuffer, "lightmap.raytrace");
 
 	PipelineBarrier()
 		.AddImage(bakeImage.raytrace.Image.get(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_ACCESS_SHADER_READ_BIT, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT)
@@ -289,8 +286,7 @@ void VkLightmapper::Render()
 
 	cmdbuffer->endRenderPass();
 
-	if (timing)
-		fb->GetCommands()->PopGroup(cmdbuffer);
+	fb->GetCommands()->PopGroup(cmdbuffer);
 }
 
 void VkLightmapper::UploadUniforms()
@@ -342,7 +338,7 @@ void VkLightmapper::Resolve()
 {
 	auto cmdbuffer = fb->GetCommands()->GetTransferCommands();
 
-	const bool timing = fb->GetCommands()->PushGroup(cmdbuffer, "lightmap.resolve");
+	fb->GetCommands()->PushGroup(cmdbuffer, "lightmap.resolve");
 
 	PipelineBarrier()
 		.AddImage(bakeImage.raytrace.Image.get(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT)
@@ -368,15 +364,14 @@ void VkLightmapper::Resolve()
 
 	cmdbuffer->endRenderPass();
 
-	if (timing)
-		fb->GetCommands()->PopGroup(cmdbuffer);
+	fb->GetCommands()->PopGroup(cmdbuffer);
 }
 
 void VkLightmapper::Blur()
 {
 	auto cmdbuffer = fb->GetCommands()->GetTransferCommands();
 
-	const bool timing = fb->GetCommands()->PushGroup(cmdbuffer, "lightmap.blur");
+	fb->GetCommands()->PushGroup(cmdbuffer, "lightmap.blur");
 
 	PipelineBarrier()
 		.AddImage(bakeImage.resolve.Image.get(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT)
@@ -430,8 +425,7 @@ void VkLightmapper::Blur()
 		cmdbuffer->endRenderPass();
 	}
 
-	if (timing)
-		fb->GetCommands()->PopGroup(cmdbuffer);
+	fb->GetCommands()->PopGroup(cmdbuffer);
 }
 
 void VkLightmapper::CopyResult()
@@ -472,7 +466,7 @@ void VkLightmapper::CopyResult()
 
 	auto cmdbuffer = fb->GetCommands()->GetTransferCommands();
 
-	const bool timing = fb->GetCommands()->PushGroup(cmdbuffer, "lightmap.copy");
+	fb->GetCommands()->PushGroup(cmdbuffer, "lightmap.copy");
 
 	// Transition lightmap destination images to be used as framebuffers and the resolve image as sampling source
 	PipelineBarrier barrier0;
@@ -605,8 +599,7 @@ void VkLightmapper::CopyResult()
 		selected.Tile->GeometryUpdate = false;
 	}
 
-	if (timing)
-		fb->GetCommands()->PopGroup(cmdbuffer);
+	fb->GetCommands()->PopGroup(cmdbuffer);
 }
 
 void VkLightmapper::CreateShaders()

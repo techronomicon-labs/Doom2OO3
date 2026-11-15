@@ -28,8 +28,8 @@ public:
 	void WaitForCommands(bool finish, bool uploadOnly);
 	void FinishPublicationWitness();
 
-	bool PushGroup(VulkanCommandBuffer* cmdbuffer, const FString& name, VkPipelineStageFlagBits stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
-	void PopGroup(VulkanCommandBuffer* cmdbuffer, VkPipelineStageFlagBits stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+	bool PushGroup(VulkanCommandBuffer* cmdbuffer, const FString& name);
+	void PopGroup(VulkanCommandBuffer* cmdbuffer);
 	void UpdateGpuStats();
 
 	class DeleteList
@@ -122,8 +122,6 @@ private:
 	enum { MaxTimestampQueries = 100 };
 	std::unique_ptr<VulkanQueryPool> mTimestampQueryPool;
 	int mNextTimestampQuery = 0;
-	bool mToolGpuTiming = false;
-	bool mToolGpuCapabilityUnavailableReported = false;
 	std::vector<size_t> mGroupStack;
 	std::vector<TimestampQuery> timeElapsedQueries;
 	std::mutex mMutex;

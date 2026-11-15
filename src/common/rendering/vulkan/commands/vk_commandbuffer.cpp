@@ -34,9 +34,6 @@
 #include "diagnostics/hw_sdvkdiagnostics.h"
 #include "v_video.h"
 #include "i_system.h"
-#include "i_interface.h"
-#include "m_argv.h"
-#include "printf.h"
 #include <cmath>
 
 extern int rendered_commandbuffers;
@@ -76,11 +73,8 @@ VkCommandBufferManager::VkCommandBufferManager(VulkanRenderDevice* fb) : fb(fb)
 			.QueryType(VK_QUERY_TYPE_TIMESTAMP, MaxTimestampQueries)
 			.Create(fb->GetDevice());
 
-		GetTransferCommands()->resetQueryPool(mTimestampQueryPool.get(), 0, MaxTimestampQueries);
+		GetDrawCommands()->resetQueryPool(mTimestampQueryPool.get(), 0, MaxTimestampQueries);
 	}
-	mToolGpuTiming = RunningAsTool && Args->CheckParm("-sdvkobservegpu");
-	if (mToolGpuTiming)
-		gpuStatActive = true;
 }
 
 VkCommandBufferManager::~VkCommandBufferManager()
@@ -554,20 +548,18 @@ void VkCommandBufferManager::FinishPublicationWitness()
 	CfxTrace::WitnessFinish();
 }
 
-bool VkCommandBufferManager::PushGroup(VulkanCommandBuffer* cmdbuffer, const FString& name, VkPipelineStageFlagBits stage)
+bool VkCommandBufferManager::PushGroup(VulkanCommandBuffer* cmdbuffer, const FString& name)
 {
 	if (!gpuStatActive)
 		return false;
 
-	// Reserve a closing timestamp for this group and each open ancestor.
-	// Rejected inner groups must not borrow the outer group's last slot.
-	if (mNextTimestampQuery + mGroupStack.size() + 2 <= MaxTimestampQueries && fb->GetDevice()->GraphicsTimeQueries)
+	if (mNextTimestampQuery < MaxTimestampQueries && fb->GetDevice()->GraphicsTimeQueries)
 	{
 		TimestampQuery q;
 		q.name = name;
 		q.startIndex = mNextTimestampQuery++;
 		q.endIndex = 0;
-		cmdbuffer->writeTimestamp(stage, mTimestampQueryPool.get(), q.startIndex);
+		cmdbuffer->writeTimestamp(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, mTimestampQueryPool.get(), q.startIndex);
 		mGroupStack.push_back(timeElapsedQueries.size());
 		timeElapsedQueries.push_back(q);
 		return true;
@@ -575,7 +567,7 @@ bool VkCommandBufferManager::PushGroup(VulkanCommandBuffer* cmdbuffer, const FSt
 	return false;
 }
 
-void VkCommandBufferManager::PopGroup(VulkanCommandBuffer* cmdbuffer, VkPipelineStageFlagBits stage)
+void VkCommandBufferManager::PopGroup(VulkanCommandBuffer* cmdbuffer)
 {
 	if (!gpuStatActive || mGroupStack.empty())
 		return;
@@ -586,7 +578,7 @@ void VkCommandBufferManager::PopGroup(VulkanCommandBuffer* cmdbuffer, VkPipeline
 	if (mNextTimestampQuery < MaxTimestampQueries && fb->GetDevice()->GraphicsTimeQueries)
 	{
 		q.endIndex = mNextTimestampQuery++;
-		cmdbuffer->writeTimestamp(stage, mTimestampQueryPool.get(), q.endIndex);
+		cmdbuffer->writeTimestamp(VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, mTimestampQueryPool.get(), q.endIndex);
 	}
 }
 
@@ -600,20 +592,19 @@ void VkCommandBufferManager::UpdateGpuStats()
 	double timestampPeriod = fb->GetDevice()->PhysicalDevice.Properties.Properties.limits.timestampPeriod;
 
 	// Reuse the existing requested profiling readback: never issue an additional
-	// query or wait for diagnostics. These named groups can nest and are not
-	// a sum or a whole-frame GPU timer.
+	// query or wait for diagnostics. These can be nested named groups measured at
+	// COLOR_ATTACHMENT_OUTPUT; they are not a sum or a whole-frame GPU timer.
 	const bool diagnosticsRequested = SdvkDiagnostics::GpuTimingRequested();
 	bool diagnosticQueriesReady = false;
 	uint64_t timestampMask = std::numeric_limits<uint64_t>::max();
-	if (diagnosticsRequested || mToolGpuTiming)
+	if (diagnosticsRequested)
 	{
 		const auto* device = fb->GetDevice();
 		const auto& families = device->PhysicalDevice.QueueFamilies;
 		const bool familyKnown = device->GraphicsFamily >= 0 && static_cast<size_t>(device->GraphicsFamily) < families.size();
 		const uint32_t validBits = familyKnown ? families[device->GraphicsFamily].timestampValidBits : 0;
 		const char* unavailable = nullptr;
-		const bool timestampsUnsupported = !device->GraphicsTimeQueries || (familyKnown && validBits == 0);
-		if (timestampsUnsupported)
+		if (!device->GraphicsTimeQueries || (familyKnown && validBits == 0))
 			unavailable = "graphics_queue_timestamp_queries_unsupported";
 		else if (!familyKnown || validBits < 36 || validBits > 64 || !std::isfinite(timestampPeriod) || timestampPeriod <= 0)
 			unavailable = "graphics_queue_timestamp_metadata_invalid";
@@ -629,19 +620,7 @@ void VkCommandBufferManager::UpdateGpuStats()
 			unavailable = "gpu_timestamp_groups_incomplete_or_capacity_reached";
 
 		if (unavailable)
-		{
-			if (diagnosticsRequested)
-				SdvkDiagnostics::GpuUnavailable(unavailable);
-			// An unsupported device cannot allocate even the first query.
-			// Emit one capability record without flooding idle tool frames.
-			if (mToolGpuTiming && (mNextTimestampQuery > 0 ||
-				(timestampsUnsupported && !mToolGpuCapabilityUnavailableReported)))
-			{
-				Printf("SDVK_TOOL_GPU unavailable=%s\n", unavailable);
-				if (timestampsUnsupported)
-					mToolGpuCapabilityUnavailableReported = true;
-			}
-		}
+			SdvkDiagnostics::GpuUnavailable(unavailable);
 		else
 		{
 			diagnosticQueriesReady = true;
@@ -661,11 +640,7 @@ void VkCommandBufferManager::UpdateGpuStats()
 			// This measures an interval shorter than one full counter period;
 			// timestamps alone cannot disambiguate additional complete wraps.
 			const uint64_t elapsedTicks = (timestamps[q.endIndex] - timestamps[q.startIndex]) & timestampMask;
-			const double milliseconds = double(elapsedTicks) * timestampPeriod / 1000000.0;
-			if (diagnosticsRequested)
-				SdvkDiagnostics::GpuGroup(q.name.GetChars(), milliseconds);
-			if (mToolGpuTiming)
-				Printf("SDVK_TOOL_GPU group=%s ms=%.6f\n", q.name.GetChars(), milliseconds);
+			SdvkDiagnostics::GpuGroup(q.name.GetChars(), double(elapsedTicks) * timestampPeriod / 1000000.0);
 		}
 
 		// Preserve the inherited display calculation and rounding independently.
@@ -679,6 +654,6 @@ void VkCommandBufferManager::UpdateGpuStats()
 	timeElapsedQueries.clear();
 	mGroupStack.clear();
 
-	gpuStatActive = keepGpuStatActive || diagnosticsRequested || mToolGpuTiming;
+	gpuStatActive = keepGpuStatActive || diagnosticsRequested;
 	keepGpuStatActive = false;
 }

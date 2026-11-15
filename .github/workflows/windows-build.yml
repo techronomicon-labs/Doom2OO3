@@ -1,0 +1,27 @@
+name: Windows build
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure Vulkan Doom engine
+        run: cmake -S . -B build/windows -G "Visual Studio 17 2022" -A x64 -DPK3_QUIET_ZIPDIR=ON
+      - name: Compile engine and resources
+        run: cmake --build build/windows --config RelWithDebInfo --parallel 4
+      - name: Verify runnable binary identity
+        shell: pwsh
+        run: |
+          & "./build/windows/RelWithDebInfo/vkdoom.exe" --version
+          & "./build/windows/RelWithDebInfo/vktool.exe" --version
+      - name: Build unprivileged standalone flashlight
+        run: python tools/doom2_showcase/build.py --out build/flashlight-ci
+      - name: Check add-on package
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "build/flashlight-ci/Local-Flashlight.pk3")) { throw "Flashlight package missing" }
