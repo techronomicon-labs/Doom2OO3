@@ -165,8 +165,16 @@ def capture(args, folder, package, scene, depth, mode, commit):
     with Image.open(path) as image:
         require(image.size == SIZE and image.convert("RGB").getcolors(31) is None,
                 f"Blank or wrong-size image: {path}")
+    # Presentation interpolation can round the same stationary pose to its
+    # adjacent binary double. Keep the raw measurements in frame.renderer.json.
+    def fixed_camera(frame):
+        camera = frame["camera"]
+        return {**{k: [round(v, 9) for v in camera[k]]
+                   for k in ("position", "angles", "hardware_angles")},
+                "fov": round(camera["fov"], 9)}
+
     fixed = [{**{key: frame[key] for key in ("map", "settings", "walls", "flats", "spot_lights")},
-              "camera": {k:v for k,v in frame["camera"].items() if k != "fraction"}} for frame in frames]
+              "camera": fixed_camera(frame)} for frame in frames]
     return path, {"argv": command, "backend": build, "conditions": fixed,
                   "cpu_render_view_ms": statistics.mean(f["cpu_render_view_ms"] for f in frames),
                   "sha256": digest(path), "depth": depth, "profile": mode, "status": "PASS"}
