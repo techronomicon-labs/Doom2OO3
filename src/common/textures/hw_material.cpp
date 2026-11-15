@@ -38,6 +38,8 @@ TArray<UserShaderDesc> usershaders;
 
 void FRenderState::SetMaterial(FMaterial *mat, int clampmode, int translation, int overrideshader, PClass *cls)
 {
+	// Reset per draw; only explicit world paths can enable virtual relief.
+	SetWorldVirtualReliefDepth(0.f);
 	mMaterial.mMaterial = mat;
 	mMaterial.mClampMode = clampmode;
 	mMaterial.mTranslation = translation;

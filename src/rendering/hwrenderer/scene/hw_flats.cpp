@@ -52,6 +52,7 @@
 #include <optional>
 
 EXTERN_CVAR(Bool, lm_dynlights);
+EXTERN_CVAR(Float, gl_world_virtual_relief_depth);
 
 #ifdef _DEBUG
 CVAR(Int, gl_breaksec, -1, 0)
@@ -380,6 +381,8 @@ void HWFlat::DrawFlat(HWFlatDispatcher *di, FRenderState &state, bool translucen
 		if (sector->special != GLSector_Skybox)
 		{
 			state.SetMaterial(texture, UF_Texture, 0, CLAMP_NONE, NO_TRANSLATION, -1);
+			if (!texture->isWarped())
+				state.SetWorldVirtualReliefDepth(float(gl_world_virtual_relief_depth));
 			bool texmatrix = SetPlaneTextureRotation(state, &plane, texture);
 			DrawSubsectors(di, state);
 			if (texmatrix)

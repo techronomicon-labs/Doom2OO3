@@ -49,6 +49,7 @@
 #include <optional>
 
 EXTERN_CVAR(Bool, lm_dynlights);
+EXTERN_CVAR(Float, gl_world_virtual_relief_depth);
 
 void SetGlowPlanes(FRenderState &state, const secplane_t& top, const secplane_t& bottom)
 {
@@ -212,6 +213,8 @@ void HWWall::RenderTexturedWall(HWWallDispatcher*di, FRenderState &state, int rf
 		SetGlowPlanes(state, frontsector->ceilingplane, frontsector->floorplane);
 	}
 	state.SetMaterial(texture, UF_Texture, 0, flags & 3, NO_TRANSLATION, -1);
+	if (!(flags & HWWall::HWF_TRANSLUCENT) && !texture->isWarped())
+		state.SetWorldVirtualReliefDepth(float(gl_world_virtual_relief_depth));
 #ifdef NPOT_EMULATION
 	// Test code, could be reactivated as a compatibility option in the unlikely event that some old vanilla map eve needs it.
 	if (hw_npottest)

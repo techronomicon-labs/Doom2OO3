@@ -374,7 +374,14 @@ def maps_for(pixels, family):
     if family in ("sky / static artwork", "liquid / static sample"):
         ao = np.ones((th, tw))
     spec = np.clip(0.12 + 0.5 * metal + 0.12 * (1 - rough), 0.08, 0.8)
-    result = {"normal": Image.fromarray(normal, "RGB")}
+    # Center height on the original plane. A constant texture stays flat.
+    center = float(np.median(height[visible])) if np.any(visible) else 0.0
+    virtual_height = np.clip(0.5 + height - center, 0.0, 1.0)
+    virtual_height[~visible] = 0.5
+    result = {
+        "normal": Image.fromarray(normal, "RGB"),
+        "height": Image.fromarray(np.uint8(np.rint(virtual_height * 255)), "L"),
+    }
     for key, array in (
         ("metallic", metal),
         ("roughness", rough),

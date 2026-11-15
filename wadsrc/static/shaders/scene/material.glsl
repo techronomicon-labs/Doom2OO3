@@ -17,6 +17,7 @@ struct Material
 	float Metallic;
 	float Roughness;
 	float AO;
+	float VirtualHeight; // neutral = 0.5
 };
 
 vec4 Process(vec4 color);
@@ -50,6 +51,7 @@ Material CreateMaterial()
 	material.Metallic = 0.0;
 	material.Roughness = 0.0;
 	material.AO = 0.0;
+	material.VirtualHeight = 0.5;
 	SetupMaterial(material);
 	return material;
 }
@@ -107,6 +109,9 @@ Material CreateMaterial()
 				material.Metallic = texture(metallictexture, texCoord.st).r;
 				material.Roughness = texture(roughnesstexture, texCoord.st).r;
 				material.AO = texture(aotexture, texCoord.st).r;
+				// Only lighting position changes; no UV/depth/shadow modification.
+				if (uWorldVirtualReliefParams.x > 0.0 && uHeightTextureIndex >= 0)
+					material.VirtualHeight = clamp(texture(uHeightTextureIndex, texCoord.st).r, 0.0, 1.0);
 			#endif
 			
 			#ifdef SPECULAR

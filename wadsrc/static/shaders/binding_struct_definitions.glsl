@@ -128,6 +128,7 @@ struct SurfaceUniforms
 	vec4 uSpriteReliefBounds;
 	vec4 uViewmodelSample;
 	vec4 uViewmodelMode;
+	vec4 uWorldVirtualReliefParams;
 };
 
 struct SurfaceLightUniforms

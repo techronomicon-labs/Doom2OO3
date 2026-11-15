@@ -223,6 +223,7 @@ public:
 		mSurfaceUniforms.uLightLevel = -1.0f;
 		mSurfaceUniforms.uDepthFadeThreshold = 0.0f;
 		mSurfaceUniforms.uHeightTextureIndex = -1;
+		SetWorldVirtualReliefDepth(0.f);
 		ClearSpriteTangentBasis();
 		ClearSpriteRelief();
 		ClearViewmodelLighting();
@@ -287,6 +288,11 @@ public:
 	{
 		mSurfaceUniforms.uSpriteReliefParams = { 0.f, 0.f, 0.f, 0.f };
 		mSurfaceUniforms.uSpriteReliefBounds = { 0.f, 0.f, 0.f, 0.f };
+	}
+
+	void SetWorldVirtualReliefDepth(float depth)
+	{
+		mSurfaceUniforms.uWorldVirtualReliefParams = { depth, 0.f, 0.f, 0.f };
 	}
 
 	void SetNormal(FVector3 norm)

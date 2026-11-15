@@ -69,6 +69,8 @@ struct SurfaceUniforms
 	// SDVK-011 shader-world lighting sample; W enables enhanced HUD lighting.
 	FVector4 uViewmodelSample = {};
 	FVector4 uViewmodelMode = {}; // requested, effective, fallback, HUD marker (1 card, 2 model)
+	// X = height-derived virtual lighting displacement in Doom world units.
+	FVector4 uWorldVirtualReliefParams = {};
 };
 
 struct SurfaceLightUniforms

@@ -34,7 +34,7 @@ FEATURE_PAGES = [
         ["WOODMET2", "BRWINDOW", "CRATE1", "TEKBRON1", "GRAY1", "BRICK7"],
     ),
 ]
-CHANNELS = ("normal", "metallic", "roughness", "ao")
+CHANNELS = ("normal", "metallic", "roughness", "ao", "height")
 
 
 def build_flashlight(out):

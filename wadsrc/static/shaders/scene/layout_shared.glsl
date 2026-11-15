@@ -64,6 +64,7 @@
 #define uSpriteNormal data[uDataIndex].uSpriteNormal
 #define uSpriteReliefParams data[uDataIndex].uSpriteReliefParams
 #define uSpriteReliefBounds data[uDataIndex].uSpriteReliefBounds
+#define uWorldVirtualReliefParams data[uDataIndex].uWorldVirtualReliefParams
 #define uViewmodelSample data[uDataIndex].uViewmodelSample
 // Lighting only: preserve geometry, depth, fog, alpha and relief inputs.
 #define SDVK_LIGHTING_POSITION (uViewmodelSample.w > 0.5 ? uViewmodelSample.xyz : pixelpos.xyz)

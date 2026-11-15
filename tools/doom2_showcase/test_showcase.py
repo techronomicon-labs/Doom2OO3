@@ -15,7 +15,7 @@ from PIL import Image
 import build
 from dbp50_effective import reconstruct_rows
 import gallery
-from material_profiles_v2 import cpu_controls
+from material_profiles_v2 import cpu_controls, build_channels
 from sprite_materials import maps_for
 
 
@@ -83,6 +83,21 @@ class ShowcaseTests(unittest.TestCase):
         self.assertEqual(gun["normal"].shape, (16, 24, 3))
         length = np.linalg.norm(gun["normal"].astype(float) / 127.5 - 1, axis=2)
         self.assertTrue(np.all(np.abs(length - 1) < 0.015))
+
+    def test_world_virtual_height_channel(self):
+        self.assertIn("height", build.CHANNELS)
+        flat = np.full((32, 32, 4), (64, 64, 64, 255), dtype=np.uint8)
+        neutral, _ = build_channels(flat, "GRAY1", "wall", "painted panels")
+        base = np.asarray(neutral["height"])
+        self.assertEqual(base.shape, neutral["normal"].size[::-1])
+        self.assertTrue(np.all(base == 128))
+        relief = flat.copy()
+        relief[:, 8:24, :3] = 210
+        varied, _ = build_channels(relief, "GRAY1", "wall", "painted panels")
+        raised = np.asarray(varied["height"])
+        self.assertGreater(int(np.ptp(raised)), 16)
+        self.assertEqual(set(build.CHANNELS) - {"height"},
+                         {"normal", "metallic", "roughness", "ao"})
 
     def test_palette_only_change_selects_override(self):
         original, entries = switch_fixture()

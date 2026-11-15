@@ -42,6 +42,7 @@
 #include "hw_cvars.h"
 #include "menu.h"
 #include "printf.h"
+#include <cmath>
 
 
 CUSTOM_CVAR(Int, gl_fogmode, 2, CVAR_ARCHIVE | CVAR_NOINITCALL)
@@ -53,6 +54,14 @@ CUSTOM_CVAR(Int, gl_fogmode, 2, CVAR_ARCHIVE | CVAR_NOINITCALL)
 
 // OpenGL stuff moved here
 // GL related CVARs
+// Experimental world-surface virtual depth for local PBR lights only.
+CUSTOM_CVAR(Float, gl_world_virtual_relief_depth, 0.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (!std::isfinite(float(self))) self = 0.0f;
+	else if (self < 0.0f) self = 0.0f;
+	else if (self > 16.0f) self = 16.0f;
+}
+
 CVAR(Bool, gl_portals, true, 0)
 CVAR(Bool,gl_mirrors,true,0)	// This is for debugging only!
 CVAR(Bool,gl_mirror_envmap, true, CVAR_GLOBALCONFIG|CVAR_ARCHIVE)

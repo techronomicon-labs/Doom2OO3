@@ -48,15 +48,21 @@ vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness)
 	return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(1.0 - cosTheta, 5.0);
 }
 
-vec3 ProcessLight(const DynLightInfo light, vec3 albedo, float metallic, float roughness, const vec3 N, const vec3 V, const vec3 F0)
+vec3 ProcessLight(const DynLightInfo light, vec3 albedo, float metallic, float roughness,
+	const vec3 N, const vec3 V, const vec3 virtualV, const vec3 F0, const vec3 virtualPos)
 {
-	vec3 L = normalize(light.pos.xyz - SDVK_LIGHTING_POSITION);
-	vec3 H = normalize(V + L);
+	// Sunlight and world-visibility rays continue to use geometric position.
+	bool isSun = (light.flags & LIGHTINFO_SUN) != 0;
+	vec3 lightingPos = isSun ? SDVK_LIGHTING_POSITION : virtualPos;
+	vec3 viewDir = isSun ? V : virtualV;
+	vec3 L = normalize(light.pos.xyz - lightingPos);
+	vec3 H = normalize(viewDir + L);
 
-	float attenuation = distanceAttenuation(distance(light.pos.xyz, SDVK_LIGHTING_POSITION), light.radius, light.strength, light.linearity);
+	float attenuation = distanceAttenuation(distance(light.pos.xyz, lightingPos), light.radius, light.strength, light.linearity);
 	if ((light.flags & LIGHTINFO_SPOT) != 0)
 	{
-		attenuation *= spotLightAttenuation(light.pos.xyz, light.spotDir.xyz, light.spotInnerAngle, light.spotOuterAngle);
+		float spotCosine = dot(L, light.spotDir.xyz);
+		attenuation *= smoothstep(light.spotOuterAngle, light.spotInnerAngle, spotCosine);
 	}
 	
 	if ((light.flags & LIGHTINFO_ATTENUATED) != 0)
@@ -84,13 +90,13 @@ vec3 ProcessLight(const DynLightInfo light, vec3 albedo, float metallic, float r
 		// cook-torrance brdf
 		float NDF = DistributionGGX(N, H, roughness);
 		float G = GeometrySmith(N, V, L, roughness);
-		vec3 F = fresnelSchlick(clamp(dot(H, V), 0.0, 1.0), F0);
+		vec3 F = fresnelSchlick(clamp(dot(H, viewDir), 0.0, 1.0), F0);
 		
 		vec3 kS = F;
 		vec3 kD = (vec3(1.0) - kS) * (1.0 - metallic);
 		
 		vec3 nominator = NDF * G * F;
-		float denominator = 4.0 * clamp(dot(N, V), 0.0, 1.0) * clamp(dot(N, L), 0.0, 1.0);
+		float denominator = 4.0 * clamp(dot(N, viewDir), 0.0, 1.0) * clamp(dot(N, L), 0.0, 1.0);
 		vec3 specular = nominator / max(denominator, 0.001);
 		
 		return (kD * albedo / PI + specular) * radiance;
@@ -126,6 +132,14 @@ vec3 ProcessMaterialLight(Material material, vec3 ambientLight, float sunlightAt
 
 	vec3 N = material.Normal;
 	vec3 V = normalize(uCameraPos.xyz - SDVK_LIGHTING_POSITION);
+	vec3 virtualPos = SDVK_LIGHTING_POSITION;
+	if (uWorldVirtualReliefParams.x > 0.0 && uHeightTextureIndex >= 0)
+	{
+		// An invented point for local light evaluation, not shadow/depth origin.
+		virtualPos += normalize(vWorldNormal.xyz) *
+			((material.VirtualHeight - 0.5) * uWorldVirtualReliefParams.x);
+	}
+	vec3 virtualV = normalize(uCameraPos.xyz - virtualPos);
 
 	vec3 F0 = mix(vec3(0.04), albedo, metallic);
 
@@ -163,14 +177,14 @@ vec3 ProcessMaterialLight(Material material, vec3 ambientLight, float sunlightAt
 			//
 			for(int i = lightRange.x; i < lightRange.y; i++)
 			{
-				Lo += ProcessLight(getLights()[i], albedo, metallic, roughness, N, V, F0);
+				Lo += ProcessLight(getLights()[i], albedo, metallic, roughness, N, V, virtualV, F0, virtualPos);
 			}
 			//
 			// subtractive lights
 			//
 			for(int i = lightRange.y; i < lightRange.z; i++)
 			{
-				Lo -= ProcessLight(getLights()[i], albedo, metallic, roughness, N, V, F0);
+				Lo -= ProcessLight(getLights()[i], albedo, metallic, roughness, N, V, virtualV, F0, virtualPos);
 			}
 		}
 	}
