@@ -18,6 +18,8 @@
 #include "diagnostics/hw_specialsurfacecontract.h"
 #include <cstring>
 
+EXTERN_CVAR(Bool, gl_actor_light_shadows)
+
 namespace
 {
 using namespace SdvkObservation;
@@ -723,6 +725,8 @@ void VulkanResources(VulkanRenderDevice* device)
             .Raw("staging", Object().Int("requests", staging.Requests).Int("bytes", staging.BytesRequested).Int("high_water", staging.HighWater)
                 .Int("reuses", staging.Reuses).Int("wrap_waits", staging.WrapWaits).Int("dedicated", staging.DedicatedRequests).Json())
             .Raw("light_uploads", StateEnabled() ? Object().Bool("available", true)
+                .Str("record_layout", "fdynlightinfo-shadow002-sidecar-v1")
+                .Int("record_stride_bytes", sizeof(FDynLightInfo)).Int("range_stride_bytes", sizeof(int) * 4)
                 .Int("range_capacity", rsbuffers->Lightbuffer.Count).Int("record_capacity", rsbuffers->Lightbuffer.Count)
                 .Int("range_capacity_bytes", uint64_t(rsbuffers->Lightbuffer.Count) * sizeof(int) * 4)
                 .Int("record_capacity_bytes", uint64_t(rsbuffers->Lightbuffer.Count) * sizeof(FDynLightInfo))
@@ -737,7 +741,15 @@ void VulkanResources(VulkanRenderDevice* device)
                     .Int("17_64", lightUploads.Uploads17To64).Int("65_256", lightUploads.Uploads65To256)
                     .Int("257_plus", lightUploads.Uploads257Plus).Json())
                 .Str("scope", "state-mode immediate Vulkan dynamic-light range/data uploads for this render frame; LevelMesh tile buffers are separate").Json()
-                : Unavailable("light upload counters are state-mode only to keep timing mode free of per-upload bookkeeping"));
+                : Unavailable("light upload counters are state-mode only to keep timing mode free of per-upload bookkeeping"))
+            .Raw("actor_shadows", Object().Bool("enabled", bool(gl_actor_light_shadows))
+                .Int("mask_width", ActorShadowMaskWidth).Int("mask_height", ActorShadowMaskHeight)
+                .Int("capacity", MaxActorShadowCastersPerFrame).Int("record_stride_bytes", sizeof(FActorShadowCaster))
+                .Int("uploaded_casters", rsbuffers->ActorShadowbuffer.UploadIndex.load())
+                .Int("overflow_casters", rsbuffers->ActorShadowbuffer.OverflowCasters.load())
+                .Int("frame_epoch", rsbuffers->ActorShadowbuffer.Epoch)
+                .Int("buffer_bytes", rsbuffers->ActorShadowbuffer.SSO->size)
+                .Str("scope", "CPU-authored current-frame SSBO ranges; rendered pixels verify shader consumption").Json());
         if (level.levelMesh)
         {
             const auto& epochs = level.levelMesh->GetMutationEpochs();

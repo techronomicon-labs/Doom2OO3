@@ -1,51 +1,67 @@
 
 // Check if light is in shadow
 
-float ActorOccluderRayVisibility(vec3 lightPos, vec3 receiver, ActorShadowCaster caster)
+float ActorOccluderRayVisibility(vec3 lightPos, vec3 receiver, int casterIndex)
 {
 	// Light-to-receiver ray intersects the actual light-facing sprite plane.
 	// Its binary coverage comes from the selected source frame alpha, not an
 	// opaque collision cylinder or any composited world-space decal.
-	if (caster.radius <= 0.0 || caster.bottom >= caster.top ||
-		caster.right <= caster.left)
+	vec3 center = actorShadowCasters[casterIndex].center;
+	float bottom = actorShadowCasters[casterIndex].bottom;
+	float top = actorShadowCasters[casterIndex].top;
+	float left = actorShadowCasters[casterIndex].left;
+	float right = actorShadowCasters[casterIndex].right;
+	if (actorShadowCasters[casterIndex].radius <= 0.0 || bottom >= top || right <= left)
 		return 1.0;
 	vec3 ray = receiver - lightPos;
-	vec2 n = vec2(caster.planeNx, caster.planeNz);
+	vec2 n = vec2(actorShadowCasters[casterIndex].planeNx, actorShadowCasters[casterIndex].planeNz);
 	float denom = dot(ray.xz, n);
 	if (abs(denom) < 0.00001)
 		return 1.0;
-	float t = dot(caster.center.xz - lightPos.xz, n) / denom;
-	if (t <= 0.002 || t >= 0.998)
+	float t = dot(center.xz - lightPos.xz, n) / denom;
+	// World-space endpoint tolerance does not grow into a large peter-panning
+	// gap for distant receivers. Sprite self-shadowing is excluded by identity.
+	float endpointBias = min(0.01, 0.05 / max(length(ray), 0.0001));
+	if (t <= endpointBias || t >= 1.0 - endpointBias)
 		return 1.0; // caster must be strictly between light and receiver
 	vec3 hit = lightPos + ray * t;
 	vec2 tangent = vec2(-n.y, n.x);
-	float horizontal = dot(hit.xz - caster.center.xz, tangent);
-	float u = (horizontal - caster.left) / (caster.right - caster.left);
-	float v = (hit.y - caster.bottom) / (caster.top - caster.bottom);
+	float horizontal = dot(hit.xz - center.xz, tangent);
+	// HWSprite's leftfac vertex uses source U=1 for an unmirrored frame.
+	// The rectangle and alpha are both unexpanded source-image coordinates.
+	float u = (right - horizontal) / (right - left);
+	float v = (hit.y - bottom) / (top - bottom);
 	if (u < 0.0 || u >= 1.0 || v < 0.0 || v >= 1.0)
 		return 1.0;
-	if (caster.mirrorX > 0.5)
+	if (actorShadowCasters[casterIndex].mirrorX > 0.5)
 		u = 1.0 - u;
-	if (caster.mirrorY > 0.5)
+	if (actorShadowCasters[casterIndex].mirrorY > 0.5)
 		v = 1.0 - v;
-	const int width = 16;
-	const int height = 32;
+	const int width = 64;
+	const int height = 128;
 	int px = clamp(int(floor(u * float(width))), 0, width - 1);
 	int py = clamp(int(floor((1.0 - v) * float(height))), 0, height - 1);
-	int word = py / 2;
-	int shift = (py & 1) * width + px;
-	return (caster.alphaWords[word] & (1u << uint(shift))) != 0u ? 0.0 : 1.0;
+	int bit = py * width + px;
+	return (actorShadowCasters[casterIndex].alphaWords[bit / 32] &
+		(1u << uint(bit & 31))) != 0u ? 0.0 : 1.0;
 }
 
 float ActorLightShadowVisibility(DynLightInfo light)
 {
-	if (light.actorShadowCount <= 0 || (light.flags & LIGHTINFO_SUN) != 0)
+	if (light.actorShadowCount <= 0 || light.actorShadowMask == 0 ||
+		(light.flags & LIGHTINFO_SUN) != 0)
 		return 1.0;
 	int count = min(light.actorShadowCount, 4);
+	// Validate the complete range before any SSBO access. Exhaustion simply
+	// leaves this emitter on its existing world-shadow path.
+	if (light.actorShadowIndex < 0 || light.actorShadowIndex >
+		min(actorShadowCasters.length(), 4096) - count)
+		return 1.0;
 	for (int i = 0; i < count; ++i)
 	{
-		if (ActorOccluderRayVisibility(light.pos.xyz, SDVK_LIGHTING_POSITION,
-			light.actorShadowCasters[i]) < 0.5)
+		if ((light.actorShadowMask & (1 << i)) != 0 &&
+			ActorOccluderRayVisibility(light.pos.xyz, SDVK_LIGHTING_POSITION,
+				light.actorShadowIndex + i) < 0.5)
 			return 0.0;
 	}
 	return 1.0;

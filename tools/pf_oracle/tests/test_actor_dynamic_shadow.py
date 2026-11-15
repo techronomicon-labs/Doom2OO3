@@ -7,10 +7,11 @@ import math
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
+MASK_WIDTH, MASK_HEIGHT = 64, 128
 
 
 def solid_mask():
-    return (0xFFFFFFFF,) * 16
+    return (0xFFFFFFFF,) * (MASK_WIDTH * MASK_HEIGHT // 32)
 
 
 def caster_for(light, mask=None, *, mirror_x=False, mirror_y=False):
@@ -35,19 +36,21 @@ def visibility(light, receiver, caster):
     if abs(denominator) < 1e-5:
         return 1.
     t = ((x - light[0]) * nx + (z - light[2]) * nz) / denominator
-    if not .002 < t < .998:
+    bias = min(.01, .05 / max(math.sqrt(sum(d*d for d in delta)), .0001))
+    if not bias < t < 1. - bias:
         return 1.
     hit = tuple(light[i] + delta[i] * t for i in range(3))
     horizontal = (hit[0] - x) * (-nz) + (hit[2] - z) * nx
-    u = (horizontal - left) / (right - left)
+    u = (right - horizontal) / (right - left)
     v = (hit[1] - bottom) / (top - bottom)
     if not (0. <= u < 1. and 0. <= v < 1.):
         return 1.
     if mirror_x: u = 1. - u
     if mirror_y: v = 1. - v
-    px = min(15, max(0, int(math.floor(u * 16.))))
-    py = min(31, max(0, int(math.floor((1. - v) * 32.))))
-    return float((mask[py // 2] & (1 << ((py % 2) * 16 + px))) == 0)
+    px = min(MASK_WIDTH - 1, max(0, int(math.floor(u * MASK_WIDTH))))
+    py = min(MASK_HEIGHT - 1, max(0, int(math.floor((1. - v) * MASK_HEIGHT))))
+    bit = py * MASK_WIDTH + px
+    return float((mask[bit // 32] & (1 << (bit % 32))) == 0)
 
 
 class ActorShadowContracts(unittest.TestCase):
@@ -61,8 +64,9 @@ class ActorShadowContracts(unittest.TestCase):
     def test_transparent_holes_do_not_cast(self):
         light = (-90., 60., 0.)
         full = list(solid_mask())
-        # Row 16, column 8 corresponds to the center of the silhouette.
-        full[16 // 2] &= ~(1 << 8)
+        # Row 64, column 32 corresponds to the center of the silhouette.
+        bit = 64 * MASK_WIDTH + 32
+        full[bit // 32] &= ~(1 << (bit % 32))
         self.assertEqual(visibility(light, (90., 0., 0.), caster_for(light, tuple(full))), 1.)
         self.assertEqual(visibility(light, (90., 40., 0.), caster_for(light, tuple(full))), 0.)
 
@@ -85,23 +89,54 @@ class ActorShadowContracts(unittest.TestCase):
         self.assertEqual(visibility((-90., 200., 0.), (90., 180., 0.),
                                     caster_for((-90., 200., 0.))), 1.)
 
+    def test_asymmetric_source_flips_once_in_the_authored_direction(self):
+        light = (-90., 60., 0.)
+        # Source U<.5 is clear, U>=.5 opaque; signed source U decreases
+        # along the sprite tangent, just as the actual HWSprite quad.
+        words = [0] * len(solid_mask())
+        for y in range(MASK_HEIGHT):
+            for x in range(MASK_WIDTH // 2, MASK_WIDTH):
+                bit = y * MASK_WIDTH + x
+                words[bit // 32] |= 1 << (bit % 32)
+        caster = caster_for(light, tuple(words))
+        self.assertEqual(visibility(light, (90., 0., 16.), caster), 1.)
+        self.assertEqual(visibility(light, (90., 0., -16.), caster), 0.)
+        flipped = caster_for(light, tuple(words), mirror_x=True)
+        self.assertEqual(visibility(light, (90., 0., 16.), flipped), 0.)
+        self.assertEqual(visibility(light, (90., 0., -16.), flipped), 1.)
+
+    def test_far_receiver_does_not_expand_the_endpoint_bias(self):
+        light = (-10000., 60., 0.)
+        # A receiver only one world unit behind a caster remains occluded,
+        # even when the source-to-receiver segment is very long.
+        self.assertEqual(visibility(light, (1., 30., 0.), caster_for(light)), 0.)
+
     def test_runtime_structural_abi_and_source_alpha(self):
         cpu = (ROOT / "src/common/rendering/hwrenderer/data/hw_dynlightdata.h").read_text()
         gpu = (ROOT / "wadsrc/static/shaders/binding_struct_definitions.glsl").read_text()
         tiled = (ROOT / "wadsrc/static/shaders/scene/comp_lighttiles.glsl").read_text()
         source = (ROOT / "src/rendering/hwrenderer/hw_dynlightdata.cpp").read_text()
-        self.assertIn("sizeof(FActorShadowCaster) == 112", cpu)
-        self.assertIn("sizeof(FDynLightInfo) == 544", cpu)
-        self.assertIn("ActorShadowMaskWidth = 16", cpu)
-        self.assertIn("ActorShadowMaskHeight = 32", cpu)
+        self.assertIn("sizeof(FActorShadowCaster) == 1072", cpu)
+        self.assertIn("sizeof(FDynLightInfo) == 80", cpu)
+        self.assertIn("ActorShadowMaskWidth = 64", cpu)
+        self.assertIn("ActorShadowMaskHeight = 128", cpu)
         self.assertIn("MaxActorShadowCastersPerLight = 4", cpu)
-        self.assertIn("uint alphaWords[16]", gpu)
-        self.assertIn("uint alphaWords[16]", tiled)
+        self.assertIn("uint alphaWords[256]", gpu)
+        self.assertNotIn("alphaWords", tiled)
+        for layout in (cpu, gpu, tiled):
+            self.assertIn("actorShadowIndex", layout)
+            self.assertIn("actorShadowCount", layout)
+            self.assertIn("actorShadowMask", layout)
         self.assertIn("GetThinkerIterator<AActor>()", source)
         self.assertIn("GetSpriteFrame(", source)
         self.assertIn("GetSpriteAngle(", source)
         self.assertIn("CreateTexBuffer(0)", source)
         self.assertIn("SourceAlphaMask(", source)
+        self.assertIn("FindModelFrame(", source)
+        self.assertIn("actor->picnum.isValid()", source)
+        self.assertIn("RF_INVISIBLE", source)
+        self.assertIn("actor->Floorclip", source)
+        self.assertIn("GetSpriteOffset(", source)
         self.assertIn("candidate == light->target", source)
         self.assertIn("candidate->Sector->PortalGroup != group", source)
         self.assertIn("gl_actor_light_shadows, false", source)
@@ -120,9 +155,10 @@ class ActorShadowContracts(unittest.TestCase):
         normal = (root / "lightmodel_normal.glsl").read_text()
         self.assertIn("float spotCosine = dot(lightdir, light.spotDir.xyz)", normal)
         shadow = (root / "light_shadow.glsl").read_text()
-        self.assertIn("caster.alphaWords[word]", shadow)
-        self.assertIn("caster.planeNx", shadow)
-        self.assertIn("caster.mirrorX", shadow)
+        self.assertIn("actorShadowCasters[casterIndex].alphaWords[bit / 32]", shadow)
+        self.assertIn("actorShadowCasters[casterIndex].planeNx", shadow)
+        self.assertIn("actorShadowCasters[casterIndex].mirrorX", shadow)
+        self.assertIn("actorShadowCasters.length()", shadow)
         self.assertNotIn("STYLE_Stencil", shadow)
         self.assertNotIn("discriminant", shadow)
 

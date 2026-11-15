@@ -165,14 +165,14 @@ struct ActorShadowCaster
 	float right;
 	float mirrorX;
 	float mirrorY;
-	uint alphaWords[16];
+	uint alphaWords[256];
 };
 
 struct DynLightInfo
 {
-	vec3 pos; float padding0;
-	vec3 color; float padding1;
-	vec3 spotDir; float padding2;
+	vec3 pos; int actorShadowIndex;
+	vec3 color; int actorShadowCount;
+	vec3 spotDir; int actorShadowMask;
 	float radius;
 	float linearity;
 	float softShadowRadius;
@@ -181,11 +181,6 @@ struct DynLightInfo
 	float spotOuterAngle;
 	int shadowIndex;
 	int flags;
-	int actorShadowCount;
-	int actorShadowPad0;
-	int actorShadowPad1;
-	int actorShadowPad2;
-	ActorShadowCaster actorShadowCasters[4];
 };
 
 struct LightTileBlock

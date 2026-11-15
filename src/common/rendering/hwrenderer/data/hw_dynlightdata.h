@@ -26,6 +26,7 @@
 #include "tarray.h"
 #include "vectors.h"
 #include <cstdint>
+#include <cstddef>
 
 enum FDynLightInfoFlags
 {
@@ -36,14 +37,16 @@ enum FDynLightInfoFlags
 	LIGHTINFO_SUN = 16,
 };
 
-// Light-facing source-alpha silhouette, sampled into a 16x32 binary mask.
+// Light-facing source-alpha silhouette, sampled into a 64x128 binary mask.
 // Actor x/y/z positions use renderer space (x, height, map-y). The visible
 // sprite image stays unchanged: only its independently projected shadow alpha
-// is downsampled. Each pair of 16-pixel rows packs into one uint32 mask word.
+// is sampled. Masks live in a bounded frame-owned side buffer, never repeated
+// in every surface's dynamic-light record. Each uint32 packs 32 source samples.
 constexpr int MaxActorShadowCastersPerLight = 4;
-constexpr int ActorShadowMaskWidth = 16;
-constexpr int ActorShadowMaskHeight = 32;
+constexpr int ActorShadowMaskWidth = 64;
+constexpr int ActorShadowMaskHeight = 128;
 constexpr int ActorShadowMaskWords = ActorShadowMaskWidth * ActorShadowMaskHeight / 32;
+constexpr int MaxActorShadowCastersPerFrame = 4096;
 struct FActorShadowCaster
 {
 	float x, y, z, radius;   // sprite anchor; radius used only for selection
@@ -57,15 +60,15 @@ struct FDynLightInfo
 	float x;
 	float y;
 	float z;
-	float padding0; // 4
+	int actorShadowIndex; // side-buffer range; valid only when count/mask != 0
 	float r;
 	float g;
 	float b;
-	float padding1; // 8
+	int actorShadowCount; // 8
 	float spotDirX;
 	float spotDirY;
 	float spotDirZ;
-	float padding2; // 12
+	int actorShadowMask; // receiver-specific enabled bits; excludes self
 	float radius;
 	float linearity;
 	float softShadowRadius;
@@ -74,14 +77,14 @@ struct FDynLightInfo
 	float spotOuterAngle;
 	int shadowIndex;
 	int flags; // 20
-	int actorShadowCount;
-	int actorShadowPad0;
-	int actorShadowPad1;
-	int actorShadowPad2; // 24
-	FActorShadowCaster actorShadowCasters[MaxActorShadowCastersPerLight]; // 56
 };
-static_assert(sizeof(FActorShadowCaster) == 112, "Actor shadow buffer ABI changed");
-static_assert(sizeof(FDynLightInfo) == 544, "Dynamic-light buffer ABI changed");
+static_assert(sizeof(FActorShadowCaster) == 1072, "Actor shadow buffer ABI changed");
+static_assert(offsetof(FActorShadowCaster, alphaWords) == 48, "Actor mask offset changed");
+// Reuse the three existing padding words: OFF retains the original light stride.
+static_assert(sizeof(FDynLightInfo) == 80, "Dynamic-light buffer ABI changed");
+static_assert(offsetof(FDynLightInfo, actorShadowIndex) == 12, "Actor range offset changed");
+static_assert(offsetof(FDynLightInfo, actorShadowCount) == 28, "Actor count offset changed");
+static_assert(offsetof(FDynLightInfo, actorShadowMask) == 44, "Actor mask bits offset changed");
 
 enum FDynLightDataArrays
 {
