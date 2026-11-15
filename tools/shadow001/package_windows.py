@@ -32,33 +32,41 @@ def package(runtime: Path, resource_root: Path, out: Path, expected_commit: str)
     if not (runtime / "vkdoom.exe").is_file():
         raise ValueError("Source-built vkdoom.exe is missing")
     files: dict[str, Path] = {}
-    # Accept only product/runtime payloads, excluding PDB, IWADs, saves and config.
+    # Never copy the optional support/brightmap/widescreen archives: they contain
+    # game-derived artwork. Rebuild only the IWAD identification metadata below.
     for directory in (resource_root, runtime):
         for path in directory.iterdir():
-            if path.is_file() and path.suffix.lower() in (".dll", ".pk3"):
+            if path.is_file() and (path.suffix.lower() == ".dll" or path.name == "vkdoom.pk3"):
                 files[path.name] = path
-        for name in ("soundfonts", "fm_banks"):
-            base = directory / name
-            if base.is_dir():
-                for path in base.rglob("*"):
-                    if path.is_file() and not path.is_symlink():
-                        files[path.relative_to(directory).as_posix()] = path
+        for name in ("soundfonts/vkdoom.sf2", "fm_banks/GENMIDI.GS.wopl",
+                     "fm_banks/gs-by-papiezak-and-sneakernets.wopn"):
+            path = directory / name
+            if path.is_file() and not path.is_symlink():
+                files[name] = path
     files["vkdoom.exe"] = runtime / "vkdoom.exe"
     licenses = runtime / "licenses.zip"
     if not licenses.is_file():
         licenses = ROOT / "bin/licenses.zip"
     if licenses.is_file():
         files["licenses.zip"] = licenses
-    required = {"vkdoom.pk3", "game_support.pk3", "lights.pk3", "brightmaps.pk3", "game_widescreen_gfx.pk3",
-                "zmusic.dll", "libsndfile-1.dll", "openal32.dll", "licenses.zip", "soundfonts/vkdoom.sf2",
+    required = {"vkdoom.pk3", "zmusic.dll", "libsndfile-1.dll", "openal32.dll", "licenses.zip", "soundfonts/vkdoom.sf2",
                 "fm_banks/GENMIDI.GS.wopl", "fm_banks/gs-by-papiezak-and-sneakernets.wopn"}
     if not required <= files.keys():
         raise ValueError("Matching bundled Windows runtime payload missing: " + ", ".join(sorted(required-files.keys())))
+    metadata_source = ROOT / "wadsrc_extra/static/iwadinfo.txt"
+    metadata = metadata_source.read_bytes()
     out.mkdir(parents=True)
     for name, path in sorted(files.items()):
         target = out / "runtime" / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(path, target)
+    # FIWadManager loads IWADINFO from BASEWAD + OPTIONALWAD before identifying
+    # the owner's IWAD. Preserve the exact source catalogue and recognition order
+    # without any optional game graphics, sprites, fonts or narrative text.
+    with zipfile.ZipFile(out / "runtime/game_support.pk3", "x", zipfile.ZIP_DEFLATED) as z:
+        member = zipfile.ZipInfo("iwadinfo.txt", date_time=(1980, 1, 1, 0, 0, 0))
+        member.compress_type = zipfile.ZIP_DEFLATED
+        z.writestr(member, metadata)
     for name in ("LICENSE", "LICENSE.txt", "COPYING", "COPYING.txt"):
         if (ROOT / name).is_file():
             shutil.copyfile(ROOT / name, out / name)
@@ -78,7 +86,7 @@ def package(runtime: Path, resource_root: Path, out: Path, expected_commit: str)
         'if (!(Test-Path -LiteralPath $Iwad -PathType Leaf)) { throw "IWAD not found" }\n'
         'Write-Output "Prepared only. Physical GPU STOP is ACTIVE."\n'
         'Write-Output "After separate authorization, paste this command:"\n'
-        'Write-Output ("& \'{0}\' -noautoload -noautoexec -nosound -iwad \'{1}\' -file \'{2}\' -config \'{3}\' +vk_rayquery false +map SHDPLAY +exec \'{4}\'" -f '
+        'Write-Output ("& \'{0}\' -noautoload -noautoexec -noextras -nosound -iwad \'{1}\' -file \'{2}\' -config \'{3}\' +vk_rayquery false +map SHDPLAY +exec \'{4}\'" -f '
         "$exe.Replace(\"'\",\"''\"), $Iwad.Replace(\"'\",\"''\"), $scene.Replace(\"'\",\"''\"), $config.Replace(\"'\",\"''\"), $script.Replace(\"'\",\"''\"))\n",
         encoding="utf-8")
     (out / "README-FIRST.txt").write_text(
@@ -86,6 +94,7 @@ def package(runtime: Path, resource_root: Path, out: Path, expected_commit: str)
         "Physical GPU STOP is ACTIVE. Packaging and compilation are authorized; hardware execution is not.\n"
         "Owner-Launch-Command.ps1 prints the command only. Use it only after reviewing the playtest guide.\n"
         "No IWAD is included. Supply a legally owned Doom II IWAD or separately obtained Freedoom2.\n"
+        "Optional game artwork archives are omitted; game_support.pk3 is rebuilt with IWADINFO metadata only.\n"
         "The synthetic humanoid/map pixels are original CC0 assets; the engine retains its repository licenses.\n"
         "Source: " + expected_commit + "\n"
         "This package is not a claim of physical GPU stability, performance or visual acceptance.\n",
@@ -95,6 +104,10 @@ def package(runtime: Path, resource_root: Path, out: Path, expected_commit: str)
                  for path in sorted(out.rglob("*")) if path.is_file()}
     manifest = {"schema": "shadedoomvk.shadow001-windows-package/v1", "source_commit": expected_commit,
                 "status": "PACKAGED_NOT_EXECUTED", "physical_gpu_stop": "ACTIVE", "iwad_included": False,
+                "runtime_pk3_allowlist": ["vkdoom.pk3", "game_support.pk3"], "optional_game_assets_included": False,
+                "rebuilt_support_archive": {"members": ["iwadinfo.txt"],
+                    "source": metadata_source.relative_to(ROOT).as_posix(),
+                    "source_sha256": hashlib.sha256(metadata).hexdigest(), "scope": "IWAD identification metadata only"},
                 "native_launches": 0, "binary_source_claim": "compiled by source-matched CI; see workflow receipt",
                 "files": inventory}
     (out / "package.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")

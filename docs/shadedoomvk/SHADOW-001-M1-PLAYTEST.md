@@ -15,8 +15,12 @@ An attractive screenshot does not establish physical driver stability or GPU cos
 ## Build and prepare
 
 Use the exact source SHA recorded by the candidate PR and build receipt. The
-ordinary build produces `vkdoom.exe`, `vkdoom.pk3`, its other PK3 resources, runtime
-DLLs, soundfonts and banks. Windows CI packages these without starting Vulkan:
+ordinary build produces `vkdoom.exe`, `vkdoom.pk3`, runtime DLLs, soundfonts and
+banks. Windows CI packages this core runtime without starting Vulkan. It rebuilds
+`game_support.pk3` with exactly the source `iwadinfo.txt` metadata needed to identify
+the owner's IWAD. Original optional game-support, brightmap, light-definition and
+widescreen archives are excluded; no game artwork or narrative text is copied from
+them into the synthetic handoff:
 
 ```powershell
 python tools/shadow001/package_windows.py --runtime build/RelWithDebInfo --resource-root build --out build/shadow001-windows --expected-commit <exact-source-SHA>
@@ -24,7 +28,12 @@ python tools/shadow001/package_windows.py --runtime build/RelWithDebInfo --resou
 
 The generated ZIP contains `package.json`, which names the source commit and hashes
 every payload, the synthetic cases, this guide, license files and a script that
-**prints** the launch command. No IWAD or debug symbols are included.
+**prints** the launch command. No IWAD, optional game-art archive or debug symbols
+are included. The printed command disables optional extras as well as autoload.
+The minimal support archive targets direct loading of the synthetic Doom II or
+Freedoom2 demo; some game menu labels may show untranslated identifiers without
+the optional language catalogue. Native Windows playability remains pending the
+separately authorized owner session.
 
 The pure Python fixture preparation can also be run independently:
 
