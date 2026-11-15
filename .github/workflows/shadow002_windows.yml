@@ -1,0 +1,56 @@
+name: SHADOW-002 Windows research build
+
+on:
+  pull_request:
+    paths:
+      - 'src/common/rendering/hwrenderer/data/hw_dynlightdata.h'
+      - 'src/rendering/hwrenderer/hw_dynlightdata.cpp'
+      - 'wadsrc/static/shaders/**'
+      - 'tools/dynamic_shadows/**'
+      - 'docs/shadedoomvk/SHADOW-002-DYNAMIC-LIGHT-VISIBILITY.md'
+      - '.github/workflows/shadow002_windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  source-matched-windows:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Focused source and geometric contracts
+        shell: pwsh
+        run: python -m unittest discover -s tools/pf_oracle/tests -p test_actor_dynamic_shadow.py -v
+      - name: Prepare ORIGINAL PR190 standalone flashlight
+        shell: pwsh
+        run: python tools/doom2_showcase/build.py --out build/original-pr190-flashlight
+      - name: Configure native Windows Vulkan renderer
+        shell: pwsh
+        run: cmake -S . -B build/windows -G "Visual Studio 17 2022" -A x64 -DPK3_QUIET_ZIPDIR=ON
+      - name: Compile both native executables and engine resources
+        shell: pwsh
+        run: cmake --build build/windows --config RelWithDebInfo --parallel 3
+      - name: Check exact native source identity
+        shell: pwsh
+        run: python tools/check_build_identity.py --build-dir build/windows --config RelWithDebInfo --expected-state clean
+      - name: Package owner-playable research candidate with full built engine resources
+        shell: pwsh
+        run: |
+          $sha = (git rev-parse HEAD).Trim()
+          python tools/dynamic_shadows/package_windows.py --build build/windows --flashlight build/original-pr190-flashlight/Local-Flashlight.pk3 --out build/shadow002-win --expected-commit $sha
+      - name: Publish research build (NOT visual acceptance)
+        uses: actions/upload-artifact@v4
+        with:
+          name: shadow002-windows-source-matched
+          path: build/shadow002-win/
+          retention-days: 14
+          if-no-files-found: error
