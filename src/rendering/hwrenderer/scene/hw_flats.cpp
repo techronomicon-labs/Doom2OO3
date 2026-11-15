@@ -381,7 +381,7 @@ void HWFlat::DrawFlat(HWFlatDispatcher *di, FRenderState &state, bool translucen
 		if (sector->special != GLSector_Skybox)
 		{
 			state.SetMaterial(texture, UF_Texture, 0, CLAMP_NONE, NO_TRANSLATION, -1);
-			if (!texture->isWarped())
+			if (!texture->isMasked() && !texture->isWarped())
 				state.SetWorldVirtualReliefDepth(float(gl_world_virtual_relief_depth));
 			bool texmatrix = SetPlaneTextureRotation(state, &plane, texture);
 			DrawSubsectors(di, state);

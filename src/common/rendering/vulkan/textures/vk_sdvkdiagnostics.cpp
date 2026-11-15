@@ -271,6 +271,7 @@ struct FSdvkDiagnosticAccess
                 .Str("scope_name", entry->globalShaderAddr.type == 1 || entry->globalShaderAddr.type == 2 ? FName(ENamedName(entry->globalShaderAddr.name)).GetChars() : "global").Json())
             .Raw("resource", Identity(fb->GetDescriptorSetManager()->GetBindlessIdentity(uniforms.uTextureIndex)))
             .Int("height_texture_index", uniforms.uHeightTextureIndex)
+            .Num("world_virtual_relief_depth", uniforms.uWorldVirtualReliefParams.X)
             .Raw("layers", layers).Json();
     }
 

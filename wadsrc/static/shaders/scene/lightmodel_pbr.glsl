@@ -133,13 +133,15 @@ vec3 ProcessMaterialLight(Material material, vec3 ambientLight, float sunlightAt
 	vec3 N = material.Normal;
 	vec3 V = normalize(uCameraPos.xyz - SDVK_LIGHTING_POSITION);
 	vec3 virtualPos = SDVK_LIGHTING_POSITION;
-	if (uWorldVirtualReliefParams.x > 0.0 && uHeightTextureIndex >= 0)
+	vec3 virtualV = V;
+	float heightOffset = material.VirtualHeight - 0.5;
+	// The two nearest 8-bit UNORM codes represent the neutral plane.
+	if (uWorldVirtualReliefParams.x > 0.0 && abs(heightOffset) > 0.002)
 	{
 		// An invented point for local light evaluation, not shadow/depth origin.
-		virtualPos += normalize(vWorldNormal.xyz) *
-			((material.VirtualHeight - 0.5) * uWorldVirtualReliefParams.x);
+		virtualPos += normalize(vWorldNormal.xyz) * (heightOffset * uWorldVirtualReliefParams.x);
+		virtualV = normalize(uCameraPos.xyz - virtualPos);
 	}
-	vec3 virtualV = normalize(uCameraPos.xyz - virtualPos);
 
 	vec3 F0 = mix(vec3(0.04), albedo, metallic);
 

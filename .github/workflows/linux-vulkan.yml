@@ -58,7 +58,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        map: [MAP01, MAP02]
+        map: [MAP01, MAP02, virtual-position]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -76,6 +76,7 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y mesa-vulkan-drivers libsdl2-2.0-0 libvpx9 libgtk-3-0t64 libwebp7 xvfb xauth freedoom python3-pil
       - name: Render Freedoom on llvmpipe
+        if: matrix.map != 'virtual-position'
         env:
           SMOKE_MAP: ${{ matrix.map }}
         run: |
@@ -98,6 +99,17 @@ jobs:
             +gl_light_shadows 0 +gl_levelmesh false +map "$SMOKE_MAP" \
             > evidence/engine.log 2>&1
           /usr/bin/python3 tools/ci/check_vulkan_smoke.py evidence "$SMOKE_MAP" "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Compare virtual-position lighting on llvmpipe
+        if: matrix.map == 'virtual-position'
+        run: |
+          shopt -s nullglob
+          icds=(/usr/share/vulkan/icd.d/lvp_icd*.json)
+          test "${#icds[@]}" -eq 1
+          export VK_DRIVER_FILES="${icds[0]}"
+          export LD_LIBRARY_PATH="$PWD/runtime/lib"
+          xvfb-run -a -s '-screen 0 640x480x24 -nolisten tcp' /usr/bin/python3 \
+            tools/virtual_position/capture_batch.py --exe runtime/vkdoom \
+            --iwad /usr/share/games/doom/freedoom2.wad --out evidence
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -111,7 +123,7 @@ jobs:
     if: always()
     runs-on: ubuntu-24.04
     steps:
-      - name: Require the producer and both smoke jobs
+      - name: Require the producer and all Vulkan jobs
         env:
           BUILD: ${{ needs.build.result }}
           VULKAN: ${{ needs.vulkan.result }}
