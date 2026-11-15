@@ -67,6 +67,8 @@ class ActorShadowContracts(unittest.TestCase):
         self.assertIn("sizeof(FDynLightInfo) == 224", cpu)
         self.assertIn("MaxActorShadowCastersPerLight = 4", cpu)
         self.assertIn("ActorShadowCaster actorShadowCasters[4]", gpu)
+        tiled = (ROOT/"wadsrc/static/shaders/scene/comp_lighttiles.glsl").read_text()
+        self.assertIn("ActorShadowCaster actorShadowCasters[4]", tiled)
         self.assertIn("GetThinkerIterator<AActor>()", source)
         self.assertIn("candidate == light->target", source)
         self.assertIn("candidate->Sector->PortalGroup != group", source)
