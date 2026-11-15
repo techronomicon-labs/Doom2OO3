@@ -3,37 +3,38 @@
 
 float ActorOccluderRayVisibility(vec3 lightPos, vec3 receiver, ActorShadowCaster caster)
 {
-	// Genuine line-of-light blocker. The blocker is bounded in height and
-	// must lie strictly between the actual emitting light and the fragment.
+	// Light-to-receiver ray intersects the actual light-facing sprite plane.
+	// Its binary coverage comes from the selected source frame alpha, not an
+	// opaque collision cylinder or any composited world-space decal.
+	if (caster.radius <= 0.0 || caster.bottom >= caster.top ||
+		caster.right <= caster.left)
+		return 1.0;
 	vec3 ray = receiver - lightPos;
-	vec2 d = ray.xz;
-	vec2 c = lightPos.xz - caster.center.xz;
-	float a = dot(d, d);
-	if (a <= 0.0001 || caster.radius <= 0.0 || caster.bottom >= caster.top)
+	vec2 n = vec2(caster.planeNx, caster.planeNz);
+	float denom = dot(ray.xz, n);
+	if (abs(denom) < 0.00001)
 		return 1.0;
-	float halfB = dot(c, d);
-	float discriminant = halfB * halfB - a * (dot(c, c) - caster.radius * caster.radius);
-	if (discriminant <= 0.0)
+	float t = dot(caster.center.xz - lightPos.xz, n) / denom;
+	if (t <= 0.002 || t >= 0.998)
+		return 1.0; // caster must be strictly between light and receiver
+	vec3 hit = lightPos + ray * t;
+	vec2 tangent = vec2(-n.y, n.x);
+	float horizontal = dot(hit.xz - caster.center.xz, tangent);
+	float u = (horizontal - caster.left) / (caster.right - caster.left);
+	float v = (hit.y - caster.bottom) / (caster.top - caster.bottom);
+	if (u < 0.0 || u >= 1.0 || v < 0.0 || v >= 1.0)
 		return 1.0;
-	float root = sqrt(discriminant);
-	float entry = max((-halfB - root) / a, 0.002);
-	float exit = min((-halfB + root) / a, 0.998);
-	if (exit <= entry)
-		return 1.0;
-	// Do not shadow an actor's own material merely because its surface lies
-	// within this coarse geometric blocker; visible sprite shading stays intact.
-	vec2 receiverXY = receiver.xz - caster.center.xz;
-	if (dot(receiverXY, receiverXY) <= caster.radius * caster.radius &&
-		receiver.y >= caster.bottom && receiver.y <= caster.top)
-		return 1.0;
-	if (lightPos.y >= caster.bottom && lightPos.y <= caster.top &&
-		dot(c, c) <= caster.radius * caster.radius)
-		return 1.0;
-	float y0 = lightPos.y + ray.y * entry;
-	float y1 = lightPos.y + ray.y * exit;
-	if (max(y0, y1) <= caster.bottom || min(y0, y1) >= caster.top)
-		return 1.0;
-	return 0.0;
+	if (caster.mirrorX > 0.5)
+		u = 1.0 - u;
+	if (caster.mirrorY > 0.5)
+		v = 1.0 - v;
+	const int width = 16;
+	const int height = 32;
+	int px = clamp(int(floor(u * float(width))), 0, width - 1);
+	int py = clamp(int(floor((1.0 - v) * float(height))), 0, height - 1);
+	int word = py / 2;
+	int shift = (py & 1) * width + px;
+	return (caster.alphaWords[word] & (1u << uint(shift))) != 0u ? 0.0 : 1.0;
 }
 
 float ActorLightShadowVisibility(DynLightInfo light)
