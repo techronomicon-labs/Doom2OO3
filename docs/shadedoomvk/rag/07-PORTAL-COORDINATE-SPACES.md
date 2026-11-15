@@ -1,5 +1,9 @@
 # Portal and coordinate-space contract
 
+## SHADOW-001 M1 support boundary
+
+The opt-in projected sprite shadow currently accepts the ordinary main view, a single world portal group, and the actor's own unsloped ordinary convex floor subsector. `HWSprite::ProjectSpriteShadow` rejects recursive/secondary/mirrored contexts, through-portal rendering, fake floors, 3D floors, receiver portal edges, polyobject subsectors and invalid visibility. It clips world-space shadow triangles to the selected receiver and uses ordinary opaque depth plus a small depth bias; it never treats the viewer-facing card as caster geometry. Unsupported cases retain Legacy/Contact. This is a conservative first-slice boundary, not general portal shadow support or closure of historical portal obligations.
+
 Baseline-SHA: `09634479ab5bf9adf691074fffe85a006a398cd0`  
 Status: active, compatibility-critical; PF-009 sprite-surface, PF-010 render-context, PF-012 probe-map spatial, PF-014 corrective and PF-015 visibility-cache contracts incorporated  
 Primary issues: PF-009, PF-010, PF-012, PF-014, PF-015, PF-016, SDVK-007, SDVK-012, SDVK-013

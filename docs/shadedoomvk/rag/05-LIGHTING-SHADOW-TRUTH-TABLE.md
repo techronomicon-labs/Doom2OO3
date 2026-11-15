@@ -94,7 +94,11 @@ Exact full-key ties are selector-semantic equivalents; stable ordering is retain
 
 ## Sprite shadows
 
-VKDoom contains simple sprite-shadow behavior/flags, but not the final ShadeDoomVK actor-cast architecture. SDVK-012 remains comparative: blob/proxy, alpha card, depth card and tractable AS participation are evidence candidates.
+The inherited `HWSprite::Process(..., isSpriteShadow)` grounding representation remains available. Its `STYLE_Stencil` is a fixed-colour alpha render style, not a stencil-buffer shadow volume.
+
+SHADOW-001 M1 adds an opt-in bounded dark-decal approximation in `HWSprite::ProjectSpriteShadow` and `DrawProjectedShadow`, independent of the visible billboard. One eligible same-sector point light selects the actual sprite rotation through the inherited `GetSpriteAngle`/`GetSpriteFrame` rules. A separate source-owned alpha proxy is projected in small bands and clipped to the actor's ordinary convex render subsector. Actual drawn triangles, selected source/light and fallback reasons are available in bounded state observations. No Vulkan ray query or new shader is required.
+
+`gl_sprite_shadow_mode` selects Off (0), inherited Legacy/Contact (1, default), or Projected (2); the existing `r_actorspriteshadow` remains caster eligibility policy. M1 rejects unsupported receivers, portal/secondary views, models, special/translucent sprites, spotlights, invalid/overlong rays and unavailable CPU world visibility. Rejection uses the inherited representation. Eight projected casters per draw context and a bounded proxy cache constrain the first slice; broader busy-scene selection and multi-light artistic quality are not accepted. See [M1 integration and limitations](../SHADOW-001-M1-INTEGRATION.md) and [runnable demonstration](../SHADOW-001-M1-PLAYTEST.md). Draft implementation is not owner visual or physical-GPU acceptance; original SDVK-012 comparative work remains historical evidence.
 
 ## Lighting/shadow mode truth
 

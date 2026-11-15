@@ -154,6 +154,10 @@ class FGameTexture
 
 	// Material layers. These are shared so reference counting is used.
 	RefCountedPtr<FTexture> Base;
+	// Independent masks share the source's exact content lifetime. They never
+	// replace Base, inherit its materials, or enter the global texture table.
+	std::unique_ptr<FGameTexture> SpriteShadowProxy[2];
+	size_t SpriteShadowProxyBytes = 0;
 	RefCountedPtr<FTexture> Brightmap;
 	MaterialLayerSampling BrightmapSampling = MaterialLayerSampling::Default;
 	std::unique_ptr<FMaterialLayers> Layers;
@@ -224,6 +228,7 @@ public:
 	int GetUpscaleFlag() { return shouldUpscaleFlag & 1; }
 
 	FTexture* GetTexture() { return Base.get(); }
+	FGameTexture* GetSpriteShadowProxy(int quality);
 	int GetSourceLump() const { return Base->GetSourceLump(); }
 	void SetBrightmap(FGameTexture* tex) { Brightmap = tex->GetTexture(); }
 

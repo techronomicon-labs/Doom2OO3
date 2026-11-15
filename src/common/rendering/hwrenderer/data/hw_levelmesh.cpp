@@ -138,9 +138,9 @@ void LevelMesh::AddEmptyMesh()
 	UploadPortals();
 }
 
-LevelMeshSurface* LevelMesh::Trace(const FVector3& start, FVector3 direction, float maxDist)
+LevelMeshSurface* LevelMesh::Trace(const FVector3& start, FVector3 direction, float maxDist, float endpointMargin)
 {
-	maxDist = std::max(maxDist - 10.0f, 0.0f);
+	maxDist = std::max(maxDist - endpointMargin, 0.0f);
 
 	FVector3 origin = start;
 

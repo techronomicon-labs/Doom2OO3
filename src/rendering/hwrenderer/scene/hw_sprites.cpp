@@ -59,10 +59,16 @@
 #include "hw_lighting.h"
 #include "hw_material.h"
 #include "hw_dynlightdata.h"
+#include "a_dynlight.h"
+#include "r_data/r_sections.h"
+#include "hw_levelmesh.h"
 #include "hw_renderstate.h"
 #include "hw_drawcontext.h"
 #include "quaternion.h"
 #include <cmath>
+#include <cstring>
+#include "hw_sprite_shadow_math.h"
+#include "hwrenderer/diagnostics/hw_sdvkdiagnosticcore.h"
 
 #include "p_visualthinker.h"
 #include "hwrenderer/diagnostics/hw_pfviewdiagnostics.h"
@@ -90,6 +96,27 @@ EXTERN_CVAR(Bool, gl_aalines)
 
 CVAR(Bool, gl_usecolorblending, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CVAR(Bool, gl_sprite_blend, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
+// Rendering representation only. Existing r_actorspriteshadow selects casters.
+CUSTOM_CVAR(Int, gl_sprite_shadow_mode, 1, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (self < 0 || self > 2) self = 1;
+}
+CUSTOM_CVAR(Float, gl_sprite_shadow_strength, .72f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (!std::isfinite(float(self))) self = .72f;
+	else if (self < 0.f) self = 0.f;
+	else if (self > 1.f) self = 1.f;
+}
+CUSTOM_CVAR(Float, gl_sprite_shadow_length, 192.f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (!std::isfinite(float(self))) self = 192.f;
+	else if (self < 16.f) self = 16.f;
+	else if (self > 512.f) self = 512.f;
+}
+CUSTOM_CVAR(Int, gl_sprite_shadow_quality, 1, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (self < 0 || self > 1) self = 1;
+}
 // SDVK-008: conservative default OFF. Height authoring is per-material;
 // these controls opt into and bound its sprite-only visual shading effect.
 CUSTOM_CVAR(Float, gl_sprite_relief_depth, 0.0f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
@@ -118,6 +145,238 @@ CUSTOM_CVAR(Int, gl_fuzztype, 8, CVAR_ARCHIVE)
 // [Nash]
 CVARD(Bool, r_showhitbox, false, CVAR_GLOBALCONFIG | CVAR_CHEAT, "show actor hitboxes");
 
+struct HWProjectedSpriteShadow
+{
+	HWSpriteShadow::Vertex* vertices;
+	unsigned count;
+	FGameTexture* source;
+	FGameTexture* mask;
+	HWSpriteShadow::Point light, position;
+	HWSpriteShadow::Vertex corners[4];
+	double floor;
+	int tid, lightTid, receiver, quality;
+	bool mirrored;
+	float strength;
+};
+
+// Returns false only to request the untouched inherited grounding fallback.
+// No actor/light pointers or portal state are retained beyond this frame.
+bool HWSprite::ProjectSpriteShadow(HWDrawInfo* di, AActor* thing, sector_t* sector, int thruportal,
+	int spritenum, const DVector3& position, const DVector2& scale)
+{
+	using namespace HWSpriteShadow;
+	auto fallback = [&](const char* reason) {
+		if (SdvkDiagnostics::StateEnabled())
+			SdvkDiagnostics::Emit("sprite-shadow-fallback", SdvkObservation::Object()
+				.Int("actor_tid", thing->tid).Str("reason", reason).Str("fallback", "legacy-contact").Json(), true);
+		return false;
+	};
+	auto sourceSector = thing->Sector;
+	const auto& context = di->drawctx->portalState.RenderContext;
+	if (thruportal || context.type != HWRenderContextType::MainView || context.mirrored ||
+		di->mCurrentPortal || !sourceSector || !sector || sector->sectornum != sourceSector->sectornum ||
+		di->Level->Displacements.size > 1) return fallback("portal-or-secondary-view");
+	if (modelframe || thing->picnum.isValid() || (thing->flags & MF_MISSILE) ||
+		(thing->renderflags & (RF_SPRITETYPEMASK | RF_ROLLSPRITE)) != RF_FACESPRITE ||
+		(thing->renderflags2 & (RF2_ISOMETRICSPRITES | RF2_SQUAREPIXELS)) ||
+		thing->RenderStyle != DefaultRenderStyle() || thing->InterpolatedAlpha(di->Viewpoint.TicFrac) < .999 ||
+		!V_IsTrueColor() || scale.X <= 0 || scale.Y <= 0 ||
+		!std::isfinite(scale.X) || !std::isfinite(scale.Y)) return fallback("unsupported-caster");
+	if (sourceSector->floorplane.isSlope() || sourceSector->GetHeightSec() ||
+		sourceSector->e->XFloor.ffloors.Size() || !sourceSector->PortalBlocksView(sector_t::floor) ||
+		sourceSector->GetAlpha(sector_t::floor) < 1 || sourceSector->GetReflect(sector_t::floor) > 0 ||
+		sourceSector->GetTexture(sector_t::floor) == skyflatnum ||
+		sector->floorplane.D != sourceSector->floorplane.D) return fallback("unsupported-receiver");
+	if (!di->Level->levelMesh || !thing->section) return fallback("world-occlusion-unavailable");
+	if (di->projectedShadowCount.load(std::memory_order_relaxed) >= 8) return fallback("caster-budget");
+
+	const double floor = sourceSector->floorplane.ZatPoint(position);
+	Point anchor{position.X + thing->WorldOffset.X, position.Y + thing->WorldOffset.Y, position.Z + thing->WorldOffset.Z};
+	if (!std::isfinite(floor) || anchor.z < floor - .01 || anchor.z - floor > 128) return fallback("actor-floor-range");
+	auto sub = di->Level->PointInRenderSubsector(DVector2(anchor.x, anchor.y));
+	if (!sub || sub->sector != sourceSector || sub->render_sector != sourceSector || sub->polys || sub->hacked ||
+		sub->numlines < 3 || sub->numlines > MaxReceiverEdges) return fallback("unsupported-subsector");
+	std::vector<Edge> receiver;
+	Point inside{0, 0, floor};
+	for (unsigned i = 0; i < sub->numlines; ++i)
+	{
+		const auto& seg = sub->firstline[i];
+		receiver.push_back({seg.v1->fX(), seg.v1->fY(), seg.v2->fX(), seg.v2->fY()});
+		inside.x += seg.v1->fX() / sub->numlines;
+		inside.y += seg.v1->fY() / sub->numlines;
+		if (seg.linedef && seg.linedef->isVisualPortal()) return fallback("receiver-portal-edge");
+	}
+
+	// Candidate membership is the actor's world light list, never the visible
+	// billboard's light list or a camera-selected frame. Equal scores use stable
+	// actor spawn order, not pointer addresses or traversal order.
+	FDynamicLight* selected = nullptr;
+	double best = 0;
+	const DVector3 sample(anchor.x, anchor.y, anchor.z + thing->Height * .5);
+	for (auto node = thing->section->lighthead; node; node = node->nextLight)
+	{
+		auto light = node->lightsource;
+		if (!light || !light->ShouldLightActor(thing) || light->IsSubtractive() || light->IsSpot() ||
+			light->Sector != sourceSector || light->Pos.Z <= anchor.z + thing->Height + 8) continue;
+		const double distance = (light->Pos - sample).Length();
+		const double radius = light->GetRadius();
+		if (!std::isfinite(distance) || radius <= 0 || distance >= radius || distance < 1) continue;
+		const double luminance = (.2126 * light->GetRed() + .7152 * light->GetGreen() + .0722 * light->GetBlue()) / 255.;
+		const double score = luminance * light->GetLightDefIntensity() * light->GetStrength() * (1 - distance / radius);
+		if (!std::isfinite(score) || score <= 0 || score < best) continue;
+		if (score == best && selected && (!light->target || (selected->target &&
+			light->target->SpawnOrder >= selected->target->SpawnOrder))) continue;
+		const auto direction = (sample - light->Pos) / distance;
+		if (di->Level->levelMesh->Trace(FVector3(light->Pos), FVector3(direction), float(distance), .25f)) continue;
+		selected = light;
+		best = score;
+	}
+	if (!selected) return fallback("no-eligible-visible-point-light");
+	Point light{selected->Pos.X, selected->Pos.Y, selected->Pos.Z};
+	const double dx = anchor.x - light.x, dy = anchor.y - light.y, horizontal = std::hypot(dx, dy);
+	if (!std::isfinite(horizontal) || horizontal < 8) return fallback("light-direction-degenerate");
+	const double sideX = -dy / horizontal, sideY = dx / horizontal;
+	bool frameMirror = false;
+	const auto angle = DVector2(dx, dy).Angle();
+	const auto patch = sprites[spritenum].GetSpriteFrame(thing->frame, -1,
+		thing->GetSpriteAngle(angle, di->Viewpoint.TicFrac), &frameMirror, !!(thing->renderflags & RF_SPRITEFLIP));
+	if (!patch.isValid()) return fallback("missing-light-facing-frame");
+	auto source = TexMan.GetGameTexture(patch, false);
+	if (!source || !source->isValid() || source->isWarped() || source->GetShaderIndex() != 0 ||
+		source->GetTranslucency()) return fallback("unsupported-source-image");
+	// FMaterial and SetMaterial can apply global/map/class replacements even
+	// when a source texture's own shader index is zero. M1 must not run such a
+	// shader over its independent mask or silently reinterpret its alpha.
+	if (*GetGlobalShader(0, thing->GetClass()) || *GetGlobalShader(0, nullptr))
+		return fallback("custom-global-map-or-class-shader");
+	const bool mirror = frameMirror ^ !!(thing->renderflags & RF_XFLIP) ^ !!(thing->renderflags & RF_SPRITEFLIP);
+	const bool flipY = !!(thing->renderflags & RF_YFLIP);
+	const double width = source->GetDisplayWidth() * scale.X;
+	const double height = source->GetDisplayHeight() * scale.Y;
+	const double offset = source->GetDisplayLeftOffset(r_spriteadjustHW) * scale.X;
+	const double top = anchor.z + source->GetDisplayTopOffset(r_spriteadjustHW) * scale.Y - thing->Floorclip +
+		thing->GetBobOffset(di->Viewpoint.TicFrac) + thing->GetSpriteOffset(true);
+	if (!std::isfinite(top) || width <= 0 || height <= 0 || top <= floor || light.z - top < 8)
+		return fallback("proxy-height-or-light-range");
+	const double bottomV = std::min(1.0, (top - floor) / height);
+	auto project = [&](double u, double v, Vertex& out) {
+		Point point = CardPoint(anchor, sideX, sideY, width, height, offset, top, u, v, mirror, thing->GetSpriteOffset(false));
+		out.u = u; out.v = flipY ? 1 - v : v;
+		return Project(light, point, floor, gl_sprite_shadow_length, anchor, out);
+	};
+	Vertex corners[4];
+	if (!project(0, 0, corners[0]) || !project(1, 0, corners[1]) ||
+		!project(0, bottomV, corners[2]) || !project(1, bottomV, corners[3])) return fallback("projection-length-or-invalid-ray");
+	std::vector<Vertex> triangles;
+	for (int row = 0; row < ProjectionStrips; ++row)
+	{
+		const double v0 = bottomV * row / ProjectionStrips, v1 = bottomV * (row + 1) / ProjectionStrips;
+		std::vector<Vertex> polygon(4);
+		if (!project(0, v0, polygon[0]) || !project(1, v0, polygon[1]) ||
+			!project(1, v1, polygon[2]) || !project(0, v1, polygon[3])) return fallback("invalid-band");
+		polygon = Clip(std::move(polygon), receiver, inside);
+		for (unsigned i = 1; i + 1 < polygon.size(); ++i)
+		{
+			triangles.push_back(polygon[0]); triangles.push_back(polygon[i]); triangles.push_back(polygon[i + 1]);
+		}
+	}
+	if (triangles.empty() || triangles.size() > MaxVertices) return fallback("empty-or-excessive-receiver-clip");
+	// Same-leaf clipping prevents crossing a boundary. Also reject source to
+	// receiver occlusion along both silhouette edges, so a hanging occluder or
+	// internal blocking surface cannot receive a shadow through itself.
+	for (const auto& corner : corners)
+	{
+		const DVector3 end(corner.x, corner.y, floor + .25);
+		const DVector3 ray = end - selected->Pos;
+		const double distance = ray.Length();
+		if (distance < 1 || di->Level->levelMesh->Trace(FVector3(selected->Pos), FVector3(ray / distance), float(distance), .25f))
+			return fallback("projection-occluded");
+	}
+	auto mask = source->GetSpriteShadowProxy(gl_sprite_shadow_quality);
+	if (!mask) return fallback("mask-size-or-cache-budget");
+	if (di->projectedShadowCount.fetch_add(1, std::memory_order_relaxed) >= 8) return fallback("caster-budget");
+	auto mesh = static_cast<HWProjectedSpriteShadow*>(di->drawctx->RenderDataAllocator.Alloc(sizeof(HWProjectedSpriteShadow)));
+	mesh->vertices = static_cast<Vertex*>(di->drawctx->RenderDataAllocator.Alloc(sizeof(Vertex) * triangles.size()));
+	std::memcpy(mesh->vertices, triangles.data(), sizeof(Vertex) * triangles.size());
+	mesh->count = unsigned(triangles.size());
+	mesh->source = source; mesh->mask = mask; mesh->position = anchor; mesh->light = light;
+	std::copy(std::begin(corners), std::end(corners), std::begin(mesh->corners));
+	mesh->floor = floor; mesh->tid = thing->tid; mesh->lightTid = selected->target ? selected->target->tid : 0;
+	mesh->receiver = sourceSector->sectornum; mesh->quality = gl_sprite_shadow_quality; mesh->mirrored = mirror;
+	mesh->strength = gl_sprite_shadow_strength;
+	ProjectedShadow = mesh;
+	actor = thing; particle = nullptr; spr = nullptr; texture = mask; lightlist = nullptr;
+	modelframe = nullptr; dynlightindex = -1; OverrideShader = -1;
+	RenderStyle = STYLE_Stencil; hw_styleflags = STYLEHW_NoAlphaTest; trans = mesh->strength;
+	ThingColor = MAKEARGB(255, 0, 0, 0);
+	x = x1 = x2 = float(anchor.x); y = y1 = y2 = float(anchor.y); z = z1 = z2 = float(floor);
+	ul = vt = 0; ur = vb = 1; offx = offy = 0; fullbright = true; polyoffset = false;
+	// Sorting is still relative to the actor, with shadows immediately behind
+	// its card. Projection vertices never run through billboard transforms.
+	depth = float((x - di->Viewpoint.Pos.X) * di->Viewpoint.TanCos + (y - di->Viewpoint.Pos.Y) * di->Viewpoint.TanSin) + 1.f / 65536.f;
+	index = -1; vertexindex = -1;
+	di->AddSprite(this, true);
+	return true;
+}
+
+void HWSprite::DrawProjectedShadow(FRenderState& state)
+{
+	const auto& shadow = *ProjectedShadow;
+	state.ClearSpriteTangentBasis(); state.ClearSpriteRelief(); state.ClearViewmodelLighting();
+	SdvkDiagnostics::ClearSpriteBasis(); SdvkDiagnostics::ClearActorProbeSelection(); SdvkDiagnostics::ClearActorSun();
+	state.SetShadeVertex(false); state.SetUseSpriteCenter(false); state.SetLightNoNormals(true);
+	state.SetLightProbeIndex(-1); state.SetLightIndex(-1); state.SetDynLight(0, 0, 0);
+	state.EnableBrightmap(false); state.EnableGlow(false); state.EnableGradient(false); state.EnableSplit(false);
+	state.EnableFog(false); state.SetFog(0, 0); state.SetNoSoftLightLevel();
+	state.SetAddColor(0); state.SetObjectColor(0xff000000); state.SetColor(1, 1, 1, shadow.strength);
+	state.EnableTexture(true); state.SetTextureMode(LegacyRenderStyles[STYLE_Stencil]); state.SetRenderStyle(STYLE_Stencil);
+	state.SetMaterial(shadow.mask, UF_None, 0, CLAMP_XY, 0, -1);
+	state.AlphaFunc(Alpha_Greater, 0.f); state.SetNormal(0, 1, 0);
+	// Ordinary opaque floor/walls already populated depth. This translucent
+	// decal never writes depth and uses bias instead of floating above the plane.
+	state.SetDepthMask(false); state.SetDepthBias(-1, -1);
+	auto allocation = state.AllocVertices(shadow.count);
+	for (unsigned i = 0; i < shadow.count; ++i)
+	{
+		const auto& v = shadow.vertices[i];
+		allocation.first[i].Set(float(v.x), float(v.z), float(v.y), float(v.u), float(v.v));
+	}
+	state.Draw(DT_Triangles, allocation.second, shadow.count);
+	if (SdvkDiagnostics::StateEnabled())
+	{
+		using namespace SdvkObservation;
+		auto xyz = [](const HWSpriteShadow::Point& p) {
+			// Nine significant digits reproduce emitted 32-bit vertex values;
+			// the bounded complete mesh fits the observer's 16 KiB record cap.
+			std::ostringstream text; text.imbue(std::locale::classic());
+			text << std::setprecision(9) << '[' << float(p.x) << ',' << float(p.y) << ',' << float(p.z) << ']';
+			return text.str();
+		};
+		std::string vertices = "[";
+		uint64_t hash = 1469598103934665603ull;
+		for (unsigned i = 0; i < shadow.count; ++i)
+		{
+			const auto& v = shadow.vertices[i];
+			if (i) vertices += ',';
+			vertices += xyz({v.x, v.y, v.z});
+			const float fields[] = {float(v.x), float(v.y), float(v.z), float(v.u), float(v.v)};
+			const auto bytes = reinterpret_cast<const uint8_t*>(fields);
+			for (size_t byte = 0; byte < sizeof(fields); ++byte)
+			{ hash ^= bytes[byte]; hash *= 1099511628211ull; }
+		}
+		vertices += ']';
+		SdvkDiagnostics::Emit("sprite-shadow", Object().Int("actor_tid", shadow.tid).Str("mode", "projected")
+			.Str("source_texture", shadow.source->GetName().GetChars()).Bool("flipped", shadow.mirrored)
+			.Raw("light_position", xyz(shadow.light)).Raw("actor_position", xyz(shadow.position))
+			.Int("light_tid", shadow.lightTid).Num("floor_z", shadow.floor).Int("receiver_sector", shadow.receiver)
+			.Int("mask_scale", shadow.quality ? 4 : 1).Int("vertex_count", shadow.count)
+			.Raw("vertices", vertices).Int("geometry_hash", hash).Str("representation", "bounded-dark-decal").Json(), true);
+	}
+	state.ClearDepthBias(); state.SetLightNoNormals(false); state.SetObjectColor(0xffffffff);
+	state.SetRenderStyle(STYLE_Translucent); state.SetTextureMode(TM_NORMAL); state.EnableBrightmap(true);
+	state.ResetColor(); state.SetNormal(0, 0, 0);
+}
+
 //==========================================================================
 //
 // 
@@ -126,6 +385,7 @@ CVARD(Bool, r_showhitbox, false, CVAR_GLOBALCONFIG | CVAR_CHEAT, "show actor hit
 
 void HWSprite::DrawSprite(HWDrawInfo *di, FRenderState &state, bool translucent)
 {
+	if (ProjectedShadow) { DrawProjectedShadow(state); return; }
 	// Never inherit a sprite basis from a preceding card, view or model.
 	state.ClearSpriteTangentBasis();
 	state.ClearSpriteRelief();
@@ -1041,6 +1301,8 @@ void HWSprite::PerformSpriteClipAdjustment(AActor *thing, const DVector2 &thingp
 
 void HWSprite::Process(HWDrawInfo *di, FRenderState& state, AActor* thing, sector_t * sector, area_t in_area, int thruportal, bool isSpriteShadow)
 {
+	ProjectedShadow = nullptr;
+	if (isSpriteShadow && gl_sprite_shadow_mode == 0) return;
 	sector_t rs;
 	sector_t * rendersector;
 
@@ -1157,6 +1419,8 @@ void HWSprite::Process(HWDrawInfo *di, FRenderState& state, AActor* thing, secto
 
 	modelframe = isPicnumOverride ? nullptr : FindModelFrame(thing, spritenum, thing->frame, !!(thing->flags & MF_DROPPED));
 	modelframeflags = modelframe ? modelframe->getFlags(thing->modelData) : 0;
+	if (isSpriteShadow && gl_sprite_shadow_mode == 2 &&
+		ProjectSpriteShadow(di, thing, sector, thruportal, spritenum, thingpos, sprscale)) return;
 
 	// Too close to the camera. This doesn't look good if it is a sprite.
 	if (fabs(thingpos.X - vp.Pos.X) < 2 && fabs(thingpos.Y - vp.Pos.Y) < 2
@@ -1698,6 +1962,7 @@ void HWSprite::Process(HWDrawInfo *di, FRenderState& state, AActor* thing, secto
 
 void HWSprite::ProcessParticle(HWDrawInfo *di, FRenderState& state, particle_t *particle, sector_t *sector, DVisualThinker *spr)//, int shade, int fakeside)
 {
+	ProjectedShadow = nullptr;
 	if (!particle || particle->alpha <= 0)
 		return;
 

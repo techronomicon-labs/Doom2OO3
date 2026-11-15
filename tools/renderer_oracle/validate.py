@@ -15,7 +15,7 @@ try:
 except ImportError:
     from common import EvidenceError, canonical, finite, integer, number, require, sha256
 
-KINDS = {"frame", "context", "material", "light-query", "probe", "probe-builder", "shadow", "resource", "pipeline", "timing", "sprite-basis", "sprite-relief", "viewmodel", "surface", "surface-checkpoint", "gameplay", "gameplay-checkpoint"}
+KINDS = {"frame", "context", "material", "light-query", "probe", "probe-builder", "shadow", "resource", "pipeline", "timing", "sprite-basis", "sprite-relief", "sprite-shadow", "sprite-shadow-fallback", "viewmodel", "surface", "surface-checkpoint", "gameplay", "gameplay-checkpoint"}
 VISUAL_TIME_SCOPES = {"main-owner", "main-sibling", "main-portal", "non-main-fallback", "main-view-owner"}
 CONTEXT_TYPES = {"main", "camera-texture", "light-probe", "save-picture", "portal"}
 ROOT_CONTEXT_TYPES = {"main", "camera-texture", "light-probe", "save-picture"}
@@ -306,6 +306,40 @@ def _sprite_relief(value):
             "Relief sample upper bound disagrees with shader cap")
     _context(value.get("context"))
 
+def _sprite_shadow(value):
+    """SHADOW-001: bounded mesh emitted by the ordinary raster draw path."""
+    require(value.get("mode") == "projected" and value.get("representation") == "bounded-dark-decal",
+            "Unknown sprite-shadow representation")
+    for key in ("actor_tid", "light_tid", "receiver_sector"):
+        integer(value.get(key), "sprite-shadow " + key)
+    require(isinstance(value.get("source_texture"), str) and 0 < len(value["source_texture"]) <= 1024,
+            "Missing or unbounded sprite-shadow source identity")
+    require(type(value.get("flipped")) is bool, "Sprite-shadow mirror state is missing")
+    require(type(value.get("mask_scale")) is int and value["mask_scale"] in (1, 4),
+            "Unknown sprite-shadow proxy scale")
+    for key in ("actor_position", "light_position"):
+        _vector(value.get(key), 3, "sprite-shadow " + key)
+    floor = value.get("floor_z")
+    require(type(floor) in (int, float), "Sprite-shadow receiver height is missing")
+    finite(floor)
+    count = integer(value.get("vertex_count"), "sprite-shadow vertex count", minimum=3, maximum=256)
+    vertices = value.get("vertices")
+    require(isinstance(vertices, list) and len(vertices) == count and count % 3 == 0,
+            "Sprite-shadow emitted triangle payload is incomplete or unbounded")
+    for vertex in vertices:
+        _vector(vertex, 3, "sprite-shadow emitted vertex")
+        require(math.isclose(vertex[2], floor, rel_tol=1e-6, abs_tol=0.01),
+                "Sprite-shadow mesh escaped its horizontal receiver plane")
+    integer(value.get("geometry_hash"), "sprite-shadow emitted geometry hash", maximum=2**64-1)
+
+
+def _sprite_shadow_fallback(value):
+    integer(value.get("actor_tid"), "sprite-shadow fallback actor TID")
+    require(value.get("fallback") == "legacy-contact", "Unknown sprite-shadow fallback")
+    require(isinstance(value.get("reason"), str) and 0 < len(value["reason"]) <= 256,
+            "Sprite-shadow fallback lacks a bounded reason")
+
+
 def observation(data, *, required_kinds=(), expected_map=None, expected_frames=None, expected_extent=None,
                 gameplay_recipe=None):
     try:
@@ -449,6 +483,10 @@ def _observation(data, *, required_kinds, expected_map, expected_frames, expecte
             _sprite_basis(value)
         elif kind == "sprite-relief":
             _sprite_relief(value)
+        elif kind == "sprite-shadow":
+            _sprite_shadow(value)
+        elif kind == "sprite-shadow-fallback":
+            _sprite_shadow_fallback(value)
         elif kind == "viewmodel":
             try:
                 from .sdvk011_viewmodel import validate_draw

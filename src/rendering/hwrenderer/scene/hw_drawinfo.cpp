@@ -212,6 +212,7 @@ void HWDrawInfo::ClearBuffers()
 	//FloorStacks.Clear();
 	HandledSubsectors.Clear();
 	spriteindex = 0;
+	projectedShadowCount = 0;
 
 	if (Level)
 	{

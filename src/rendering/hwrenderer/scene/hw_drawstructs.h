@@ -377,6 +377,8 @@ public:
 //
 //==========================================================================
 
+struct HWProjectedSpriteShadow;
+
 class DVisualThinker;
 
 // PF-009 canonical renderer-side snapshot. It mirrors the already-selected
@@ -479,6 +481,12 @@ public:
 	void AdjustVisualThinker(HWDrawInfo *di, DVisualThinker *spr, sector_t *sector);
 
 	void DrawSprite(HWDrawInfo *di, FRenderState &state, bool translucent);
+	// POD pointer only: HWSprite is copied by the draw list and allocated from
+	// a frame arena without destructors. Its immutable mesh shares that arena.
+	HWProjectedSpriteShadow* ProjectedShadow = nullptr;
+	bool ProjectSpriteShadow(HWDrawInfo* di, AActor* thing, sector_t* sector, int thruportal,
+		int spritenum, const DVector3& position, const DVector2& scale);
+	void DrawProjectedShadow(FRenderState& state);
 };
 
 struct FDynLightData;

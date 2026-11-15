@@ -1091,6 +1091,10 @@ OptionMenu "SpriteOptions" protected
 
 	Option "$DSPLYMNU_NOMONSTERINTERPOLATION",	"nomonsterinterpolation", "NoYes"
 	Option "$DSPLYMNU_SPRITESHADOW",			"r_actorspriteshadow", "SpriteShadowModes"
+	Option "Shadow appearance (hardware)", "gl_sprite_shadow_mode", "ProjectedSpriteShadowModes"
+	Slider "Projected shadow strength", "gl_sprite_shadow_strength", 0, 1, 0.05, 2
+	Slider "Projected shadow length limit", "gl_sprite_shadow_length", 16, 512, 16, 0
+	Option "Projected shadow edge quality", "gl_sprite_shadow_quality", "ProjectedSpriteShadowQuality"
 	Option "$DSPLYMNU_OLDTRANS",				"r_vanillatrans", "VanillaTrans"
 	Option "$DSPLYMNU_ROCKETTRAILS",			"cl_rockettrails", "RocketTrailTypes"
 	Option "$DSPLYMNU_BLOODTYPE",				"cl_bloodtype", "BloodTypes"
@@ -2941,6 +2945,18 @@ OptionValue "SpriteShadowModes"
 	0, "$OPTVAL_OFF"
 	1, "$OPTVAL_DEFAULT"
 	2, "$OPTVAL_SPRSHADALWAYS"
+}
+
+OptionValue "ProjectedSpriteShadowModes"
+{
+	0, "Off"
+	1, "Legacy / Contact"
+	2, "Projected (ordinary floors)"
+}
+OptionValue "ProjectedSpriteShadowQuality"
+{
+	0, "Hard source mask"
+	1, "4x contour antialiasing"
 }
 
 // Add dummy entries for the old simple menus since some mods try to add items to them

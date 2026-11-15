@@ -455,7 +455,7 @@ void HWDrawList::SortSpriteIntoWall(HWDrawInfo *di, SortNode * head,SortNode * s
 		const bool rotated = (ss->actor != nullptr && ss->actor->renderflags & (RF_ROLLSPRITE | RF_WALLSPRITE | RF_FLATSPRITE));
 
 		// cannot sort them at the moment. This requires more complex splitting.
-		if (drawWithXYBillboard || drawBillboardFacingCamera || rotated)
+		if (ss->ProjectedShadow || drawWithXYBillboard || drawBillboardFacingCamera || rotated)
 		{
 			float v1 = wh->PointOnSide(ss->x, ss->y);
 			if (v1 < 0)

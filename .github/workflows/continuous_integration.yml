@@ -36,6 +36,9 @@ jobs:
     - name: Validate CI routing and negative controls
       run: python3 -m unittest discover -s tools/ci -p 'test_*.py' -v
 
+    - name: Validate SHADOW-001 synthetic demo and negative controls
+      run: python3 -m unittest discover -s tools/shadow001/tests -v
+
     - name: Select routine and targeted coverage from exact changed paths
       id: route
       shell: bash
@@ -202,6 +205,23 @@ jobs:
       if: matrix.config.native_renderer && needs.pf_oracle.outputs.native == 'false'
       run: echo 'Native rendering NOT_APPLICABLE to this documented change set; this job still compiled and verified the exact source.'
 
+    - name: Package SHADOW-001 Windows owner candidate without renderer execution
+      if: runner.os == 'Windows' && matrix.config.build_type == 'RelWithDebInfo'
+      shell: bash
+      run: |
+        python tools/shadow001/package_windows.py --runtime build/RelWithDebInfo --resource-root build \
+          --out build/SHADOW-001-Windows --expected-commit "$(git rev-parse HEAD)"
+
+    - name: Upload SHADOW-001 Windows owner candidate
+      if: runner.os == 'Windows' && matrix.config.build_type == 'RelWithDebInfo'
+      uses: actions/upload-artifact@v4
+      with:
+        name: shadow001-windows-${{ github.event.pull_request.head.sha || github.sha }}
+        path: build/SHADOW-001-Windows.zip
+        compression-level: 0
+        retention-days: 7
+        if-no-files-found: error
+
     - name: Select isolated hosted software Vulkan
       if: matrix.config.native_renderer && needs.pf_oracle.outputs.native == 'true'
       shell: bash
@@ -215,6 +235,30 @@ jobs:
           printf 'VK_ICD_FILENAMES=%s\n' "${sdvk_icds[0]}"
           printf 'SDL_VIDEODRIVER=x11\n'
         } >> "$GITHUB_ENV"
+
+    - name: SHADOW-001 - genuine projected shadow and camera orbit captures
+      if: matrix.config.native_renderer && needs.pf_oracle.outputs.native == 'true'
+      timeout-minutes: 12
+      shell: bash
+      env:
+        LD_LIBRARY_PATH: ${{ github.workspace }}/build/deps/zmusic/lib
+      run: |
+        xvfb-run -a -s '-screen 0 800x600x24 -nolisten tcp' python3 tools/shadow001/run_demo.py \
+          --exe "$PWD/build/vkdoom" --iwad /usr/share/games/doom/freedoom2.wad \
+          --out build/shadow001-native --expected-commit "$(git rev-parse HEAD)"
+
+    - name: Retain SHADOW-001 visual evidence and original failures
+      if: always() && matrix.config.native_renderer && needs.pf_oracle.outputs.native == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: shadow001-software-vulkan-${{ github.event.pull_request.head.sha || github.sha }}
+        path: |
+          build/shadow001-native/**
+          !build/shadow001-native/**/cache/**
+          !build/shadow001-native/**/save/**
+          !build/shadow001-native/**/input/**
+        retention-days: ${{ job.status == 'success' && 7 || 30 }}
+        if-no-files-found: error
 
     - name: Lane A - bounded renderer OFF/ON and gameplay smoke
       if: matrix.config.native_renderer && needs.pf_oracle.outputs.native == 'true'

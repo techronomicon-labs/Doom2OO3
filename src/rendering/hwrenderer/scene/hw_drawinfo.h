@@ -188,6 +188,7 @@ struct HWDrawInfo
 	HWDrawInfo * outer = nullptr;
 	int FullbrightFlags;
 	std::atomic<int> spriteindex;
+	std::atomic<unsigned> projectedShadowCount{0};
 	HWPortal *mClipPortal;
 	HWPortal *mCurrentPortal;
 	Clipper *mClipper;

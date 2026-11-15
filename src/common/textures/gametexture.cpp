@@ -50,6 +50,66 @@
 #include "c_cvars.h"
 #include "hw_material.h"
 #include "cmdlib.h"
+#include "shadowmask.h"
+#include <atomic>
+#include <mutex>
+#include <vector>
+
+namespace
+{
+std::atomic<size_t> SpriteShadowMaskBytes{0};
+std::mutex SpriteShadowMaskMutex;
+
+class FSpriteShadowTexture final : public FTexture
+{
+	std::vector<uint8_t> Coverage;
+public:
+	FSpriteShadowTexture(int width, int height, std::vector<uint8_t> coverage) : Coverage(std::move(coverage))
+	{
+		SetSize(width, height);
+		Masked = true;
+		bTranslucent = true;
+	}
+	FBitmap GetBgraBitmap(const PalEntry*, int* trans) override
+	{
+		FBitmap bitmap;
+		bitmap.Create(Width, Height);
+		auto pixels = reinterpret_cast<uint32_t*>(bitmap.GetPixels());
+		for (size_t i = 0; i < Coverage.size(); ++i) pixels[i] = (uint32_t(Coverage[i]) << 24) | 0x00ffffff;
+		if (trans) *trans = -1;
+		return bitmap;
+	}
+};
+}
+
+FGameTexture* FGameTexture::GetSpriteShadowProxy(int quality)
+{
+	if (quality < 0 || quality > 1 || Base == nullptr || isWarped() || isHardwareCanvas() || isSoftwareCanvas() ||
+		!Base->GetImage() || Base->GetImage()->GetNumOfFrames() != 1) return nullptr;
+	// Sprite discovery can run on worker threads. Serialize lazy source decode
+	// and publication; the textures then remain immutable for their whole life.
+	std::lock_guard<std::mutex> lock(SpriteShadowMaskMutex);
+	if (SpriteShadowProxy[quality]) return SpriteShadowProxy[quality].get();
+	const int scale = quality ? 4 : 1;
+	const int width = Base->GetWidth(), height = Base->GetHeight();
+	if (width <= 0 || height <= 0 || width > HWSpriteShadow::MaxMaskDimension / scale ||
+		height > HWSpriteShadow::MaxMaskDimension / scale) return nullptr;
+	// R8 CPU storage plus the inherited RGBA upload/mips. This bridge avoids a
+	// new Vulkan format/descriptor path for M1, and is included in the cap.
+	const size_t bytes = size_t(width) * height * scale * scale * 7;
+	if (bytes > HWSpriteShadow::MaxMaskBytes - SpriteShadowMaskBytes.load()) return nullptr;
+	auto bitmap = Base->GetBgraBitmap(nullptr);
+	auto mask = HWSpriteShadow::MakeMask(bitmap.GetPixels(), width, height, bitmap.GetPitch(), scale);
+	if (mask.empty() || std::none_of(mask.begin(), mask.end(), [](uint8_t alpha) { return alpha != 0; })) return nullptr;
+	auto proxy = std::make_unique<FGameTexture>(new FSpriteShadowTexture(width * scale, height * scale, std::move(mask)), "SHADOW-001 proxy");
+	proxy->SetUseType(ETextureType::Override);
+	proxy->SetUpscaleFlag(0, true);
+	proxy->SetNoTrimming(true);
+	SpriteShadowMaskBytes.fetch_add(bytes);
+	SpriteShadowProxyBytes += bytes;
+	SpriteShadowProxy[quality] = std::move(proxy);
+	return SpriteShadowProxy[quality].get();
+}
 
 FTexture *CreateBrightmapTexture(FImageSource*);
 
@@ -67,6 +127,9 @@ FGameTexture::FGameTexture(FTexture* wrap, const char* name) : Name(name)
 
 void FGameTexture::Setup(FTexture *wrap)
 {
+	for (auto& proxy : SpriteShadowProxy) proxy.reset();
+	SpriteShadowMaskBytes.fetch_sub(SpriteShadowProxyBytes);
+	SpriteShadowProxyBytes = 0;
 	Base = wrap;
 	id.SetInvalid();
 	TexelWidth = Base->GetWidth();
@@ -97,6 +160,7 @@ void FGameTexture::Setup(FTexture *wrap)
 
 FGameTexture::~FGameTexture()
 {
+	SpriteShadowMaskBytes.fetch_sub(SpriteShadowProxyBytes);
 	if (Base != nullptr)
 	{
 		FGameTexture* link = TexMan.GetLinkedTexture(GetSourceLump());
@@ -423,6 +487,9 @@ void FGameTexture::SetSpriteRect()
 
 void FGameTexture::CleanHardwareData(bool full)
 {
+	// A full renderer reset must invalidate proxy descriptors too. The CPU
+	// masks can survive because they own no level/view or GPU slot identities.
+	for (auto& proxy : SpriteShadowProxy) if (proxy) proxy->CleanHardwareData(full);
 	if (full) Base->CleanHardwareTextures();
 	for (auto mat : Material) if (mat) mat->DeleteDescriptors();
 }

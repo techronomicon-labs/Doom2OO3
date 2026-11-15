@@ -9,6 +9,12 @@ Primary issues: PF-002, PF-003, PF-004, PF-005, PF-012, PF-013, PF-017, SDVK-004
 
 Renderer indices are implementation identities, not semantic/gameplay identities. If an index is recyclable, every long-lived consumer must either be invalidated before reuse or carry sufficient generation/owner context to reject stale use.
 
+### SHADOW-001 proxy ownership
+
+`FGameTexture::GetSpriteShadowProxy` owns separate immutable masks under the exact source texture, with independent 1x/4x quality entries. It never replaces the source `Base` or retains actor, view, portal or light identities. Source `Setup` clears the proxies; destruction releases them; `CleanHardwareData` recursively retires their normal material/texture resources through the existing engine lifetime path. Lazy generation is serialized because sprite discovery can run on the worker thread. The cache cap accounts for one-byte CPU coverage plus the inherited RGBA upload/mips bridge; M1 does not claim a new R8 Vulkan image format.
+
+Projected mesh records and vertices use `RenderDataAllocator` for the current draw context. `HWSprite` stores a plain frame-arena pointer, not an owning container, because draw-list allocation/copying does not construct/destruct C++ containers. Projected sprites cannot enter the billboard wall-splitting path. See [SHADOW-001 M1](../SHADOW-001-M1-INTEGRATION.md); native cache-reset qualification and owner visual acceptance remain separate gates.
+
 ## Texture/material chain
 
 ```text

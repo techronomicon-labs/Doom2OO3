@@ -71,7 +71,9 @@ public:
 
 	virtual void FullRefresh() {};
 
-	LevelMeshSurface* Trace(const FVector3& start, FVector3 direction, float maxDist);
+	// Preserve the inherited 10-unit actor-light endpoint allowance by default.
+	// Tight receiver projections specify their smaller allowance explicitly.
+	LevelMeshSurface* Trace(const FVector3& start, FVector3 direction, float maxDist, float endpointMargin = 10.0f);
 
 	LevelMeshTileStats GatherTilePixelStats();
 
