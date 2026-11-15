@@ -1,5 +1,16 @@
 //#include <shaders/binding_struct_definitions.glsl> //doesn't work somehow?
 
+// Duplicated light-data ABI for the optional tiled path. Keep exactly
+// aligned with binding_struct_definitions.glsl and FDynLightInfo (224 bytes).
+struct ActorShadowCaster
+{
+	vec3 center; float radius;
+	float bottom;
+	float top;
+	float padding0;
+	float padding1;
+};
+
 struct DynLightInfo
 {
 	vec3 pos; float padding0;
@@ -13,6 +24,11 @@ struct DynLightInfo
 	float spotOuterAngle;
 	int shadowIndex;
 	int flags;
+	int actorShadowCount;
+	int actorShadowPad0;
+	int actorShadowPad1;
+	int actorShadowPad2;
+	ActorShadowCaster actorShadowCasters[4];
 };
 
 struct LightTileBlock
