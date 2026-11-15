@@ -229,18 +229,31 @@ def assess(root):
         extent, rgb = images.decode(root / case_name(material, variant, enabled) / "native.png")
         require(extent == fixture.EXTENT, "Comparison extent mismatch")
         return rgb
-    results = {}
+    results, errors = {}, {}
     for material, variant in (("normal", "base"), ("specular", "base"), ("pbr", "base"),
-                              ("normal", "flip"), ("normal", "orbit"), ("normal", "animated")):
-        results[material + "-" + variant] = assess_pair(pixels(material, variant, False),
-            pixels(material, variant, True), variant=variant)
-    # Source replacement differs only at the alpha holes, never their receiver.
-    results["normal-solid"] = assess_pair(pixels("normal", "base", False),
-        pixels("normal", "solid", True), solid=True)
+                              ("normal", "solid"), ("normal", "flip"),
+                              ("normal", "orbit"), ("normal", "animated")):
+        name = material + "-" + variant
+        control_variant = "base" if variant == "solid" else variant
+        off, on = pixels(material, control_variant, False), pixels(material, variant, True)
+        # Keep every planned capture and each pair's measured RGB even when an
+        # earlier pair fails. This changes diagnostic coverage, never the gate.
+        values = {label: delta(off, on, sample)
+                  for label, sample in fixture.witnesses(variant).items()}
+        report = {"status": "FAIL", "witnesses": values}
+        try:
+            assess_pair(off, on, variant=variant, solid=variant == "solid")
+            report["status"] = "PASS"
+        except ValueError as error:
+            errors[name] = report["error"] = str(error)
+        results[name] = values
+        write_json(root / case_name(material, variant, True) / "image-acceptance.json", report)
     invisible_off, invisible_on = pixels("normal", "invisible", False), pixels("normal", "invisible", True)
-    require(invisible_off == invisible_on, "Invisible actor fallback changed actual native image")
-    results["invisible_off_on_identical"] = True
-    return {"status": "PASS", "witnesses": results,
+    identical = invisible_off == invisible_on
+    if not identical:
+        errors["normal-invisible"] = "Invisible actor fallback changed actual native image"
+    results["invisible_off_on_identical"] = identical
+    return {"status": "FAIL" if errors else "PASS", "errors": errors, "witnesses": results,
         "scope": ["normal/specular/PBR source-specific dynamic-light attenuation", "real floor and wall fragments",
             "transparent source holes and asymmetric flip", "stationary light/actor under changed camera",
             "actual changed animation frame and invalidation of source-alpha selection",
@@ -281,18 +294,9 @@ def main(argv=None):
             result["native_runs_attempted"] += 1
             row = capture(args, root, iwad, case)
             result["captures"].append({"name": row["name"], "receipt": pin(root / row["name"] / "run.json")})
-            material, variant, enabled = case
-            if enabled:
-                control_variant = "base" if variant == "solid" else variant
-                off_extent, off = images.decode(root / case_name(material, control_variant, False) / "native.png")
-                on_extent, on = images.decode(root / row["name"] / "native.png")
-                require(off_extent == on_extent == fixture.EXTENT, "Native comparison dimensions differ")
-                if variant == "invisible":
-                    require(off == on, "Invisible actor changed actual native image")
-                else:
-                    evidence = assess_pair(off, on, variant=variant, solid=variant == "solid")
-                    write_json(root / row["name"] / "image-acceptance.json", evidence)
         result["image_acceptance"] = assess(root)
+        require(result["image_acceptance"]["status"] == "PASS",
+                "Native image controls failed: " + json.dumps(result["image_acceptance"]["errors"], sort_keys=True))
         result["status"] = "DIAGNOSTIC_PASS" if args.allow_modified_dev else "PASS"
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         result["error"] = str(error)

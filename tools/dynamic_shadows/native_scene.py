@@ -20,6 +20,10 @@ ORBIT_CAMERA = (-64.0, -256.0, 96.0)
 WALL_Y = 160.0
 ACTOR_TID = 21502
 SOURCE_SIZE = (64, 96)
+# Preserve a measurable ambient channel in every material model. At lightlevel
+# 80 the inherited PBR ambient response quantizes to RGB green=3, below the
+# fixed image control minimum of 4; 128 gives that control useful headroom.
+AMBIENT_LIGHTLEVEL = 128
 
 
 def opaque(x, y, *, solid=False):
@@ -122,7 +126,7 @@ def members(*, material="normal", variant="base"):
     if variant not in ("base", "solid", "flip", "orbit", "invisible", "animated"):
         raise ValueError("Unknown controlled fixture change")
     model = prepare._Map(floor=0, ceiling=224)
-    model.records["sector"][0].update(lightlevel=80)
+    model.records["sector"][0].update(lightlevel=AMBIENT_LIGHTLEVEL)
     model.boundary([(-384, -320), (-384, 160), (384, 160), (384, -320)], ["SDVW"] * 4)
     model.thing(1, -352, -288, tid=21500)
     origin, yaw = camera(variant)
@@ -199,6 +203,7 @@ def archive(**kwargs):
 def recipe(material="normal", variant="base", enabled=False):
     result = {"schema": "shadow002-native-scene/v1", "map": MAP,
         "material": material, "variant": variant, "enabled": enabled,
+        "ambient_lightlevel": AMBIENT_LIGHTLEVEL,
         "extent": list(EXTENT), "pixel_ratio": 1.0, "camera_position": list(camera(variant)[0]),
         "camera_yaw": camera(variant)[1], "red_light": list(RED_LIGHT),
         "blue_light": list(BLUE_LIGHT), "source_extent": list(SOURCE_SIZE),

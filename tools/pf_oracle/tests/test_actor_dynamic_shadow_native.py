@@ -7,7 +7,9 @@ engine completion, Vulkan observation, upload state and original screenshots.
 import io
 from pathlib import Path
 import sys
+import tempfile
 import unittest
+from unittest.mock import patch
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -56,11 +58,12 @@ class NativeActorShadowContracts(unittest.TestCase):
         self.assertTrue(native_scene.recipe(variant="animated")["settings"]["cl_capfps"])
 
     @staticmethod
-    def images(*, corrupt=None, flip=False):
+    def images(*, corrupt=None, flip=False, solid=False, variant="base"):
         off = bytes((160, 70, 120)) * (640 * 480)
         on = bytearray(off)
-        for name, sample in native_scene.witnesses().items():
+        for name, sample in native_scene.witnesses(variant).items():
             blocked = name.endswith("opaque") or (flip and name.endswith("notch"))
+            blocked = blocked or (solid and name.endswith(("hole", "notch")))
             if corrupt == "solid" and name.endswith("hole"):
                 blocked = True
             if corrupt == "self" and name.startswith("sprite_"):
@@ -92,6 +95,30 @@ class NativeActorShadowContracts(unittest.TestCase):
                 native_capture.assess_pair(*self.images(corrupt=mutation))
         with self.assertRaisesRegex(ValueError, "shadow missing"):
             native_capture.assess_pair(*self.images(), variant="flip")
+
+    def test_failed_pair_keeps_later_measurements_and_fails_overall(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            decoded = {}
+            for case in native_capture.CASES:
+                material, variant, enabled = case
+                out = root / native_capture.case_name(*case)
+                out.mkdir()
+                off, on = self.images(variant=variant, solid=variant == "solid",
+                                      flip=variant in ("flip", "animated"))
+                # A real missing red shadow must fail, while later successful
+                # controls remain inspectable in the same bounded run.
+                if material == "pbr" or variant == "invisible":
+                    on = off
+                decoded[out / "native.png"] = (native_scene.EXTENT, on if enabled else off)
+            with patch.object(native_capture.images, "decode", side_effect=decoded.__getitem__):
+                result = native_capture.assess(root)
+            self.assertEqual(result["status"], "FAIL")
+            self.assertEqual(set(result["errors"]), {"pbr-base"})
+            self.assertEqual(len(result["witnesses"]), 8)
+            self.assertTrue(result["witnesses"]["invisible_off_on_identical"])
+            self.assertGreater(result["witnesses"]["normal-animated"]["floor_notch"]["red_loss"], 8)
+            self.assertTrue((root / "normal-animated-on" / "image-acceptance.json").is_file())
 
 
 if __name__ == "__main__":

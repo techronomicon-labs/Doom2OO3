@@ -64,7 +64,7 @@ foreach ($name in $stock) {
 }
 if (Test-Path -LiteralPath $flashlight -PathType Leaf) { $files.Add($flashlight) }
 
-Write-Host 'ShadeDoomVK SHADOW-002 research: light-facing source-alpha occlusion; native visual qualification pending.' -ForegroundColor Yellow
+Write-Host 'ShadeDoomVK SHADOW-002 research: light-facing source-alpha occlusion; owner visual acceptance pending.' -ForegroundColor Yellow
 Write-Host "Engine: $exe"
 Write-Host "IWAD SHA256: $wadHash"
 Write-Host "PBR packs loaded: $(@($files | Where-Object { $_ -like '*PBR.pk3' }).Count) / 2"
