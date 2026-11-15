@@ -44,7 +44,7 @@ foreach ($name in $stock) {
 }
 if (Test-Path -LiteralPath $flashlight -PathType Leaf) { $files.Add($flashlight) }
 
-Write-Host 'ShadeDoomVK SHADOW-002 research: source-specific actor occlusion, NOT finished sprite silhouettes.' -ForegroundColor Yellow
+Write-Host 'ShadeDoomVK SHADOW-002 research: light-facing source-alpha occlusion; native visual qualification pending.' -ForegroundColor Yellow
 Write-Host "Engine: $exe"
 Write-Host "IWAD SHA256: $wadHash"
 Write-Host "PBR packs loaded: $(@($files | Where-Object { $_ -like '*PBR.pk3' }).Count) / 2"
@@ -60,7 +60,7 @@ $argv += @(
     '+vid_rendermode', '4',
     '+gl_lights', 'true', '+gl_light_sprites', 'true', '+gl_light_particles', 'true',
     '+gl_spritelight', '2', '+gl_viewmodel_lighting', '2',
-    '+gl_lightprobe', 'true', '+gl_customshader', 'true', '+gl_ubershaders', 'true',
+    '+gl_lightprobe', 'true', '+gl_customshader', 'true', '+gl_ubershaders', 'false',
     '+gl_levelmesh', 'false', '+gl_light_shadows', $world,
     '+gl_actor_light_shadows', $actor, '+r_actorspriteshadow', '0',
     '+map', 'MAP01'
