@@ -131,6 +131,7 @@ def capture(args, folder, package, scene, depth, mode, commit):
         "+vid_rendermode", "4", "+gl_levelmesh", "false", "+gl_light_shadows", "0",
         "+gl_lights", "true", "+gl_lightprobe", "false", "+gl_ubershaders", "false",
         "+r_drawplayersprites", "false", "+screenblocks", "12", "+crosshair", "0", "+fov", "90",
+        "+vid_setsize", "640", "480",
         "+gl_world_virtual_relief_depth", str(depth), "+map", map_name,
     ]
     with (folder / "engine.log").open("wb") as log:
