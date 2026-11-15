@@ -80,6 +80,7 @@ jobs:
           SMOKE_MAP: ${{ matrix.map }}
         run: |
           mkdir evidence
+          printf '[GlobalSettings]\nvk_rayquery=false\n' > evidence/smoke.ini
           shopt -s nullglob
           icds=(/usr/share/vulkan/icd.d/lvp_icd*.json)
           test "${#icds[@]}" -eq 1
@@ -93,7 +94,7 @@ jobs:
             -window -width 640 -height 480 -config "$PWD/evidence/smoke.ini" \
             -sdvkobserve "$PWD/evidence/smoke" -sdvkobservemode state \
             -sdvkobservewarmup 4 -sdvkobserveframes 2 -sdvkobservequit \
-            +vid_preferbackend 1 +vid_rendermode 4 +vk_rayquery false \
+            +vid_rendermode 4 \
             +gl_light_shadows 0 +gl_levelmesh false +map "$SMOKE_MAP" \
             > evidence/engine.log 2>&1
           /usr/bin/python3 tools/ci/check_vulkan_smoke.py evidence "$SMOKE_MAP" "$GITHUB_SHA" | tee -a "$GITHUB_STEP_SUMMARY"
