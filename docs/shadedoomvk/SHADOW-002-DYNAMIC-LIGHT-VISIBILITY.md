@@ -14,28 +14,37 @@ The *actual local dynamic light* is the emitter. The live actor is the caster. T
 
 The receiver is any eligible actual world fragment, including real walls and floors; no fake receiver mesh or horizontal-floor restriction. Existing world occlusion stays separate. A flashlight may cast actor shadows even if it does not use the world shadowmap.
 
-## Current technical first slice, not approved art
+## Current technical source-alpha prototype, not yet visually accepted
 
-Seven source files now carry up to **four selected local actors per light** using renderer x/height/y coordinates, a finite-height geometric ray/cylinder test, same-portal-group and live actor selection, and a bounded per-frame cache. `gl_actor_light_shadows` remains **default OFF** until native qualification.
+The active code now generates an **independent 16×32 cutout mask from the selected source sprite frame's actual alpha**, using the light position to choose its viewing rotation. The chosen sprite's original albedo, source texels and normal/PBR materials are not altered. Correct camera-facing gameplay sprite output remains on the inherited path.
 
-**This is explicitly a geometric stand-in, NOT a sprite-frame alpha cutout, nor a finished visual effect.** A cylindrical shadow is not sufficient for the owner's Doom 3 / Splinter Cell visual standard. It must be replaced by an actor-light-facing source-alpha silhouette with correct animation, rotation, mirroring, authored masks and opacity before visual approval. The first slice is meant to validate per-emitter shading semantics and real world receivers, not win visual acceptance.
+- The CPU dynamically selects up to four closest eligible live actors for each local light. The actor's frame/mirroring is selected **from that light**, not from the player's viewpoint.
+- The material system's normal sprite source is decoded once per texture/frame cache entry. Transparent source pixels produce clear bits. A per-caster mask, authored rectangle coordinates, horizontal light-facing plane and flip flags are copied through the dynamic-light SSBO.
+- In the **normal, specular and PBR fragment-light paths**, the shader intersects each light→world-fragment segment with each caster's light-facing sprite plane. At the intersection it tests the independently reconstructed source-alpha bit. The light contribution is zero where the source cutout is opaque; other local lights, sector colour and IBL remain untouched.
+- Any real world receiving fragment already being shaded (floor, wall, etc.) can receive the effect. There is **no projected-floor mesh or final-color darkening pass**.
+- The packed `FDynLightInfo` record is currently **544 bytes** (source/ABI tests and actual native compilation required). The mask is 16×32 binary, not high-quality per-pixel alpha antialiasing. Cached alpha reads are per source texture and observed frame, then selected per dynamic light.
+- The experimental `gl_actor_light_shadows` control stays default OFF pending native shader correctness evidence; the separate owner research script requests it ON.
 
-The actor-caster array increases packed `FDynLightInfo` from 80 to 224 bytes; C++/GLSL ABI, buffer capacity and LevelMesh and immediate lighting require compiler/native qualification. Up to four nearest in-group shootable actors per light are considered; this limit, offscreen handling, portal recursion, transparency and model alternatives are not complete.
+### Limits requiring follow-on engineering
+
+This is not yet proof of acceptable 2003-remaster visuals: the mask is coarse (thin arms/guns need attention); only upright source sprites from eligible shootable actors are selected; models, wall/flat sprites, picnum overrides, partial translucency, soft penumbra, cross-portal ownership and recursion have not been validated. Source flip/offset/orientation must be confirmed against the existing final sprite billboard in real captures, and actor masks may need a higher-resolution atlas rather than inflating all light records for crowded scenes. Shadows are currently binary per contributing light, without a light-size penumbra model.
+
+It is incorrect to call this shader a full stencil volume, ray-traced alpha geometry or completed feature. Source math and static assertions are **not** a substitute for native images and the owner's visual acceptance.
 
 ## Mandatory qualification
 
 1. C++/`std430` packed ABI, real Windows/Linux builds, shader variants and legacy OFF parity on the exact revision.
 2. Native software Vulkan: two differently coloured dynamic lights, one real actor, one wall and one floor. Verify source-specific attenuation of direct lighting and preserved other light/sector/IBL. A single dark-pixel count is insufficient.
 3. Light/actor motion and stationary-camera versus camera-orbit tests, opposite-direction cast, finite height/depth and negative portal cases, no self-shadowing, multiple casters, resource reinitialisation.
-4. Complete the **source-alpha silhouette** instead of capsule proxy, with light-relative sprite rotation/mirroring and independently antialiased cutout. No visible sprite albedo changes.
+4. Validate the selected light-facing **source-alpha silhouette**, rotation, animation, frame mirroring and sprite offsets against genuine native captures; then improve edge/penumbra quality. No visible source sprite albedo changes.
 5. Native Windows owner playtest: source-matched PR #195 renderer with PR #190's actual PBR assets and flashlight loaded, normal player controls and a useful real map; GPU hardware and honest feature readback.
 6. Representative ON/OFF cost and bounded quality profile on older Vulkan GPUs.
 
-**NO-GO:** Do not merge, distribute this as a visually finished implementation, or close #204 until all above gates and owner acceptance pass. Keep the old #212 implementation historical and unmerged.
+**NO-GO:** Do not merge, distribute this as a visually finished implementation, or close #204 until compiler/hosted native proof, accurate silhouette/camera motion tests, real Windows evaluation, representative performance and owner visual acceptance pass. Keep the old #212 implementation historical and unmerged.
 
 Source: `hw_dynlightdata.h`, `hw_dynlightdata.cpp`, `binding_struct_definitions.glsl`, `light_shadow.glsl`, `lightmodel_{normal,specular,pbr}.glsl`. Contract tests: `tools/pf_oracle/tests/test_actor_dynamic_shadow.py`.
 
 ## Evidence on source preparation
 
-- Independent numerical reference (floor/wall, unaffected second light, self and depth misses): PASS locally.
-- C++ and GLSL, Windows/Linux native run, PBR readback, original sprite silhouette: **NOT YET VERIFIED**.
+- Independent numerical reference (floor/wall, source-alpha holes, unaffected second light, endpoint and height misses): PASS locally before conversion to GPU source.
+- Revised C++ and GLSL light-facing alpha path, Windows/Linux native run, PBR readback, sprite orientation/mask quality: **NOT YET VERIFIED**. Earlier finite-height-only Windows build does not count for this revision.
