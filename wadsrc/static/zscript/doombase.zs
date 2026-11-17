@@ -541,6 +541,7 @@ struct LevelLocals native
 	native clearscope int BoxOnLineSide(Vector2 pos, double radius, Line l) const;
 
 	native String GetChecksum() const;
+	native void EnableStageBLayout();
 
 	native void ChangeSky(TextureID sky1, TextureID sky2 );
 	native void ForceLightning(int mode = 0, sound tempSound = "");

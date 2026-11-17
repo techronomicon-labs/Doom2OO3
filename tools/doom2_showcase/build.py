@@ -48,6 +48,30 @@ def build_flashlight(out):
             )
 
 
+def fixture_brightmap(row):
+    from material_generator import np
+    from stageb_layout import FLAT_FIXTURES, WALL_FIXTURES
+
+    fixtures = FLAT_FIXTURES if row["kind"] == "flat" else WALL_FIXTURES
+    fixture = fixtures.get(row["name"])
+    if fixture is None:
+        return None
+    pixels = row["pixels"]
+    mask = np.zeros(pixels.shape[:2], dtype=np.uint8)
+    for x0, y0, x1, y1 in fixture.regions:
+        source = pixels[y0:y1, x0:x1]
+        red, green, blue, alpha = source.astype(np.int32).transpose(2, 0, 1)
+        if row["name"] == "TEKGREN5":
+            value = 190 * ((red == 255) & (green == 255) & (blue < 224))
+        elif row["name"] == "EXITSIGN":
+            value = np.where((red >= 48) & (red > 2 * np.maximum(green, blue)), 72 + red // 4, 0)
+        else:
+            peak = np.maximum(np.maximum(red, green), blue)
+            value = np.clip((peak - 104) * 1.12, 0, 154)
+        mask[y0:y1, x0:x1] = np.where(alpha == 255, value, 0)
+    return mask if mask.any() else None
+
+
 def dbp50_material_inputs(effective_rows, original, replacement, include_unchanged=False):
     """Yield effective art and switch context for material and relief generation."""
     import dbp50_effective as dbp
@@ -162,14 +186,10 @@ def build_materials(out, iwad, pwad, include_gallery, include_relief=False, incl
                 channel: sprites.png(base.np.asarray(maps[channel]))
                 for channel in CHANNELS
             }
-            if include_emitters and key == ("wall", "TEKGREN5"):
-                # The validated IWAD has a yellow lamp strip at U 4–58, V 4–11.
-                # A native-texel mask gives those source pixels their own emission.
-                mask = base.np.zeros(row["pixels"].shape[:2], dtype=base.np.uint8)
-                strip = row["pixels"][4:12, 4:59]
-                yellow = (strip[..., 0] == 255) & (strip[..., 1] == 255) & (strip[..., 2] < 224)
-                mask[4:12, 4:59] = yellow * 190
-                doomii_overrides[key] = dict(shared[key], brightmap=sprites.png(mask))
+            if include_emitters:
+                brightmap = fixture_brightmap(row)
+                if brightmap is not None:
+                    doomii_overrides[key] = dict(shared[key], brightmap=sprites.png(brightmap))
         if include_relief:
             if entry["placeholder"]:
                 relief_fallbacks.append(
@@ -233,7 +253,7 @@ def build_materials(out, iwad, pwad, include_gallery, include_relief=False, incl
     if include_emitters:
         from stageb_lighting import build as build_emitter_layout
 
-        build_emitter_layout(out / "DoomII-Emitter-Lighting.pk3")
+        build_emitter_layout(out / "DoomII-Emitter-Lighting.pk3", iwad=iwad)
 
     if pwad:
         effective_rows = dbp.effective_rows(iwad, pwad, entries, include_custom=include_relief)
@@ -332,7 +352,7 @@ def main():
         help="build sprite lighting relief for Doom II and the supplied DBP50 WAD",
     )
     parser.add_argument("--emitter-lighting", action="store_true",
-                        help="build authored emitter lighting for Doom II Entryway and the comparison rooms")
+                        help="build emitter lighting for the Doom II campaign and comparison rooms")
     args = parser.parse_args()
     if (args.dbp50 or args.gallery or args.relief or args.sprite_relief or args.emitter_lighting) and not args.doom2:
         parser.error("--dbp50, --gallery, --relief, --sprite-relief and --emitter-lighting require --doom2")

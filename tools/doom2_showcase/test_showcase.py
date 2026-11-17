@@ -6,6 +6,7 @@ import struct
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
 from zipfile import ZipFile
 
@@ -22,6 +23,7 @@ from relief_wall_profiles import height_map as wall_height_map
 from sprite_materials import maps_for
 from sprite_structural_relief import SpriteRelief
 from structural_relief import height_map
+from wall_materials import context as wall_context
 
 
 def switch_fixture():
@@ -172,6 +174,30 @@ class ShowcaseTests(unittest.TestCase):
         # The steel face crosses the same U=64 line without inheriting it.
         self.assertEqual(np.ptp(fields[0][176, 120:137]), 0)
         np.testing.assert_array_equal(normals[0][352, 241:269, :2], np.full((28, 2), 128))
+
+    def test_carved_switch_states_use_their_own_patch_ownership(self):
+        backing = np.full((128, 64, 4), (56, 47, 40, 255), dtype=np.uint8)
+        device = np.full((128, 40, 4), (120, 100, 90, 255), dtype=np.uint8)
+        lit = device.copy()
+        lit[12:17, 13:27, :3] = (130, 15, 12)
+        patches = {"WALL47_2": backing, "WALL42_6": device, "WALL47_5": lit}
+        decoder = SimpleNamespace(patch=patches.__getitem__)
+        rows, definitions = {}, {}
+        for name, patch_name in (("SW1GARG", "WALL42_6"), ("SW2GARG", "WALL47_5")):
+            art = backing.copy()
+            art[62:, 12:52] = patches[patch_name][:66]
+            rows["wall", name] = {"kind": "wall", "name": name, "pixels": art}
+            definitions[name] = (64, 128, [(0, 0, "WALL47_2"), (12, 62, patch_name)])
+
+        expected = np.zeros((128, 64), dtype=np.float32)
+        expected[62:, 12:52] = 1
+        fields = []
+        for row in rows.values():
+            context = wall_context(row, rows, definitions, decoder)
+            np.testing.assert_array_equal(context["switch_mask"], expected)
+            fields.append(wall_height_map(row, "carved stone", context)[0])
+        np.testing.assert_array_equal(fields[0], fields[1])
+        self.assertGreater(fields[0][82, 32], fields[0][82, 10])
 
     def test_painted_door_marks_do_not_warp_the_metal_normal(self):
         door = np.full((96, 128, 4), (100, 100, 100, 255), dtype=np.uint8)

@@ -124,7 +124,7 @@ def switch_panel(features, context, backing=None):
     if backing is None:
         backing = panels(features) * smoothstep(visible, 0.59, 0.97)
     mask = context.get("switch_mask")
-    if mask is not None and mask.any() and mask.mean() <= 0.55:
+    if mask is not None and mask.any():
         tile = HeightTile(backing.shape[1], backing.shape[0])
         if mount_source_switch(tile, context):
             device = tile.values.reshape(backing.shape[0], 2, backing.shape[1], 2).mean(axis=(1, 3))
@@ -228,6 +228,10 @@ SWITCH_FACES = {
     "SW2S": (32, (
         ((5, 4, 27, 10), -0.093, 1.2), ((12, 16, 21, 24), 0.072, 1.15),
     )),
+    "SW3S": (32, (
+        ((7, 11, 26, 22), -0.084, 1.3), ((13, 6, 20, 26), -0.10, 1.3),
+        ((8, 14, 25, 19), 0.12, 1.2),
+    )),
     "SW4S": (24, (((7, 7, 18, 18), -0.13, 1.25),)),
 }
 
@@ -244,18 +248,62 @@ def mount_switch(tile, x, y, style):
 def mount_source_switch(tile, context):
     patch = context.get("switch_patch")
     mask = context.get("switch_mask")
-    if patch is None or mask is None:
+    if mask is None or not mask.any():
+        return False
+    assembly_origin = context.get("switch_assembly_origin")
+    if assembly_origin is not None:
+        x, y = assembly_origin
+        face = 0.16 * plate(tile, (x - 8, y - 4, x + 24, y + 28), 1.7)
+        face -= 0.13 * plate(tile, (x, y, x + 16, y + 24), 1.25)
+        owned = np.repeat(np.repeat(mask > 0, 2, axis=0), 2, axis=1)
+        np.copyto(tile.values, face, where=owned)
+        return True
+    if patch is None:
         return False
     x, y, name = patch
     style = name[:-1]
-    if style not in SWITCH_FACES or name[-1] not in "01":
+    if style in SWITCH_FACES and name[-1] in "01":
+        size, _ = SWITCH_FACES[style]
+        if (x < 0 or y < 0 or x + size > tile.width or y + size > tile.height
+                or np.count_nonzero(mask) != size * size or not np.all(mask[y:y + size, x:x + size])):
+            return False
+        mount_switch(tile, x, y, style)
+        return True
+    face = sculpted_switch(tile, x, y, name)
+    if face is None:
         return False
-    size, _ = SWITCH_FACES[style]
-    if (x < 0 or y < 0 or x + size > tile.width or y + size > tile.height
-            or np.count_nonzero(mask) != size * size or not np.all(mask[y:y + size, x:x + size])):
-        return False
-    mount_switch(tile, x, y, style)
+    owned = np.repeat(np.repeat(mask > 0, 2, axis=0), 2, axis=1)
+    np.copyto(tile.values, face, where=owned)
     return True
+
+
+def sculpted_switch(tile, x, y, name):
+    if name in ("WARNA0", "WARNB0"):
+        face = 0.21 * plate(tile, (x, y, x + 17, y + 23), 1.6)
+        face -= 0.14 * plate(tile, (x + 5, y + 4, x + 12, y + 19), 1.2)
+        return face
+    if name in ("SW2_5", "SW2_6"):
+        face = 0.14 * plate(tile, (x, y, x + 64, y + 50), 3.0)
+        face += 0.20 * tile.mound(x + 32, y + 24, 27, 17)
+        face -= 0.25 * tile.mound(x + 34, y + 25, 12, 4.5)
+        return face
+    if name in ("SW2_7", "SW2_8"):
+        face = 0.11 * plate(tile, (x, y, x + 36, y + 38), 2.3)
+        face += 0.26 * tile.mound(x + 18, y + 17, 13, 15)
+        for eye in (x + 13, x + 23):
+            face -= 0.18 * tile.mound(eye, y + 18, 3.3, 3.3)
+        face -= 0.13 * tile.mound(x + 18, y + 27, 6, 2.5)
+        return face
+    if name in ("WALL42_1", "WALL42_5", "WALL42_6", "WALL47_3", "WALL47_4", "WALL47_5"):
+        # These tall metal inserts cover the lower wall through the bottom
+        # boundary. The sculpted head occupies only the upper part.
+        face = 0.15 * plate(tile, (x, y, x + 40, tile.height + 2), 2.0)
+        face += 0.24 * tile.mound(x + 20, y + 18, 14.5, 15.0)
+        for eye in (x + 14, x + 26):
+            face -= 0.20 * tile.mound(eye, y + 15, 4.3, 3.5)
+        face -= 0.17 * tile.mound(x + 20, y + 24, 5.0, 3.5)
+        return face
+    return None
 
 
 def bronze_courses(tile, name):
@@ -372,6 +420,127 @@ def tech_wall(tile, name):
     ))
 
 
+def horizontal_pipe_wall(tile, name):
+    # The orange/brown and green pipe paint follows the same round section.
+    tile.values.fill(-0.13)
+    collar = np.zeros_like(tile.u)
+    if name == "PIPEWAL1":
+        for x in (18.5, 44.5):
+            distance = np.abs(tile.wrapped_offset(tile.u, x, tile.width))
+            collar += 0.10 * (1.0 - smoothstep(distance, 2.0, 3.5))
+    for y in (26.4, 37.6, 48.6, 59.7, 82.5, 93.6, 104.7, 115.6):
+        across = tile.wrapped_offset(tile.v, y, tile.height)
+        barrel = np.maximum(0.0, 1.0 - (across / 4.55) ** 2) ** 1.5
+        tile.values += (0.37 + collar) * barrel
+
+    if name == "PIPEWAL1":
+        # A vertical manifold interrupts the pipes. Its indicator and access
+        # plates have their own plane across the entire metal housing.
+        owned = (tile.u >= 22) & (tile.u < 41)
+        face = 0.04 + 0.12 * plate(tile, (22, 0, 41, 128), 2.2)
+        for y in (0, 56):
+            face += 0.12 * plate(tile, (28, y + 31, 35, y + 44), 1.8)
+            face -= 0.09 * plate(tile, (25, y + 44, 39, y + 51), 1.6)
+        for bounds in ((24, 9, 39, 21), (25, 60, 38, 64), (24, 72, 39, 81),
+                       (25, 112, 38, 121)):
+            face -= 0.13 * plate(tile, bounds, 1.45)
+        np.copyto(tile.values, face, where=owned)
+
+
+def stamped_base_wall(tile, name):
+    for x in range(0, tile.width, 32):
+        for top, bottom in ((1, 11), (14, 43), (46, 56), (58, 67),
+                            (70, 111), (114, 127)):
+            tile.values += 0.21 * plate(tile, (x + 1, top, x + 31, bottom), 3.4)
+    if name == "STARTAN3":
+        # The bright central columns and rust streaks are painted into the
+        # panels. Only the bolted divider strips stand proud of the faces.
+        for x in (32, 96):
+            distance = np.abs(tile.wrapped_offset(tile.u, x, tile.width))
+            tile.values += 0.12 * (1.0 - smoothstep(distance, 0.6, 2.2))
+
+
+def equipment_wall(tile, name):
+    if name in ("COMPSTA1", "COMPSTA2"):
+        # Recess each display as a flat pane, including the fine graphics and
+        # baked glow. These graphics must not deform under the flashlight.
+        left_edge = 93 if name == "COMPSTA1" else 91
+        top_edge = 21 if name == "COMPSTA1" else 22
+        for bounds in ((5, 4, 53, 44), (56, 4, 88, 44),
+                       (left_edge, 4, 124, top_edge), (left_edge, 27, 124, 44)):
+            recess(tile, bounds, inset=1.5, rim=0.10, depth=0.15)
+        return
+
+    tile.joints(vertical=(0, 16, 57), horizontal=(0, 40, 88), depth=0.19, width=2.25)
+    for bounds in ((17, 8, 35, 36), (40, 5, 55, 37), (18, 90, 34, 119), (40, 91, 55, 121),
+                   (12, 47, 31, 84), (36, 43, 57, 85)):
+        recess(tile, bounds, inset=2.6, rim=0.12, depth=0.18)
+    for x in (15, 40):
+        tile.values -= 0.16 * plate(tile, (x, 58, x + 13, 63), 1.2)
+
+
+def space_door(tile):
+    tile.joints(vertical=(1, 63), horizontal=(0, 15, 111), depth=0.23, width=2.3)
+    recess(tile, (8, 34, 55, 98), inset=2.5, rim=0.13, depth=0.19)
+    for x in (13, 41):
+        for y in (54, 78):
+            tile.values += 0.19 * plate(tile, (x, y, x + 13, y + 6), 1.8)
+    tile.values += 0.21 * plate(tile, (26, 40, 39, 96), 3.2)
+    # The lens and hazard stripes sit inside separate stamped recesses.
+    recess(tile, (16, 14, 49, 20), inset=1.15, rim=0.10, depth=0.10)
+    recess(tile, (13, 115, 51, 125), inset=1.8, rim=0.11, depth=0.14)
+    for x, low, high in ((39, 2, 13), (8, 101, 111), (50, 101, 111)):
+        for y in range(low, high, 4):
+            tile.values -= 0.13 * plate(tile, (x, y, x + 8, y + 2.7), 1.2)
+
+
+def metal_service_wall(tile, name):
+    if name == "METAL3":
+        tile.joints(vertical=(0, 32), horizontal=(0, 63), spans=((32, 29, 64, 29),),
+                    depth=0.24, width=2.15)
+        for y in (3, 15, 26, 38, 47, 60, 67, 79, 90, 102, 115, 124):
+            for x in (5, 27, 38, 59):
+                tile.values -= 0.15 * tile.mound(x, y, 1.8, 1.8)
+        # The warning graphic is painted on a flat tag above three sockets.
+        tile.values += 0.09 * plate(tile, (43, 38, 54, 55), 1.05)
+        for y in (73, 87, 98):
+            recess(tile, (43, y, 54, y + 7), inset=0.9, rim=0.08, depth=0.15)
+        return
+
+    tile.joints(vertical=(0, 27, 52, 57), depth=0.22, width=2.1)
+    hardware_runs(tile, (
+        (((13, 0), (13, 25), (19, 31), (27, 31)), 0.19, 2.4),
+        (((17, 39), (17, 128)), 0.18, 2.7),
+        (((28, 10), (51, 10)), 0.20, 2.8),
+        (((28, 86), (51, 86)), 0.22, 2.8),
+        (((46, 88), (46, 101), (49, 101), (49, 128)), 0.18, 2.5),
+    ))
+    for top, bottom in ((13, 62), (64, 80), (90, 127)):
+        recess(tile, (30, top, 51, bottom), inset=2, rim=0.095, depth=0.13)
+
+
+MASKED_STEEL = frozenset((
+    "MIDGRATE", "MIDBARS1", "MIDBRN1", "MIDSPACE", "MIDBRONZ",
+    "BRNSMAL2", "BRNSMALL", "BRNSMALC", "BRNSMALR",
+))
+
+
+def masked_wall_field(name, pixels):
+    """Normal-map bevels following the visible stock bars and cutout edges."""
+    if name not in MASKED_STEEL:
+        return None
+    alpha = pixels[:, :, 3] > 127
+    if alpha.all() or not alpha.any():
+        return None
+    core = np.repeat(np.repeat(alpha, 2, axis=0), 2, axis=1)
+    field = 0.085 * core.astype(np.float32)
+    for rise in (0.073, 0.055, 0.035, 0.02):
+        # Use the actual patch silhouette, including diagonals and apertures.
+        core = core & np.roll(core, 1, 0) & np.roll(core, -1, 0) & np.roll(core, 1, 1) & np.roll(core, -1, 1)
+        field += rise * core
+    return blur(field, 1)
+
+
 def masked_hardware(tile, name):
     if name == "MIDBARS3":
         for y in (0, 64):
@@ -388,6 +557,33 @@ def masked_hardware(tile, name):
 def formed_hardware(name, shape):
     """Source-registered profiles for manufactured parts with planar faces."""
     h, w = shape
+    if name in ("PIPEWAL1", "PIPEWAL2") and shape == (128, 64):
+        tile = HeightTile(w, h)
+        horizontal_pipe_wall(tile, name)
+        return tile.values, "rounded pipe banks and independently formed controls"
+    if (name, shape) in (("STARTAN3", (128, 128)), ("STARG1", (128, 64))):
+        tile = HeightTile(w, h)
+        stamped_base_wall(tile, name)
+        return tile.values, "pressed wall panels and raised divider strips"
+    if name == "SUPPORT3" and shape == (128, 64):
+        tile = HeightTile(w, h)
+        tile.joints(vertical=(0, 23.5, 40.5), depth=0.26, width=2.1)
+        for x in (8.5, 16.5, 28.5, 36.5, 48.5, 56.5):
+            for y in range(4, 128, 8):
+                tile.values -= 0.27 * tile.mound(x, y, 2.1, 2.0)
+        return tile.values, "perforated steel reinforcement rails"
+    if (name, shape) in (("COMPSTA1", (128, 128)), ("COMPSTA2", (128, 128)), ("SPACEW2", (128, 64))):
+        tile = HeightTile(w, h)
+        equipment_wall(tile, name)
+        return tile.values, "beveled equipment housings with planar displays"
+    if name == "SPCDOOR2" and shape == (128, 64):
+        tile = HeightTile(w, h)
+        space_door(tile)
+        return tile.values, "stamped door hardware and inset lens"
+    if name in ("METAL3", "METAL4") and shape == (128, 64):
+        tile = HeightTile(w, h)
+        metal_service_wall(tile, name)
+        return tile.values, "formed service panels with separate electrical fittings"
     if name in ("BRONZE1", "BRONZE2", "BRONZE3", "BRONZE4") and shape == (128, 64):
         tile = HeightTile(w, h)
         bronze_courses(tile, name)
@@ -622,8 +818,46 @@ def stone7(tile):
         np.minimum(tile.values, -0.46 * tile.mound(x, y, width, height), out=tile.values)
 
 
+def fractured_stone(tile, name):
+    # STONE5 is the damaged variant of STONE4; their block boundaries align.
+    cracks = (
+        (((0, 24), (9, 21), (16, 18), (25, 19), (31, 22), (42, 30), (47, 31),
+          (54, 37), (63, 48)), 0.34),
+        (((19, 18), (14, 13), (10, 10), (10, 4)), 0.24),
+        (((26, 19), (33, 15), (41, 13), (43, 10), (42, 1)), 0.30),
+        (((42, 11), (50, 18), (55, 21), (64, 25)), 0.29),
+        (((0, 49), (8, 47), (17, 45), (25, 46), (30, 45), (39, 38), (42, 30)), 0.34),
+        (((12, 36), (16, 42), (20, 44)), 0.25),
+        (((28, 46), (36, 51), (44, 52), (52, 58)), 0.30),
+        (((0, 65), (11, 65), (18, 67), (26, 71)), 0.27),
+        (((0, 81), (11, 78), (23, 78), (32, 74), (43, 67), (53, 58), (64, 53)), 0.36),
+        (((44, 73), (52, 76), (64, 72)), 0.24),
+        (((0, 94), (11, 89), (20, 89), (30, 93), (37, 100), (47, 102),
+          (56, 99), (64, 98)), 0.34),
+        (((0, 122), (13, 113), (24, 107), (37, 101), (43, 108), (49, 119),
+          (51, 125), (63, 122)), 0.33),
+    )
+    for points, depth in cracks:
+        np.minimum(tile.values, -depth * tile.contour(points, 0.20, 2.35), out=tile.values)
+    if name == "STONE5":
+        for x, y, rx, ry in ((46, 21, 5, 6), (18, 43, 6, 4), (32, 48, 8, 4),
+                             (26, 80, 9, 5.5), (43, 103, 6.5, 4), (51, 118, 3, 6)):
+            np.minimum(tile.values, -0.47 * tile.mound(x, y, rx, ry), out=tile.values)
+
+
 def reviewed_panel(name, shape):
     height, width = shape
+    if name in ("STONE4", "STONE5") and shape == (128, 64):
+        tile = HeightTile(width, height)
+        fractured_stone(tile, name)
+        return tile.values, "traced stone fractures and damaged joints"
+    if name == "BIGBRIK1" and shape == (128, 64):
+        tile = HeightTile(width, height)
+        rows = (0, 32, 64, 96, 128)
+        uprights = [(x, top, x, bottom) for x, top, bottom in
+                    zip((6, 55.5, 6, 55.5), rows, rows[1:])]
+        tile.joints(horizontal=rows[:-1], spans=uprights, depth=0.40, width=2.85)
+        return tile.values, "staggered brick faces and recessed mortar"
     if name in ("CEMENT9", "STONE7") and shape == (128, 64):
         tile = HeightTile(width, height)
         if name == "CEMENT9":
@@ -649,6 +883,15 @@ def reviewed_panel(name, shape):
             tile.values += 0.22 * plate(tile, (0.6, y, 7.4, y + 16), 0.9)
             tile.values -= 0.38 * plate(tile, (2, y + 3, 6, y + 14), 1.0)
         return tile.values, "recessed key indicator lenses in repeatable metal frames"
+    if name in ("DOORBLU2", "DOORRED2", "DOORYEL2") and shape == (128, 16):
+        tile = HeightTile(width, height)
+        for y in range(0, 120, 24):
+            tile.values += 0.11 * plate(tile, (0, y, 16, y + 3.5), 1.1)
+            tile.values += 0.23 * tile.mound(8, y + 11, 7, 8.6)
+            tile.values -= 0.18 * tile.mound(5, y + 15, 2.2, 2.4)
+            tile.values -= 0.18 * tile.mound(11, y + 15, 2.2, 2.4)
+            tile.values -= 0.10 * tile.mound(8, y + 20, 4, 1.65)
+        return tile.values, "sculpted skull key indicators and separate metal rails"
     if (name, shape) in (("STEP2", (16, 32)), ("STEP3", (16, 32)),
                           ("STEP6", (16, 32)), ("STEPTOP", (16, 128))):
         tile = HeightTile(width, height)
@@ -658,6 +901,23 @@ def reviewed_panel(name, shape):
             y = 5 if name == "STEP2" else 2
             tile.values += 0.14 * plate(tile, (0, y, width, y + 4), 1.5)
         return tile.values, "source-aligned step nose and riser bevel"
+    if (name, shape) in (("STEP1", (16, 32)), ("STEP4", (16, 32)),
+                          ("STEP5", (16, 32)), ("STEPLAD1", (16, 64))):
+        tile = HeightTile(width, height)
+        if name == "STEP1":
+            tile.joints(horizontal=(0, 8), depth=0.16, width=1.7)
+            tile.values += 0.18 * plate(tile, (0, 0, 32, 3.5), 1.1)
+        elif name == "STEP4":
+            tile.joints(horizontal=(0, 5.5), depth=0.18, width=1.55)
+            tile.values += 0.11 * plate(tile, (0, 1.0, 32, 5), 1.35)
+        elif name == "STEP5":
+            tile.joints(horizontal=(0, 8), depth=0.23, width=1.6)
+            for y in (1, 9):
+                for x in (0, 8, 16, 24):
+                    tile.values += 0.14 * plate(tile, (x + 0.8, y, x + 7.2, y + 5.5), 1.6)
+        else:
+            recess(tile, (4, 5, 60, 15), inset=1.4, rim=0.10, depth=0.28)
+        return tile.values, "formed riser trim and recessed fittings"
     return None
 
 
@@ -744,7 +1004,21 @@ def height_map(row, family, context):
         return encode(height), label
     context = context or {}
     features = WallFeatures(pixels, context.get("paired_pixels"))
-    if name in ("SW1BRCOM", "SW2BRCOM", "SW1BRN1", "SW2BRN1", "SW1BRNGN", "SW2BRNGN") and shape in ((128, 64), (128, 128)):
+    if (name, shape) in (("SW1COMM", (72, 64)), ("SW2COMM", (72, 64)),
+                         ("SW1EXIT", (72, 32)), ("SW2EXIT", (72, 32))):
+        tile = HeightTile(shape[1], shape[0])
+        if name.endswith("EXIT"):
+            tile.joints(horizontal=(0, 63), depth=0.15, width=1.8)
+        else:
+            # Brushed backing is shared with SHAWN2. Keep the housing its
+            # own surface instead of extending that grain through the panel.
+            strip = np.median(features.tone - mean_line(features.tone, 1, 3), axis=0)
+            tile.values[:] = np.repeat(0.10 * np.tanh(45.0 * strip), 2)
+        if mount_source_switch(tile, context):
+            return encode(tile.values), "independent switch housing on brushed metal backing"
+        backing = tile.values.reshape(shape[0], 2, shape[1], 2).mean(axis=(1, 3))
+        height, label = switch_panel(features, context, backing), "switch housing on brushed metal backing"
+    elif name in ("SW1BRCOM", "SW2BRCOM", "SW1BRN1", "SW2BRN1", "SW1BRNGN", "SW2BRNGN") and shape in ((128, 64), (128, 128)):
         tile = HeightTile(shape[1], shape[0])
         brown_panel(tile)
         if mount_source_switch(tile, context):
@@ -768,7 +1042,9 @@ def height_map(row, family, context):
         return encode(tile.values), "original red masonry courses and staggered mortar"
     elif name in ("BROWNHUG", "STUCCO", "BRICK2"):
         height, label = mineral_finish(features), "weathered mineral clusters and worn joints"
-        if name == "BRICK2":
+        if name == "STUCCO":
+            height *= 1.35
+        elif name == "BRICK2":
             # Very low contrast in the original. Accentuate coherent runs only.
             features.tone = np.clip(0.5 + 2.6 * (features.tone - blur(features.tone, 5)), 0.0, 1.0)
             height += 0.70 * mortar(features)
@@ -776,7 +1052,8 @@ def height_map(row, family, context):
         # The narrow grooves are persistent down the grain. The broad
         # horizontal lighting painted into this texture adds no contour.
         strip = np.median(features.tone - mean_line(features.tone, 1, 3), axis=0)
-        height = np.broadcast_to(0.08 * np.tanh(45.0 * strip), shape).copy()
+        strength = 0.10 if name == "SHAWN2" else 0.08
+        height = np.broadcast_to(strength * np.tanh(45.0 * strip), shape).copy()
         if name == "SILVER1":
             tile = HeightTile(64, 128)
             tile.joints(horizontal=(8, 120), depth=0.23, width=2.1)
@@ -787,6 +1064,13 @@ def height_map(row, family, context):
         if name != "GRAYVINE":
             height = switch_panel(features, context, height)
         label = "raised vine overlay on stone backing"
+    elif name in ("SW1STRTN", "SW2STRTN") and shape == (128, 64):
+        tile = HeightTile(64, 128)
+        stamped_base_wall(tile, name)
+        if mount_source_switch(tile, context):
+            return encode(tile.values), "independent switch housing on stamped wall panels"
+        backing = tile.values.reshape(128, 2, 64, 2).mean(axis=(1, 3))
+        height, label = switch_panel(features, context, backing), "switch housing on stamped wall panels"
     elif name in ("SW1MOD1", "SW2MOD1") and pixels.shape[:2] == (128, 64):
         tile = HeightTile(64, 128)
         modular_wall(tile, "MODWALL1")

@@ -2375,6 +2375,13 @@ DEFINE_ACTION_FUNCTION(FLevelLocals, GetChecksum)
 	ACTION_RETURN_STRING((const char*)md5string);
 }
 
+DEFINE_ACTION_FUNCTION(FLevelLocals, EnableStageBLayout)
+{
+	PARAM_SELF_STRUCT_PROLOGUE(FLevelLocals);
+	self->flags3 |= LEVEL3_STAGEBLAYOUT;
+	return 0;
+}
+
 static void Vec2Offset(FLevelLocals *Level, double x, double y, double dx, double dy, bool absolute, DVector2 *result)
 {
 	if (absolute)

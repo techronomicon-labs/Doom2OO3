@@ -6,6 +6,7 @@ from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from gallery import Map, wad
+from stageb_layout import Emitter, infer_layout
 
 
 MENU = "DoomIIEmitterLightingMenu"
@@ -19,26 +20,6 @@ ENTRYWAY_DAYLIGHT = (244, 234, 217)
 CEILING_LIGHT_COLOURS = {
     "FLAT2": (235, 238, 241),
 }
-
-
-@dataclass(frozen=True)
-class Emitter:
-    sector: int
-    x: int
-    y: int
-    height: int
-    radius: int
-    color: tuple[int, int, int]
-    intensity: int
-    direction: tuple[int, int] | None = None
-    linearity: float = 0.82
-
-    def call(self):
-        yaw, pitch = self.direction or (0, 0)
-        rgb = ", ".join(map(str, self.color))
-        directional = "false" if self.direction is None else "true"
-        return (f"AddEmitter({self.sector}, ({self.x}, {self.y}), {self.height}, {self.radius // 2}, "
-                f"{rgb}, {self.intensity}, {self.linearity}, {directional}, {yaw}, {pitch});")
 
 
 @dataclass(frozen=True)
@@ -139,6 +120,7 @@ FIXTURE_EMITTERS = {
 
 LABELS = {
     "MAP01": "Entryway",
+    "MAP02": "Underhalls",
     "SBINDR": "Interior point lights",
     "SBOUT": "Courtyard directional light",
     "SBDARK": "Sealed room control",
@@ -208,6 +190,7 @@ class SDVKStageBLayout : EventHandler
     String RoomLabel;
     int EntrywayLayoutRevision;
     bool TriedEntrywayLayoutUpgrade;
+    bool CheckedCampaignLayout;
     const CurrentEntrywayLayout = 1;
 
     SDVKStageBPointEmitter AddEmitter(int receiver, Vector2 position, double height, int size,
@@ -240,13 +223,38 @@ class SDVKStageBLayout : EventHandler
     void AddCeilingEmitter(String texture, int receiver, Vector2 position, int belowCeiling,
                            int size, int red, int green, int blue, int intensity)
     {
+        AddPlaneEmitter(texture, receiver, position, belowCeiling, size, red, green, blue, intensity, true);
+    }
+
+    void AddPlaneEmitter(String texture, int receiver, Vector2 position, int inset,
+                         int size, int red, int green, int blue, int intensity, bool fromCeiling)
+    {
         let sector = level.PointInSector(position);
         TextureID fixture = TexMan.CheckForTexture(texture, TexMan.Type_Flat);
         if (sector == null || sector.Index() != receiver || !fixture.IsValid() ||
-            sector.GetTexture(Sector.ceiling) != fixture) return;
-        double height = sector.ceilingplane.ZatPoint(position) - sector.floorplane.ZatPoint(position) - belowCeiling;
+            sector.GetTexture(fromCeiling ? Sector.ceiling : Sector.floor) != fixture) return;
+        double height = inset;
+        if (fromCeiling)
+            height = sector.ceilingplane.ZatPoint(position) - sector.floorplane.ZatPoint(position) - inset;
         if (height < 8) return;
         AddEmitter(receiver, position, height, size, red, green, blue, intensity, 0.82, false, 0, 0);
+    }
+
+    void AddThingEmitters(class<Actor> fixtureClass, int height, int size,
+                          int red, int green, int blue, int intensity)
+    {
+        let fixtures = ThinkerIterator.Create(fixtureClass);
+        Actor fixture;
+        while ((fixture = Actor(fixtures.Next())))
+        {
+            let sector = fixture.CurSector;
+            if (sector == null) continue;
+            Vector2 position = fixture.Pos.XY;
+            double floor = sector.floorplane.ZatPoint(position);
+            int strength = int(intensity * (0.48 + 0.52 * clamp(sector.lightlevel, 0, 255) / 255.0) + 0.5);
+            AddEmitter(sector.Index(), position, fixture.Pos.Z - floor + height, size,
+                       red, green, blue, strength, 0.82, false, 0, 0);
+        }
     }
 
     SDVKStageBPointEmitter AddWallStripEmitter(int lineIndex)
@@ -327,16 +335,26 @@ class SDVKStageBLayout : EventHandler
         TriedEntrywayLayoutUpgrade = false;
         RoomLabel = "";
 EMITTERS
+        LoadCampaignLayout();
     }
 
     override void WorldTick()
     {
         // A serialized EventHandler skips WorldLoaded when restoring a save.
+        if (!CheckedCampaignLayout) LoadCampaignLayout();
         if (EntrywayLayoutRevision >= CurrentEntrywayLayout || TriedEntrywayLayoutUpgrade ||
             RoomLabel != "Entryway") return;
         TriedEntrywayLayoutUpgrade = true;
         UpgradeEntrywayLayout();
     }
+
+    void LoadCampaignLayout()
+    {
+        CheckedCampaignLayout = true;
+        if (RoomLabel != "") return;
+CAMPAIGN_CASES
+    }
+CAMPAIGN_LAYOUTS
 OVERLAY
 }
 '''
@@ -360,7 +378,7 @@ OVERLAY = '''
 '''
 
 
-def actor_script(playable):
+def actor_script(playable, campaign=None):
     blocks = []
     for map_name, emitters in (("MAP01", ENTRYWAY), *FIXTURE_EMITTERS.items()):
         condition = "IsStockEntryway()" if map_name == "MAP01" else f'level.MapName == "{map_name}"'
@@ -369,13 +387,28 @@ def actor_script(playable):
         if map_name == "MAP01":
             blocks.append("            EntrywayLayoutRevision = CurrentEntrywayLayout;")
         blocks.append("        }")
+    cases = []
+    layouts = []
+    for map_name, (checksum, emitters) in (campaign or {}).items():
+        cases.extend((f'        if (level.MapName == "{map_name}" && level.GetChecksum() == "{checksum}")',
+                      "        {", "            RoomLabel = level.LevelName;", "            level.EnableStageBLayout();",
+                      f"            Load{map_name}();", "            return;", "        }"))
+        layouts.extend((f"    void Load{map_name}()", "    {"))
+        layouts.extend(f"        {emitter.call()}" for emitter in emitters)
+        layouts.append("    }")
     return (ZSCRIPT.replace("ENTRYWAY_CHECKSUM", ENTRYWAY_CHECKSUM)
             .replace("RETIRED_SIGNATURES", ", ".join(str(value) for row in RETIRED_ENTRYWAY_CEILING for value in row))
             .replace("WALL_STRIP_LINES", ", ".join(str(strip.line) for strip in ENTRYWAY_WALL_STRIPS))
+            .replace("CAMPAIGN_CASES", "\n".join(cases)).replace("CAMPAIGN_LAYOUTS", "\n".join(layouts))
             .replace("EMITTERS", "\n".join(blocks)).replace("OVERLAY", OVERLAY if playable else ""))
 
 
-def build(path, playable=True):
+def build(path, playable=True, *, iwad=None):
+    campaign = None
+    if iwad is not None:
+        from material_generator import Wad
+
+        campaign = infer_layout(Wad(iwad))
     rooms = {"SBINDR": room_geometry(False), "SBOUT": room_geometry(True), "SBDARK": sealed_control()}
     map_defs = ['GameInfo { AddEventHandlers = "SDVKStageBLayout" }']
     for name, next_room in zip(rooms, ("SBOUT", "SBDARK", "SBINDR"), strict=True):
@@ -383,7 +416,7 @@ def build(path, playable=True):
         map_defs.append(f'map {name} "{LABELS[name]}" {{ next = "{next_room}" nointermission{sky} }}')
 
     entries = {f"maps/{name}.wad": wad(name, room.text()) for name, room in rooms.items()}
-    entries["ZSCRIPT"] = actor_script(playable).encode()
+    entries["ZSCRIPT"] = actor_script(playable, campaign).encode()
     entries["MAPINFO"] = ("\n".join(map_defs) + "\n").encode()
     if playable:
         menu = [f'OptionMenu "{MENU}"', "{", '  Title "Emitter lighting"',
@@ -393,7 +426,8 @@ def build(path, playable=True):
                 '  Slider "Emitter intensity", "gl_emitter_intensity", 0.0, 2.0, 0.05, 2',
                 '  Submenu "Flashlight settings", "SDVKFlashlightOptions"',
                 '  Submenu "PBR materials", "PBRMaterialMenu"', '  StaticText " "']
-        menu.extend(f'  Command "{label}", "map {name}"' for name, label in LABELS.items())
+        menu.extend(f'  Command "{label}", "map {name}"' for name, label in LABELS.items()
+                    if name != "MAP02" or campaign is not None)
         menu.extend(("}", 'AddOptionMenu "OptionsMenu"', "{", f'  Submenu "Emitter lighting", "{MENU}"', "}"))
         entries["MENUDEF"] = ("\n".join(menu) + "\n").encode()
 
@@ -407,6 +441,7 @@ def build(path, playable=True):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--doom2", type=Path, help="owner-supplied Doom II IWAD for campaign lighting")
     parser.add_argument("--no-overlay", action="store_true", help="omit menus and overlay for matched captures")
     args = parser.parse_args()
-    build(args.out, playable=not args.no_overlay)
+    build(args.out, playable=not args.no_overlay, iwad=args.doom2)

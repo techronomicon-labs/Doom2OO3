@@ -57,7 +57,14 @@ def context(row, rows, defs, decoder):
             ctx["vine_mask"] = mask
     if row["kind"] == "wall" and name.startswith(("SW1", "SW2")):
         def is_switch_patch(patch):
-            return patch.startswith("SW") or patch in ("WALL42_1", "WALL42_5", "WALL42_6")
+            if patch in ("SW12_4", "SW12_5"):
+                return False  # These two patches are the STARTAN backing.
+            if name.endswith("WDMET") and patch in ("EXIT2", "W108_2", "W108_3"):
+                return True
+            return patch.startswith("SW") or patch in (
+                "WALL42_1", "WALL42_5", "WALL42_6", "WALL47_3", "WALL47_4", "WALL47_5",
+                "WARNA0", "WARNB0",
+            )
 
         mask = patch_mask(row, defs, decoder, is_switch_patch)
         if mask is not None:
@@ -65,8 +72,14 @@ def context(row, rows, defs, decoder):
             devices = [(x, y, patch) for x, y, patch in defs[name][2] if is_switch_patch(patch)]
             if len(devices) == 1:
                 ctx["switch_patch"] = devices[0]
+            elif name.endswith("WDMET"):
+                for x, y, patch in devices:
+                    if patch in ("W108_2", "W108_3"):
+                        ctx["switch_assembly_origin"] = (x, y)
+                        break
         if any(
-            pname in ("SW2_7", "SW2_8", "WALL42_1", "WALL42_5", "WALL42_6")
+            pname in ("SW2_7", "SW2_8", "WALL42_1", "WALL42_5", "WALL42_6",
+                      "WALL47_3", "WALL47_4", "WALL47_5")
             for x, y, pname in defs[name][2]
         ):
             ctx["switch_alloy"] = "bronze"

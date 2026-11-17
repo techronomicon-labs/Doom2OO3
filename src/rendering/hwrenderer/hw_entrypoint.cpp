@@ -86,8 +86,9 @@ namespace
 constexpr int NoShadowMapIndex = 16000000;
 constexpr std::size_t EmitterShadowCapacity = 48;
 
-bool HasAuthoredEmitters(const FLevelLocals* level)
+bool HasEmitterLayout(const FLevelLocals* level)
 {
+	if (level->flags3 & LEVEL3_STAGEBLAYOUT) return true;
 	for (auto light = level->lights; light; light = light->next)
 		if (light->IsActive() && light->IsStageBEmitter()) return true;
 	return false;
@@ -197,7 +198,7 @@ sector_t* RenderViewpoint(FRenderViewpoint& mainvp, AActor* camera, IntRect* bou
 	const bool specialVision = player && (player->fixedcolormap != NOFIXEDCOLORMAP || player->fixedlightlevel != -1 || player->extralight == INT_MIN);
 	const bool emitterLighting = gl_emitter_lighting && contextType == HWRenderContextType::MainView &&
 		!specialVision && screen->IsVulkan() && V_IsTrueColor() && !gl_levelmesh && !gl_raytrace && !gl_ubershaders &&
-		!lm_dynlights && camera->Level->aabbTree && !(camera->Level->flags3 & LEVEL3_NOSHADOWMAP) && HasAuthoredEmitters(camera->Level);
+		!lm_dynlights && camera->Level->aabbTree && !(camera->Level->flags3 & LEVEL3_NOSHADOWMAP) && HasEmitterLayout(camera->Level);
 	if (mainview && toscreen && !(camera->Level->flags3 & LEVEL3_NOSHADOWMAP) && camera->Level->HasDynamicLights && (gl_light_shadows > 0 || emitterLighting) && !lm_dynlights)
 	{
 		screen->mShadowMap->SetAABBTree(camera->Level->aabbTree);

@@ -272,6 +272,7 @@ enum ELevelFlags : unsigned int
 	LEVEL3_LIGHTCREATED			= 0x00080000,	// a light had been created in the last frame
 	LEVEL3_NOFOGOFWAR			= 0x00100000,	// disables effect of r_radarclipper CVAR on this map
 	LEVEL3_SECRET				= 0x00200000,   // level is a secret level
+	LEVEL3_STAGEBLAYOUT			= 0x00400000,   // an emitter layout is installed, possibly with no light sources
 
 	// VKDoom custom flags
 	VKDLEVELFLAG_NOUSERSAVE			= 0x00000001,

@@ -19,17 +19,33 @@ STEEL_HARDWARE = frozenset((
 
 # Finish, face roughness, sheltered roughness gain, polished ridge reduction,
 # base metallic and additional metallic on exposed neutral metal.
-ENTRYWAY_FLAT_FINISH = {
+STOCK_FLAT_FINISH = {
+    "CEIL4_1": ("matte dark coating", 0.82, 0.09, 0.05, 0.0, 0.0),
+    "CEIL4_2": ("coated ceiling screen", 0.68, 0.03, 0.15, 0.05, 0.0),
+    "CEIL4_3": ("coated ceiling screen", 0.68, 0.03, 0.15, 0.05, 0.0),
     "CEIL5_1": ("matte coated ceiling", 0.79, 0.08, 0.035, 0.02, 0.0),
     "CEIL5_2": ("oxidized surface with exposed metal grains", 0.72, 0.11, 0.07, 0.04, 0.30),
+    "CRATOP1": ("dry crate with diagonal grain", 0.78, 0.11, 0.085, 0.0, 0.0),
+    "CRATOP2": ("dry crate with diagonal grain", 0.78, 0.11, 0.085, 0.0, 0.0),
+    "FLAT1": ("worn galvanized steel with a folded seam", 0.60, 0.14, 0.09, 0.27, 0.21),
+    "FLAT14": ("dry granular blue coating", 0.79, 0.13, 0.08, 0.0, 0.0),
+    "FLAT19": ("fine concrete stipple", 0.85, 0.10, 0.06, 0.0, 0.0),
     "FLAT23": ("brushed satin steel", 0.52, 0.08, 0.055, 0.47, 0.0),
-    "FLOOR1_1": ("dry dyed flooring", 0.82, 0.06, 0.05, 0.0, 0.0),
-    "GRASS1": ("matte grass and soil", 0.90, 0.045, 0.04, 0.0, 0.0),
-    "FLAT5": ("worn stone with rough recessed mortar", 0.73, 0.14, 0.05, 0.0, 0.0),
-    "RROCK09": ("dry compacted gravel", 0.81, 0.09, 0.08, 0.0, 0.0),
     "FLAT4": ("satin metal lattice", 0.54, 0.09, 0.06, 0.41, 0.10),
+    "FLAT5": ("worn stone with rough recessed mortar", 0.73, 0.14, 0.05, 0.0, 0.0),
+    "FLAT5_3": ("stained wood with shallow worn grain", 0.76, 0.11, 0.09, 0.0, 0.0),
+    "FLAT5_4": ("dry timber and worn grain", 0.69, 0.15, 0.09, 0.0, 0.0),
     "FLOOR0_1": ("worn floor plates with dark seams", 0.64, 0.09, 0.06, 0.08, 0.14),
+    "FLOOR0_3": ("worn floor panels with recessed parquet seams", 0.68, 0.14, 0.06, 0.08, 0.14),
+    "FLOOR1_1": ("dry dyed flooring", 0.82, 0.06, 0.05, 0.0, 0.0),
+    "FLOOR1_6": ("dry red floor coating", 0.82, 0.10, 0.065, 0.0, 0.0),
     "FLOOR4_1": ("oxidized cast metal vent", 0.58, 0.12, 0.055, 0.17, 0.19),
+    "GATE3": ("cast frame with a matte printed seal", 0.58, 0.19, 0.03, 0.24, 0.21),
+    "GRASS1": ("matte grass and soil", 0.90, 0.045, 0.04, 0.0, 0.0),
+    "GRASS2": ("matte grass clumps and exposed soil", 0.87, 0.08, 0.055, 0.0, 0.0),
+    "RROCK03": ("dry coarse aggregate", 0.86, 0.09, 0.055, 0.0, 0.0),
+    "RROCK09": ("dry compacted gravel", 0.81, 0.09, 0.08, 0.0, 0.0),
+    "RROCK20": ("mossy stone with dry raised faces", 0.87, 0.095, 0.06, 0.0, 0.0),
 }
 ENTRYWAY_MASONRY = frozenset(("ASHWALL3", "BROWNHUG", "CEMENT9", "STONE7", "STEP6"))
 ENTRYWAY_BROWN_PANELS = frozenset(("BROWN1", "BROWN96", "BROWNGRN"))
@@ -41,6 +57,14 @@ ENTRYWAY_FRAMED_PANELS = frozenset((
 ENTRYWAY_SWITCHES = frozenset((
     "SW1COMP", "SW2COMP", "SW1BRCOM", "SW2BRCOM",
     "SW1BRN1", "SW2BRN1", "SW1BRNGN", "SW2BRNGN",
+))
+REVIEWED_STONE = frozenset(("BIGBRIK1", "STONE4", "STONE5", "STUCCO"))
+REVIEWED_METAL = frozenset((
+    "PIPEWAL1", "PIPEWAL2", "SHAWN2", "SUPPORT3", "STARTAN3", "STARG1",
+    "SPACEW2", "COMPTALL", "COMPSTA1", "COMPSTA2", "SPCDOOR2", "STEP1", "STEP4", "STEP5", "STEPLAD1",
+    "METAL3", "METAL4", "DOORBLU2", "DOORRED2", "DOORYEL2",
+    "MIDBARS1", "MIDGRATE", "MIDBRN1", "MIDBRONZ", "MIDSPACE",
+    "BRNSMAL2", "BRNSMALR", "BRNSMALL", "BRNSMALC",
 ))
 
 
@@ -121,28 +145,40 @@ def _normal_bytes(normal):
     return np.uint8(np.rint(np.clip(normal * 127 + 128, 0, 255)))
 
 
-def _entryway_wall_finish(name, pixels, family, context, normal, lum, neutral, metal, rough):
-    from relief_wall_profiles import formed_hardware, height_map
+def _registered_wall_normal(name, pixels, family, context, normal):
+    from relief_wall_profiles import formed_hardware, height_map, masked_wall_field
 
     formed = formed_hardware(name, pixels.shape[:2])
     if formed is None:
         encoded, _ = height_map({"name": name, "pixels": pixels}, family, context)
         if encoded is None:
-            return None
-        field = (encoded.astype(np.float32) - 128) / 255
+            field = masked_wall_field(name, pixels)
+            if field is None:
+                return None
+        else:
+            field = (encoded.astype(np.float32) - 128) / 255
     else:
         field, _ = formed
 
-    size = normal.shape[1], normal.shape[0]
-    surface = _formed_normal(field, pixels, size)
+    return _formed_normal(field, pixels, (normal.shape[1], normal.shape[0]))
+
+
+def _stone_normal(surface, detail, strength):
+    tangent = (surface.astype(np.float32) - 128) / 127
+    tangent[:, :, :2] += strength * (detail[:, :, :2].astype(np.float32) - 128) / 127
+    return _normal_bytes(tangent)
+
+
+def _entryway_wall_finish(name, pixels, family, context, normal, lum, neutral, metal, rough):
+    surface = _registered_wall_normal(name, pixels, family, context, normal)
+    if surface is None:
+        return None
     if name in ENTRYWAY_MASONRY:
         # Retain a little mineral grain over the registered joints and fractures.
-        tangent = (surface.astype(np.float32) - 128) / 127
-        tangent[:, :, :2] += 0.18 * (normal[:, :, :2].astype(np.float32) - 128) / 127
-        surface = _normal_bytes(tangent)
+        surface = _stone_normal(surface, normal, 0.18)
         return surface, np.zeros_like(lum), 0.89 - 0.13 * lum, "dry mineral face and recessed joints"
     if name in ENTRYWAY_BROWN_PANELS:
-        rows = (np.arange(size[1], dtype=np.float32)[:, None] + 0.5) * pixels.shape[0] / size[1]
+        rows = (np.arange(normal.shape[0], dtype=np.float32)[:, None] + 0.5) * pixels.shape[0] / normal.shape[0]
         band = 18 if name == "BROWN1" else 32
         trim = 1 - _smooth(rows, band - 3, band + 2)
         return (surface, trim * (0.08 + 0.26 * neutral),
@@ -159,6 +195,23 @@ def _entryway_wall_finish(name, pixels, family, context, normal, lum, neutral, m
             "satin frames and matte equipment faces")
 
 
+def _stock_wall_finish(name, pixels, family, context, normal, lum, neutral):
+    surface = _registered_wall_normal(name, pixels, family, context, normal)
+    if surface is None:
+        return None
+    if name in REVIEWED_STONE:
+        return (_stone_normal(surface, normal, 0.14), np.zeros_like(lum), 0.90 - 0.16 * lum,
+                "dry masonry with recessed joints")
+    if name in ("PIPEWAL1", "PIPEWAL2", "SPACEW2", "SUPPORT3"):
+        return surface, 0.27 + 0.20 * neutral, 0.66 - 0.15 * lum, "oxidized fittings and satin metal"
+    if name == "SHAWN2":
+        return surface, 0.54 + 0.09 * neutral, 0.59 - 0.16 * lum, "lightly brushed steel"
+    steel = neutral * _smooth(lum, 0.035, 0.28)
+    if name == "SPCDOOR2":
+        steel *= 1 - _smooth(lum, 0.65, 0.87)
+    return surface, 0.45 * steel, 0.81 - 0.26 * steel - 0.055 * lum, "satin metal and dry painted insets"
+
+
 def _hardware_finish(name, kind, pixels, normal, lum, neutral, metal, context):
     from relief_wall_profiles import formed_hardware
 
@@ -172,19 +225,21 @@ def _hardware_finish(name, kind, pixels, normal, lum, neutral, metal, context):
         field = (plastic[0].astype(np.float32) - 128.0) / 255.0
         return (_formed_normal(field, pixels, size), np.zeros_like(lum),
                 0.75 + 0.05 * (1 - lum), "matte plastic ceiling and molded covers")
-    if kind == "flat" and name in ENTRYWAY_FLAT_FINISH and not context.get("pattern_changed"):
+    if kind == "flat" and name in STOCK_FLAT_FINISH and not context.get("pattern_changed"):
         from relief_flat_profiles import height_map
 
         encoded = height_map(name, pixels)
         if encoded is None or encoded[0] is None:
             return None
         field = (encoded[0].astype(np.float32) - 128.0) / 255.0
-        profile, face, sheltered, polished, alloy, exposed = ENTRYWAY_FLAT_FINISH[name]
+        profile, face, sheltered, polished, alloy, exposed = STOCK_FLAT_FINISH[name]
         depth = _mask(field + 0.5, size) - 0.5
         valleys = _smooth(-depth, 0.01, 0.10)
         crests = _smooth(depth, 0.012, 0.11)
         rough = face + sheltered * valleys - polished * crests
         metal = alloy + exposed * neutral
+        if name == "GATE3":
+            metal *= 1 - _smooth(-depth, 0.02, 0.125)
         return _formed_normal(field, pixels, size), metal, rough, profile
     if kind != "wall":
         return None
@@ -382,6 +437,15 @@ def build_channels(pixels, name, kind, original_family, context=None):
         name in ENTRYWAY_FRAMED_PANELS or name in ENTRYWAY_SWITCHES
     ):
         finish = _entryway_wall_finish(name, pixels, family, context, normal, lum, neutral, metal, rough)
+    elif kind == "wall" and not context.get("pattern_changed"):
+        if name in REVIEWED_STONE or name in REVIEWED_METAL:
+            finish = _stock_wall_finish(name, pixels, family, context, normal, lum, neutral)
+        elif switch and native_mask is not None and 0 < native_mask.mean() <= 0.55:
+            # Composite switches use the same independent case geometry for
+            # both their height and normal. Pair colours never carve the face.
+            surface = _registered_wall_normal(name, pixels, family, context, normal)
+            if surface is not None:
+                normal = surface
     if finish is None:
         finish = _hardware_finish(name, kind, pixels, normal, lum, neutral, metal, context)
     if finish is not None:

@@ -137,6 +137,32 @@ def _molded_ceiling_covers(tile):
             _ring(tile, x, y, 5.5, -0.085, 1.6)
 
 
+def _diagonal_steel_seam(tile, pixels):
+    _stone_shapes(tile, pixels, 0.075, 0.04, 0.009)
+    diagonal = tile.u + tile.v
+    # The same five-texel strip runs through the wrap at the two corners.
+    for edge in (29, 33):
+        distance = np.abs(tile.wrapped_offset(diagonal, edge, tile.width)) / np.sqrt(2)
+        tile.values -= 0.14 * smooth_band(distance, 0.12, 0.94)
+    distance = np.abs(tile.wrapped_offset(diagonal, 31, tile.width)) / np.sqrt(2)
+    tile.values += 0.085 * smooth_band(distance, 0.24, 1.35)
+
+
+def _ceiling_screen(tile):
+    # Both ceiling variants draw the same four-texel pitch, under different
+    # baked illumination. Model the ribs and crossbars independently of color.
+    u = np.abs(tile.wrapped_offset(tile.u, 1.75, 4))
+    v = np.abs(tile.wrapped_offset(tile.v, 0.50, 4))
+    ribs = smooth_band(u, 0.16, 1.32)
+    crossbars = smooth_band(v, 0.10, 0.91)
+    tile.values += np.maximum(0.090 * ribs, 0.047 * crossbars)
+
+
+def _mounted_gate(tile):
+    # The red plate and its printed emblem share one plane inside the frame.
+    _box(tile, 32, 32, 56, 56, -0.16, 1.25)
+
+
 def _console(tile, name):
     if name == "CONS1_7":
         _fixture(tile, 30, 35, 27, 29)
@@ -255,6 +281,23 @@ def _brushed_plate(tile, pixels):
     tile.values += _sample_to_tile(tile, _blur_along(relief, 0.55, (0, 1)))
 
 
+def _crate_grain(tile, pixels):
+    tone = pixels[:, :, 0].astype(np.float32) / 255.0
+    # Both crate tops use the same two-tone diagonal weave.
+    grain = _blur_along(tone, 1.70, (1, -1))
+    across = ((1, 1),)
+    cuts = _feature_band(_local_feature(grain, (1, 2), across), 0.0025)
+    ridges = _feature_band(_local_feature(-grain, (1, 2), across), 0.0025)
+    tile.values += _sample_to_tile(tile, _periodic_blur(0.053 * ridges - 0.082 * cuts, 0.54))
+
+
+def _coating(tile, pixels, channel, depth, ridge_height, minimum):
+    # Blues and reds can have near-zero luminance even where the coating
+    # has visible texture. Use the dominant pigment channel for local relief.
+    pigment = pixels[:, :, channel].astype(np.float32) / 255.0
+    _granular_shapes(tile, pigment, depth, ridge_height, minimum)
+
+
 def _dyed_floor(tile, pixels):
     blue = pixels[:, :, 2].astype(np.float32) / 255.0
     # Both logo colors are dye. Sample the original rough flooring from
@@ -278,7 +321,8 @@ def _wood_shapes(tile, pixels, name):
     grain = _blur_along(_periodic_blur(tone, 0.72), 2.0, along)
     cuts = _feature_band(_local_feature(grain, (2, 4, 6), across), 0.010)
     ridges = _feature_band(_local_feature(-grain, (3, 5), across), 0.012)
-    relief = 0.13 * ridges - 0.31 * cuts
+    ridge_height, groove_depth = (0.072, 0.16) if name == "FLAT5_3" else (0.13, 0.31)
+    relief = ridge_height * ridges - groove_depth * cuts
     tile.values += _sample_to_tile(tile, _periodic_blur(relief, 0.64))
 
 
@@ -334,9 +378,11 @@ JOINT_PROFILES = (
     ("Four circular lamp bezels", "TLITE6_5 TLITE6_6",
      lambda t: _light_points(t, (11, 44), (17, 49), 5.5)),
     ("Molded circular ceiling panel rims", "GRNLITE1", _molded_ceiling_covers),
+    ("Coated ceiling screen ribs", "CEIL4_2 CEIL4_3", _ceiling_screen),
     ("Circular hatch rim", "FLAT22", lambda t: _ring(t, 32, 32, 28, -0.34, 2.4)),
-    ("Gate plate rim", "GATE1 GATE2 GATE3 GATE4",
+    ("Gate plate rim", "GATE1 GATE2 GATE4",
      lambda t: _ring(t, 32, 32, 27, -0.24, 2.15)),
+    ("Recessed seal inside a cast frame", "GATE3", _mounted_gate),
     ("Rounded inset panels", "FLAT9", _oval_panels),
     ("Pair of framed plates", "COMP01", _computer_plates),
 )
@@ -365,10 +411,20 @@ STONE_PROFILES = (
      0.46, 0.15, 0.011),
     ("Compacted gravel ridges and pits", "RROCK09", 0.23, 0.14, 0.008),
     ("Fine pits in a coated surface", "CEIL5_1 CEIL5_2", 0.10, 0.065, 0.0025),
-    ("Low grass clumps and exposed soil", "GRASS1", 0.12, 0.14, 0.008),
+    ("Low grass clumps and exposed soil", "GRASS1 GRASS2", 0.12, 0.14, 0.008),
     ("Aggregate pits and raised fragments", "FLAT5_7 FLAT5_8 RROCK17 RROCK18 FLAT5_5",
      0.30, 0.21, 0.011),
+    ("Fine stipple in concrete", "FLAT19", 0.085, 0.06, 0.005),
+    ("Exposed pits in coarse aggregate", "RROCK03", 0.22, 0.135, 0.010),
+    ("Irregular weathering in mossy stone", "RROCK20", 0.21, 0.16, 0.009),
 )
+
+
+COATING_BY_NAME = {
+    "CEIL4_1": ("Dark ceiling coating", 2, 0.062, 0.044, 0.004),
+    "FLAT14": ("Granular blue coating", 2, 0.11, 0.078, 0.009),
+    "FLOOR1_6": ("Fine grain in red flooring", 0, 0.074, 0.046, 0.004),
+}
 
 
 NEUTRAL_PROFILES = (
@@ -378,10 +434,6 @@ NEUTRAL_PROFILES = (
     ("Sky flat", "F_SKY1 F_RSKY1 F_RSKY2 F_RSKY3"),
     ("Animated molten crust without a stable authored height", "RROCK01 RROCK05 RROCK06 RROCK07 RROCK08 "
      "SLIME09 SLIME10 SLIME11 SLIME12"),
-    ("Flat finish or fine stipple without identifiable relief",
-     "FLAT1 FLAT14 FLAT19 CRATOP1 CRATOP2 "
-     "RROCK03 RROCK20 GRASS2 FLOOR1_6 FLAT5_3 CEIL4_1"),
-    ("Decorative blue pattern without identifiable geometry", "CEIL4_2 CEIL4_3"),
 )
 
 
@@ -396,7 +448,7 @@ STONE_BY_NAME = {
     for label, names, depth, ridge_height, minimum in STONE_PROFILES
     for name in names.split()
 }
-WOOD_NAMES = frozenset(("FLOOR3_3", "FLOOR7_1", "FLAT5_4"))
+WOOD_NAMES = frozenset(("FLOOR3_3", "FLOOR7_1", "FLAT5_3", "FLAT5_4"))
 NEUTRAL_BY_NAME = {name: label for label, names in NEUTRAL_PROFILES for name in names.split()}
 CONSOLES = frozenset(("CONS1_1", "CONS1_5", "CONS1_7"))
 
@@ -418,6 +470,15 @@ def height_map(name, pixels):
     elif name in STONE_BY_NAME:
         label, depth, ridge_height, minimum = STONE_BY_NAME[name]
         _stone_shapes(tile, pixels, depth, ridge_height, minimum)
+    elif name in COATING_BY_NAME:
+        label, channel, depth, ridge_height, minimum = COATING_BY_NAME[name]
+        _coating(tile, pixels, channel, depth, ridge_height, minimum)
+    elif name in ("CRATOP1", "CRATOP2"):
+        label = "Shallow diagonal crate grain"
+        _crate_grain(tile, pixels)
+    elif name == "FLAT1":
+        label = "Folded diagonal seam with shallow wear"
+        _diagonal_steel_seam(tile, pixels)
     elif name == "FLAT23":
         label = "Long, shallow brushed-steel grooves"
         _brushed_plate(tile, pixels)

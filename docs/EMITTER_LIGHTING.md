@@ -23,7 +23,7 @@ py tools/doom2_showcase/build.py --doom2 C:\doom2.wad --relief --sprite-relief `
   -Exe .\build\windows\RelWithDebInfo\vkdoom.exe -Doom2 C:\doom2.wad -Packages .\build\emitter-addons
 ```
 
-The layout ships with stock Doom II MAP01, an indoor lighting room, an outdoor courtyard, and a sealed room. MAP01's layout checks the map checksum before placing emitters. Maps without authored lighting use the legacy renderer. Emitter lighting starts off and uses the immediate Vulkan renderer in true color. Level mesh, ray tracing, palette rendering, powerup vision, and offscreen views use their established paths.
+The stock Doom II campaign and three comparison rooms support emitter lighting. Each campaign layout checks the map checksum before placing emitters. Stock levels without a visible light source still respond to the ambient controls and flashlight. Unrecognized maps use the legacy renderer unless they supply emitters. Emitter lighting starts off and uses the immediate Vulkan renderer in true color. Level mesh, ray tracing, palette rendering, powerup vision, and offscreen views use their established paths.
 
 ## Lighting and coverage
 
@@ -32,6 +32,8 @@ Opaque walls and floors and ordinary per-pixel-lit actor sprites receive point a
 Point sources use a configurable radius and falloff. A directional source provides a constant light direction inside its authored sector, with a soft range edge. Both use the engine's existing shadow map from the authored anchor. The directional approximation is suitable for bounded courtyards and openings. Large sky regions and height-dependent occlusion need separate authoring. Each source is scoped to its own sector, so adjacent closed rooms receive no contribution. The renderer uses at most 48 nearest emitter shadow rows per view and 12 authored emitters per receiver.
 
 The local authoring pack defines `SDVKStageBPointEmitter` and `SDVKStageBDirectionalEmitter`. Each authored emitter record specifies its receiver sector, position and floor-relative height, RGB, radius, intensity, and falloff. Directional emitters also specify yaw and pitch. In Entryway's green corridors, the yellow `TEKGREN5` wall strips emit warm-white light from their original texture coordinates. The `GRNLITE1` ceiling circles are matte plastic. Entryway also uses the `FLAT2` overhead fixtures, a small exit sign source, and consistent outdoor light. The bronze recess behind the player start receives the chosen ambient fill and the player's flashlight.
+
+Campaign layouts use visible lamp and flame surfaces, lamp and torch decorations, and open sky. Underhalls' overhead fluorescent fixtures and open courtyard provide local lighting, while dark parts of the sewer rely on ambient fill and the flashlight. Open **Underhalls** from **F1** to jump straight there. The material pack binds the normal, roughness, and relief maps to textures so each surface keeps its finish wherever the same texture appears. Switch plates use their own relief, shared by both switch states.
 
 ## Reproduce the native comparisons
 
