@@ -30,9 +30,7 @@ def definitions(lookup):
     return out
 
 
-def switch_mask(row, defs, decoder):
-    if row["kind"] != "wall" or not row["name"].startswith(("SW1", "SW2")):
-        return None
+def patch_mask(row, defs, decoder, matches):
     w, h, parts = defs[row["name"]]
     mask = np.zeros((h, w), dtype=np.float32)
     seen = False
@@ -44,23 +42,26 @@ def switch_mask(row, defs, decoder):
         if x1 <= x0 or y1 <= y0:
             continue
         visible = patch[y0 - y : y1 - y, x0 - x : x1 - x, 3] > 0
-        is_device = pname.startswith("SW") or pname in (
-            "WALL42_1",
-            "WALL42_5",
-            "WALL42_6",
-        )
-        mask[y0:y1, x0:x1][visible] = float(is_device)
-        seen |= is_device
+        match = matches(pname)
+        mask[y0:y1, x0:x1][visible] = float(match)
+        seen |= match
     return mask if seen else None
 
 
 def context(row, rows, defs, decoder):
     ctx = {}
-    mask = switch_mask(row, defs, decoder)
-    if mask is not None:
-        ctx["switch_mask"] = mask
     name = row["name"]
+    if row["kind"] == "wall" and name == "BROVINE2":
+        mask = patch_mask(row, defs, decoder, lambda patch: patch == "W106_1")
+        if mask is not None:
+            ctx["vine_mask"] = mask
     if row["kind"] == "wall" and name.startswith(("SW1", "SW2")):
+        mask = patch_mask(
+            row, defs, decoder,
+            lambda patch: patch.startswith("SW") or patch in ("WALL42_1", "WALL42_5", "WALL42_6"),
+        )
+        if mask is not None:
+            ctx["switch_mask"] = mask
         if any(
             pname in ("SW2_7", "SW2_8", "WALL42_1", "WALL42_5", "WALL42_6")
             for x, y, pname in defs[name][2]

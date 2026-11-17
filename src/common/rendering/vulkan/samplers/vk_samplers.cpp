@@ -86,6 +86,21 @@ void VkSamplerManager::ResetHWSamplers()
 	CreateHWSamplers();
 }
 
+VulkanSampler* VkSamplerManager::GetWithAddressing(MaterialLayerSampling filterOverride, int clamp) const
+{
+	if (filterOverride == MaterialLayerSampling::Default)
+		return Get(clamp);
+
+	// Explicit layer filtering keeps the address modes of the surface.
+	if (clamp >= CLAMP_NOFILTER && clamp <= CLAMP_NOFILTER_XY)
+		clamp -= CLAMP_NOFILTER;
+	else if (clamp == CLAMP_XY_NOMIP)
+		clamp = CLAMP_XY;
+	else if (clamp == CLAMP_CAMTEX)
+		clamp = CLAMP_NONE;
+	return mOverrideSamplers[int(filterOverride)][clamp].get();
+}
+
 void VkSamplerManager::CreateHWSamplers()
 {
 	int filter = sysCallbacks.DisableTextureFilter && sysCallbacks.DisableTextureFilter() ? 0 : gl_texture_filter;
@@ -174,28 +189,21 @@ void VkSamplerManager::CreateHWSamplers()
 		.DebugName("VkSamplerManager.mSamplers")
 		.Create(fb->GetDevice());
 
+	for (size_t sampling = 0; sampling < mOverrideSamplers.size(); ++sampling)
 	{
-		SamplerBuilder builder;
-		builder.MagFilter(VK_FILTER_NEAREST);
-		builder.MinFilter(!brokenNearestMipLinear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST);
-		builder.AddressMode(VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_REPEAT);
-		builder.MipmapMode(VK_SAMPLER_MIPMAP_MODE_LINEAR);
-		builder.MaxLod(100.0f);
-		if (maxAnisotropy > 1.0f)
-			builder.Anisotropy(maxAnisotropy);
-		mOverrideSamplers[int(MaterialLayerSampling::NearestMipLinear)] = builder.Create(fb->GetDevice());
-	}
-
-	{
-		SamplerBuilder builder;
-		builder.MagFilter(VK_FILTER_LINEAR);
-		builder.MinFilter(VK_FILTER_LINEAR);
-		builder.AddressMode(VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_REPEAT, VK_SAMPLER_ADDRESS_MODE_REPEAT);
-		builder.MipmapMode(VK_SAMPLER_MIPMAP_MODE_LINEAR);
-		builder.MaxLod(100.0f);
-		if (maxAnisotropy > 1.0f)
-			builder.Anisotropy(maxAnisotropy);
-		mOverrideSamplers[int(MaterialLayerSampling::LinearMipLinear)] = builder.Create(fb->GetDevice());
+		const bool nearest = sampling == size_t(MaterialLayerSampling::NearestMipLinear);
+		for (int clamp = CLAMP_NONE; clamp <= CLAMP_XY; ++clamp)
+		{
+			SamplerBuilder builder;
+			builder.MagFilter(nearest ? VK_FILTER_NEAREST : VK_FILTER_LINEAR);
+			builder.MinFilter(nearest && brokenNearestMipLinear ? VK_FILTER_NEAREST : VK_FILTER_LINEAR);
+			builder.AddressMode(TexClamp[clamp].clamp_u, TexClamp[clamp].clamp_v, VK_SAMPLER_ADDRESS_MODE_REPEAT);
+			builder.MipmapMode(VK_SAMPLER_MIPMAP_MODE_LINEAR);
+			builder.MaxLod(100.0f);
+			if (maxAnisotropy > 1.0f)
+				builder.Anisotropy(maxAnisotropy);
+			mOverrideSamplers[sampling][clamp] = builder.Create(fb->GetDevice());
+		}
 	}
 }
 
@@ -211,7 +219,8 @@ void VkSamplerManager::DeleteHWSamplers()
 	};
 
 	deleteSamplers(mSamplers);
-	deleteSamplers(mOverrideSamplers);
+	for (auto& samplers : mOverrideSamplers)
+		deleteSamplers(samplers);
 }
 
 VulkanSampler* VkSamplerManager::Get(PPFilterMode filter, PPWrapMode wrap)

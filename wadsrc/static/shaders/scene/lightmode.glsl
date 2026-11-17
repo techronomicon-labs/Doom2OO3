@@ -69,61 +69,71 @@ vec4 getLightColor(Material material)
 	}
 	else
 	{
-		vec4 color;
-		if (LIGHTMODE_DEFAULT)
-			color = Lightmode_Default();
-		else if (LIGHTMODE_SOFTWARE)
-			color = Lightmode_Software();
-		else if (LIGHTMODE_VANILLA)
-			color = Lightmode_Vanilla();
-		else if (LIGHTMODE_BUILD)
-			color = Lightmode_Build();
-
-		//
-		// handle glowing walls
-		//
-		if (uGlowTopColor.a > 0.0 && glowdist.x < uGlowTopColor.a)
-		{
-			color.rgb += desaturate(uGlowTopColor * (1.0 - glowdist.x / uGlowTopColor.a)).rgb;
-		}
-		if (uGlowBottomColor.a > 0.0 && glowdist.y < uGlowBottomColor.a)
-		{
-			color.rgb += desaturate(uGlowBottomColor * (1.0 - glowdist.y / uGlowBottomColor.a)).rgb;
-		}
-		color = min(color, 1.0);
-
-		// these cannot be safely applied by the legacy format where the implementation cannot guarantee that the values are set.
-	#if !defined LEGACY_USER_SHADER && !defined NO_LAYERS
-		//
-		// apply glow 
-		//
-		color.rgb = mix(color.rgb, material.Glow.rgb, material.Glow.a);
-
-		//
-		// apply brightmaps 
-		//
-		color.rgb = min(color.rgb + material.Bright.rgb, 1.0);
-	#endif
-
-		//
-		// apply lightmaps
-		//
+		bool stageB = STAGE_B_WORLD_LIGHTING;
+		float legacyAmbient = stageB ? uStageBAmbient : 1.0;
+		bool sampleAmbient = legacyAmbient > 0.0;
+#ifdef PBR
+		sampleAmbient = sampleAmbient || (stageB && uStageBAmbientSpecular > 0.0);
+#endif
+		vec4 color = vec4(0.0);
 		float sunlightAttenuation = 0.0;
-		if (vLightmapIndex != -1)
+		if (sampleAmbient)
 		{
-			vec4 lightmap = texture(textures[nonuniformEXT(vLightmapIndex)], vLightmap.xy);
-			color.rgb += lightmap.rgb;
-			sunlightAttenuation = lightmap.a;
-		}
+			if (LIGHTMODE_DEFAULT)
+				color = Lightmode_Default();
+			else if (LIGHTMODE_SOFTWARE)
+				color = Lightmode_Software();
+			else if (LIGHTMODE_VANILLA)
+				color = Lightmode_Vanilla();
+			else if (LIGHTMODE_BUILD)
+				color = Lightmode_Build();
 
-		// Force sunlight flag
-		if (uDynLightColor.w == -1)
-			sunlightAttenuation = 1.0;
+			// Legacy wall glow comes from neighboring floors and ceilings.
+			if (uGlowTopColor.a > 0.0 && glowdist.x < uGlowTopColor.a)
+			{
+				color.rgb += desaturate(uGlowTopColor * (1.0 - glowdist.x / uGlowTopColor.a)).rgb;
+			}
+			if (uGlowBottomColor.a > 0.0 && glowdist.y < uGlowBottomColor.a)
+			{
+				color.rgb += desaturate(uGlowBottomColor * (1.0 - glowdist.y / uGlowBottomColor.a)).rgb;
+			}
+			color = min(color, 1.0);
+
+		#if !defined LEGACY_USER_SHADER && !defined NO_LAYERS
+			color.rgb = mix(color.rgb, material.Glow.rgb, material.Glow.a);
+			color.rgb = min(color.rgb + material.Bright.rgb, 1.0);
+		#endif
+
+			if (vLightmapIndex != -1)
+			{
+				vec4 lightmap = texture(textures[nonuniformEXT(vLightmapIndex)], vLightmap.xy);
+				color.rgb += lightmap.rgb;
+				sunlightAttenuation = lightmap.a;
+			}
+
+			if (uDynLightColor.w == -1)
+				sunlightAttenuation = 1.0;
+			if (stageB)
+			{
+#ifndef PBR
+				color.rgb *= legacyAmbient;
+#endif
+				sunlightAttenuation *= legacyAmbient;
+			}
+		}
 
 		//
 		// apply dynamic lights
 		//
 		vec4 frag = vec4(ProcessMaterialLight(material, color.rgb, sunlightAttenuation), material.Base.a * vColor.a);
+	#if !defined LEGACY_USER_SHADER && !defined NO_LAYERS
+		if (stageB && legacyAmbient < 1.0)
+		{
+			// Material emission is independent of the authored lights, probes and AO.
+			vec3 emission = min(material.Glow.rgb * material.Glow.a + material.Bright.rgb, 1.0);
+			frag.rgb += material.Base.rgb * emission * (1.0 - legacyAmbient);
+		}
+	#endif
 
 		//
 		// colored fog

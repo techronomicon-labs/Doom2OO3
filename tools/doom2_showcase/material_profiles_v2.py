@@ -7,6 +7,16 @@ import material_generator as base
 np = base.np
 Image = base.Image
 
+PAINTED_HARDWARE = frozenset((
+    "STARTAN3", "TEKGREN1", "TEKGREN2", "TEKGREN3", "TEKGREN4", "TEKGREN5",
+    "TEKWALL4", "TEKWALL6", "TEKBRON1", "TEKBRON2",
+))
+AGED_HARDWARE = frozenset(("BRONZE1", "BRONZE2", "BRONZE3", "BRONZE4", "PIPE2", "PIPE4"))
+STEEL_HARDWARE = frozenset((
+    "BIGDOOR1", "BIGDOOR2", "BIGDOOR3", "BIGDOOR4", "DOOR3", "DOORTRAK",
+    "EXITDOOR", "SUPPORT2", "ZELDOOR",
+))
+
 
 def _smooth(a, lo, hi):
     x = np.clip((a - lo) / (hi - lo), 0, 1)
@@ -27,6 +37,8 @@ def _mask(values, size):
 
 def _family(name, kind, original):
     if kind == "flat":
+        if name == "GRNLITE1":
+            return "molded plastic"
         if name in ("FLAT1_3", "FLAT1", "FLOOR0_5", "FLOOR0_7", "FLAT3"):
             return "metal"
         if name in ("FLAT20", "FLAT9", "FLAT18"):
@@ -41,7 +53,7 @@ def _family(name, kind, original):
         return "metal"
     if name.startswith("CRAT"):
         return "painted panels"
-    if name in ("BRWINDOW", "ZZWOLF10"):
+    if name in ("BRWINDOW", "ZZWOLF10", "SP_HOT1"):
         return "brick / mortar"
     if name in (
         "GRAY1",
@@ -65,6 +77,71 @@ def _family(name, kind, original):
     if name in ("SW1METAL", "SW2METAL"):
         return "metal"
     return original
+
+
+def _formed_normal(field, pixels, size):
+    # The registered height lives at two samples per source texel. Resample
+    # periodically to the PBR layer size so narrow folds remain well defined.
+    h, w = field.shape
+    padded = Image.fromarray(np.pad(field, 1, mode="wrap").astype(np.float32))
+    fitted = np.asarray(padded.resize(size, Image.Resampling.BILINEAR, box=(1, 1, w + 1, h + 1)))
+    dx = (np.roll(fitted, -1, 1) - np.roll(fitted, 1, 1)) * (0.28 * size[0] / pixels.shape[1])
+    dy = (np.roll(fitted, -1, 0) - np.roll(fitted, 1, 0)) * (0.28 * size[1] / pixels.shape[0])
+    return _normal_bytes(np.stack((-dx, dy, np.ones_like(dx)), axis=2))
+
+
+def _normal_bytes(normal):
+    normal /= np.linalg.norm(normal, axis=2, keepdims=True)
+    return np.uint8(np.rint(np.clip(normal * 127 + 128, 0, 255)))
+
+
+def _hardware_finish(name, kind, pixels, normal, lum, neutral, metal):
+    from relief_wall_profiles import formed_hardware
+
+    size = normal.shape[1], normal.shape[0]
+    if kind == "flat" and name == "GRNLITE1":
+        from relief_flat_profiles import height_map
+
+        plastic = height_map(name, pixels)
+        if plastic is None:
+            return None
+        field = (plastic[0].astype(np.float32) - 128.0) / 255.0
+        return (_formed_normal(field, pixels, size), np.zeros_like(lum),
+                0.75 + 0.05 * (1 - lum), "matte plastic ceiling and molded covers")
+    if kind != "wall":
+        return None
+    if name in PAINTED_HARDWARE:
+        metal, rough = 0.10 * neutral, 0.61 + 0.07 * (1 - lum) - 0.07 * neutral
+        profile = "dry painted steel with a satin finish"
+    elif name in AGED_HARDWARE:
+        metal, rough = 0.24 + 0.15 * metal, 0.60 + 0.035 * (1 - lum) - 0.085 * metal
+        profile = "oxidized bronze and pipes with brighter formed edges"
+    elif name in STEEL_HARDWARE:
+        metal, rough = 0.18 + 0.28 * neutral, 0.60 + 0.04 * (1 - lum) - 0.11 * neutral
+        profile = "satin steel with dry painted insets"
+        if name == "BIGDOOR1":
+            # Give the gray stamped steel a tighter highlight while retaining
+            # the dry finish of the colored UAC stripe and logo.
+            exposed_steel = _smooth(neutral, 0.45, 0.95)
+            metal += 0.02 * exposed_steel
+            rough -= 0.025 * exposed_steel
+            profile = "lightly polished steel with a dry painted UAC stripe"
+    else:
+        return None
+    formed = formed_hardware(name, pixels.shape[:2])
+    if formed is not None:
+        normal = _formed_normal(formed[0], pixels, size)
+        if name in AGED_HARDWARE:
+            tangent = (normal[:, :, :2].astype(np.float32) - 128) / 127
+            slope = np.hypot(tangent[:, :, 0], tangent[:, :, 1])
+            rough -= 0.105 * metal * _smooth(slope, 0.035, 0.18)
+    else:
+        # Dense circuitry and printed wear lack a single fitted plate shape.
+        # Subdue the varying micro-normal so its sheen stays with the surface.
+        micro = (normal.astype(np.float32) - 128.0) / 127.0
+        micro[:, :, :2] *= 0.20
+        normal = _normal_bytes(micro)
+    return normal, metal, rough, profile
 
 
 def build_channels(pixels, name, kind, original_family, context=None):
@@ -219,13 +296,18 @@ def build_channels(pixels, name, kind, original_family, context=None):
         "liquid / static sample",
     ):
         metal[:] = 0
+    normal = np.asarray(maps["normal"]).copy()
+    ao = np.asarray(maps["ao"]).copy()
+    finish = _hardware_finish(name, kind, pixels, normal, lum, neutral, metal)
+    if finish is not None:
+        normal, metal, rough, profile = finish
+        ao = np.uint8(np.rint(0.33 * ao + 0.67 * 255.0))
+        correction = "Calibrated surface finish retains diffuse response and localizes highlights to shallow seams"
     metal = np.clip(metal, 0, 0.97)
     rough = np.clip(rough, 0.20, 0.96)
     metal[~visible] = 0
     rough[~visible] = 1
-    normal = np.asarray(maps["normal"]).copy()
     normal[~visible] = (128, 128, 255)
-    ao = np.asarray(maps["ao"]).copy()
     ao[~visible] = 255
     maps["normal"] = Image.fromarray(normal, "RGB")
     maps["ao"] = Image.fromarray(ao, "L")

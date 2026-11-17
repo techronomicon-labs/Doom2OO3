@@ -1,8 +1,7 @@
-"""Read-only effective Doom II material inputs under the owner's DBP50 PWAD.
+"""Read-only material inputs under the owner's Doom II and DBP50 WAD stack.
 
-Only the existing 428 wall + 150 flat names are returned. No source art is
-replaced and none of the 746 DBP50-only wall definitions is decoded/generated.
-Normal/PBR callers can derive auxiliary maps from these effective pixels.
+Callers can select the inherited names or the full effective namespace to
+derive auxiliary maps from the original layered art.
 """
 
 from __future__ import annotations
@@ -78,7 +77,7 @@ class _IndexedOverlay(material.Wad):
                     "<8sIhhIh", data, at
                 )
                 name = raw_name.rstrip(b"\0").decode("ascii").upper()
-                if name not in names:
+                if names is not None and name not in names:
                     continue
                 assert 0 < width <= 4096 and 0 < height <= 4096 and patch_count >= 0
                 pixels = np.zeros((height, width, 4), dtype=np.uint8)
@@ -121,8 +120,8 @@ def _rgba(indexed, palette):
     return result
 
 
-def effective_rows(iwad, pwad, entries):
-    """Return (578 sorted effective RGBA source rows, compact comparison report).
+def effective_rows(iwad, pwad, entries, include_custom=False):
+    """Return effective RGBA rows for inherited or all world material names.
 
     Each row adds rgba_changed and pattern_changed booleans. They compare the
     actual replacement/palette result against baseline albedo, and raw indexed
@@ -132,7 +131,7 @@ def effective_rows(iwad, pwad, entries):
     original = _lumps(iwad, IWAD_SHA256, b"IWAD")
     replacement = _lumps(pwad, PWAD_SHA256, b"PWAD")
     effective_flats = _flat_namespace(iwad) | _flat_namespace(pwad)
-    return reconstruct_rows(original, replacement, effective_flats, entries)
+    return reconstruct_rows(original, replacement, effective_flats, entries, include_custom)
 
 
 def texture_overrides(original, replacement):
@@ -145,38 +144,58 @@ def texture_overrides(original, replacement):
     return tables
 
 
-def reconstruct_rows(original, replacement, effective_flats, entries):
+def reconstruct_rows(original, replacement, effective_flats, entries, include_custom=False):
     names = {e["name"] for e in entries if e["kind"] == "wall"}
     baseline = _IndexedOverlay(original).selected_textures(original, names)
     lookup = original | replacement
-    current = _IndexedOverlay(lookup).selected_textures(original, names)
+    decoder = _IndexedOverlay(lookup)
+    current = decoder.selected_textures(original, names)
     tables = texture_overrides(original, replacement)
     if tables:
-        current.update(_IndexedOverlay(lookup).selected_textures(tables, names))
+        current.update(decoder.selected_textures(tables, None if include_custom else names))
     before_palette = np.frombuffer(original["PLAYPAL"][:768], dtype=np.uint8).reshape(
         256, 3
     )
     after_palette = np.frombuffer(lookup["PLAYPAL"][:768], dtype=np.uint8).reshape(
         256, 3
     )
+    custom_keys = set()
+    if include_custom:
+        from dbp50_structural_relief import family_of
+
+        custom_keys = {("wall", name) for name in current} | {("flat", name) for name in effective_flats}
+        custom_keys.difference_update((row["kind"], row["name"]) for row in entries)
+        next_id = max((entry["id"] for entry in entries), default=0) + 1
+        entries = [*entries, *(
+            dict(kind=kind, name=name, id=next_id + ordinal,
+                 family=family_of(name, kind, material.family_of(name, kind)),
+                 source_index=current[name]["source_index"] if kind == "wall" else ordinal)
+            for ordinal, (kind, name) in enumerate(sorted(custom_keys))
+        )]
     rows = []
     for entry in entries:
         name, kind = entry["name"], entry["kind"]
+        custom = (kind, name) in custom_keys
+        before = None
         if kind == "wall":
-            before = baseline[name]["pixels"]
+            if not custom:
+                before = baseline[name]["pixels"]
             item = current[name].copy()
             after = item["pixels"]
         else:
-            assert len(original[name]) == len(effective_flats[name]) == 4096
+            assert len(effective_flats[name]) == 4096
             before = np.empty((64, 64, 4), dtype=np.uint8)
             after = np.empty_like(before)
-            before[:, :, :3] = np.frombuffer(original[name], dtype=np.uint8).reshape(
-                64, 64, 1
-            )
             after[:, :, :3] = np.frombuffer(
                 effective_flats[name], dtype=np.uint8
             ).reshape(64, 64, 1)
-            before[:, :, 3] = after[:, :, 3] = 255
+            after[:, :, 3] = 255
+            if custom:
+                before = None
+            else:
+                assert len(original[name]) == 4096
+                before[:, :, :3] = np.frombuffer(original[name], dtype=np.uint8).reshape(64, 64, 1)
+                before[:, :, 3] = 255
             item = dict(
                 name=name,
                 kind=kind,
@@ -185,18 +204,19 @@ def reconstruct_rows(original, replacement, effective_flats, entries):
                 patches=[],
                 placeholder=False,
             )
-        before_rgba = _rgba(before, before_palette)
         after_rgba = _rgba(after, after_palette)
+        before_rgba = None if before is None else _rgba(before, before_palette)
         item.update(
             pixels=after_rgba,
             family=entry["family"],
             id=entry["id"],
+            custom=custom,
             rgba_changed=(
-                before_rgba.shape != after_rgba.shape
+                before_rgba is None or before_rgba.shape != after_rgba.shape
                 or not np.array_equal(before_rgba, after_rgba)
             ),
             pattern_changed=(
-                before.shape != after.shape or not np.array_equal(before, after)
+                before is None or before.shape != after.shape or not np.array_equal(before, after)
             ),
         )
         rows.append(item)

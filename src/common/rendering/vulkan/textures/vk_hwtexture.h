@@ -108,6 +108,7 @@ private:
 	};
 
 	DescriptorEntry& GetDescriptorEntry(const FMaterialState& state);
+	VulkanSampler* GetLayerSampler(MaterialLayerSemantic semantic, MaterialLayerSampling filter, int clampmode) const;
 	std::unique_ptr<VkTextureImage> CreateIndexedPalette();
 
 	std::vector<DescriptorEntry> mDescriptorSets;

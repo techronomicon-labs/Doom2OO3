@@ -72,7 +72,7 @@ ADD_STAT(viewmodel)
 	static const char* modes[] = {"legacy", "sector", "enhanced"};
 	static const char* reasons[] = {"none", "invalid-mode", "per-pixel-disabled", "portal-ambiguous", "hud-model", "unsupported-material-or-style", "invalid-card-basis"};
 	FString result;
-	result.Format("requested=%d last-draw=%s fallback=%s (HUD projection; relief disabled)",
+	result.Format("requested=%d last-draw=%s fallback=%s (HUD projection)",
 		int(gl_viewmodel_lighting), modes[LastViewmodelMode], reasons[LastViewmodelFallback]);
 	return result;
 }
@@ -121,6 +121,7 @@ void HWDrawInfo::DrawPSprite(HUDSprite *huds, FRenderState &state)
 {
 	state.ClearSpriteTangentBasis();
 	state.ClearSpriteRelief();
+	state.ClearWorldRelief();
 	SdvkDiagnostics::ClearSpriteBasis();
 	SdvkDiagnostics::ClearActorProbeSelection();
 	SdvkDiagnostics::ClearActorSun();
@@ -197,8 +198,11 @@ void HWDrawInfo::DrawPSprite(HUDSprite *huds, FRenderState &state)
 			const auto& b = huds->viewmodelBasis;
 			state.SetSpriteTangentBasis({b.tangent.X, b.tangent.Y, b.tangent.Z}, {b.normal.X, b.normal.Y, b.normal.Z}, b.handedness);
 			state.SetNormal(b.normal.X, b.normal.Y, b.normal.Z);
+			if (huds->lightindex >= 0 && huds->alpha >= 1.f - FLT_EPSILON)
+				state.EnableSpriteLightingRelief(true);
 		}
 		state.Draw(DT_TriangleStrip, huds->mx, 4);
+		state.ClearWorldRelief();
 		state.SetShadeVertex(false);
 		state.SetLightNoNormals(false);
 		state.SetUseSpriteCenter(false);

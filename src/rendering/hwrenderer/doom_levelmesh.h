@@ -19,6 +19,8 @@ struct HWDrawInfo;
 class DoomLevelMesh;
 class MeshBuilder;
 
+void InvalidatePBRLevelMesh(FGameTexture* texture);
+
 struct HWMissing
 {
 	side_t* side;

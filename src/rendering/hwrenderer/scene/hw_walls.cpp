@@ -212,6 +212,9 @@ void HWWall::RenderTexturedWall(HWWallDispatcher*di, FRenderState &state, int rf
 		SetGlowPlanes(state, frontsector->ceilingplane, frontsector->floorplane);
 	}
 	state.SetMaterial(texture, UF_Texture, 0, flags & 3, NO_TRANSLATION, -1);
+	state.SetEmitterLightingReceiver(di->di && di->di->UsesEmitterLighting() && !(flags & HWWall::HWF_TRANSLUCENT));
+	if (!(flags & HWWall::HWF_TRANSLUCENT) && texture && !texture->isMasked() && !texture->isWarped())
+		state.EnableWorldRelief();
 #ifdef NPOT_EMULATION
 	// Test code, could be reactivated as a compatibility option in the unlikely event that some old vanilla map eve needs it.
 	if (hw_npottest)
@@ -316,6 +319,8 @@ void HWWall::RenderTexturedWall(HWWallDispatcher*di, FRenderState &state, int rf
 
 		state.EnableSplit(false);
 	}
+	state.ClearWorldRelief();
+	state.SetEmitterLightingReceiver(false);
 	state.SetNpotEmulation(0.f, 0.f);
 	state.SetObjectColor(0xffffffff);
 	state.SetObjectColor2(0);
@@ -472,7 +477,8 @@ void HWWall::SetupLights(HWDrawInfo*di, FRenderState& state, FDynLightData &ligh
 	// Iterate through all dynamic lights which touch this wall and render them
 	while (node)
 	{
-		if (node->lightsource->IsActive() && !node->lightsource->DontLightMap())
+		auto light = node->lightsource;
+		if (light->IsActive() && (!light->DontLightMap() || (di->UsesEmitterLighting() && light->IsStageBEmitter())))
 		{
 			iter_dlight++;
 
@@ -482,11 +488,15 @@ void HWWall::SetupLights(HWDrawInfo*di, FRenderState& state, FDynLightData &ligh
 			float z = posrel.Z;
 			float dist = fabsf(p.DistToPoint(x, z, y));
 			float radius = node->lightsource->GetRadius();
-			float scale = 1.0f / ((2.f * radius) - dist);
 			FVector3 fn, pos;
 
 			if (radius > 0.f && dist < radius)
 			{
+				// A point emitter can reach the full sphere-plane intersection.
+				// Keep the legacy projected bound for compatibility-mode lights.
+				float diameter = light->IsStageBEmitter() ? 2.f * sqrtf((radius - dist) * (radius + dist)) :
+					2.f * radius - dist;
+				float scale = 1.0f / diameter;
 				FVector3 nearPt, up, right;
 
 				pos = { x, z, y };
@@ -517,7 +527,8 @@ void HWWall::SetupLights(HWDrawInfo*di, FRenderState& state, FDynLightData &ligh
 				}
 				if (outcnt[0]!=4 && outcnt[1]!=4 && outcnt[2]!=4 && outcnt[3]!=4) 
 				{
-					draw_dlight += GetLight(lightdata, seg->frontsector->PortalGroup, p, node->lightsource, true);
+					draw_dlight += GetLight(lightdata, seg->frontsector->PortalGroup, p, node->lightsource, true,
+						di->UsesEmitterLighting() && !(flags & HWWall::HWF_TRANSLUCENT) ? seg->frontsector : nullptr);
 				}
 			}
 		}

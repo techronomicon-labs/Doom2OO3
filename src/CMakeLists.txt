@@ -910,6 +910,8 @@ set (PCH_SOURCES
 	rendering/hwrenderer/doom_aabbtree.cpp
 	rendering/hwrenderer/doom_levelmesh.cpp
 	rendering/hwrenderer/doom_lightprobes.cpp
+	rendering/hwrenderer/doom_pbr_pick.cpp
+	rendering/hwrenderer/doom_pbr_tuning.cpp
 	rendering/hwrenderer/hw_models.cpp
 	rendering/hwrenderer/hw_precache.cpp
 	rendering/hwrenderer/scene/hw_lighting.cpp

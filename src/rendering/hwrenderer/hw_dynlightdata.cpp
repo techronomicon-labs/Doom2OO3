@@ -29,6 +29,7 @@
 #include "a_dynlight.h"
 #include "hw_dynlightdata.h"
 #include "hw_lightcompat.h"
+#include "hw_shadowselection.h"
 #include"hw_cvars.h"
 #include "v_video.h"
 #include "hwrenderer/scene/hw_drawstructs.h"
@@ -49,14 +50,49 @@ CVAR (Bool, gl_light_particles, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
 
 CVAR (Bool, gl_light_shadow_nearest_dither, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
 
+bool FDynamicLight::IsLocalFlashlight() const
+{
+	// Both variants of the existing flashlight inherit the same beam actor.
+	static const FName beamClass("SDVKLocalFlashlightBeam");
+	const auto actor = target.Get();
+	return IsSpot() && actor && actor->IsKindOf(beamClass);
+}
+
+bool FDynamicLight::IsStageBEmitter() const
+{
+	static const FName pointClass("SDVKStageBPointEmitter");
+	const auto actor = target.Get();
+	return actor && (actor->IsKindOf(pointClass) || IsStageBDirectional());
+}
+
+bool FDynamicLight::IsStageBDirectional() const
+{
+	static const FName directionalClass("SDVKStageBDirectionalEmitter");
+	const auto actor = target.Get();
+	return actor && actor->IsKindOf(directionalClass);
+}
+
+bool StageBEmitterAllowed(const FDynLightData& dld, const FDynamicLight* light, const sector_t* receiver)
+{
+	// A receiver shares the emitter's authored sector, even across closed doors.
+	if (!receiver || light->Sector != receiver || !screen->mShadowMap->Enabled() ||
+		light->mShadowmapIndex < 0 || light->mShadowmapIndex >= static_cast<int>(HWShadowMapLightCapacity))
+		return false;
+	unsigned emitters = 0;
+	for (auto& packed : dld.arrays[LIGHTARRAY_NORMAL])
+		if (packed.flags & LIGHTINFO_STAGE_B_EMITTER) ++emitters;
+	// A corridor can have nine authored wall strips on the same floor receiver.
+	return emitters < 12;
+}
 
 //==========================================================================
 //
 // Sets up the parameters to render one dynamic light onto one plane
 //
 //==========================================================================
-bool GetLight(FDynLightData& dld, int group, Plane & p, FDynamicLight * light, bool checkside)
+bool GetLight(FDynLightData& dld, int group, Plane & p, FDynamicLight * light, bool checkside, const sector_t* emitterReceiver)
 {
+	if (light->IsStageBEmitter() && !StageBEmitterAllowed(dld, light, emitterReceiver)) return false;
 	DVector3 pos = light->PosRelative(group);
 	float radius = (light->GetRadius());
 
@@ -81,6 +117,7 @@ bool GetLight(FDynLightData& dld, int group, Plane & p, FDynamicLight * light, b
 void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, bool forceAttenuate, bool doTrace)
 {
 	FDynLightInfo info = {};
+	const bool emitter = light->IsStageBEmitter();
 
 	int i = LIGHTARRAY_NORMAL;
 
@@ -104,6 +141,21 @@ void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, bool f
 
 	// Multiply intensity from GLDEFS
 	cs *= (float)light->GetLightDefIntensity();
+	if (emitter)
+	{
+		const int intensity = light->GetSecondaryIntensity();
+		cs *= intensity == 0 ? 1.f : clamp(intensity, 0, 200) * 0.01f;
+		info.radius = std::min(info.radius, 512.f);
+		info.flags |= LIGHTINFO_STAGE_B_EMITTER;
+		if (light->IsStageBDirectional())
+		{
+			const auto& angles = light->target->Angles;
+			info.flags |= LIGHTINFO_STAGE_B_DIRECTIONAL;
+			info.spotDirX = float(-angles.Yaw.Cos() * angles.Pitch.Cos());
+			info.spotDirY = float(angles.Pitch.Sin());
+			info.spotDirZ = float(-angles.Yaw.Sin() * angles.Pitch.Cos());
+		}
+	}
 
 	info.r = HWLightCompat::NormalizeColorChannel(light->GetRed()) * cs;
 	info.g = HWLightCompat::NormalizeColorChannel(light->GetGreen()) * cs;
@@ -120,7 +172,7 @@ void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, bool f
 		i = LIGHTARRAY_SUBTRACTIVE;
 	}
 
-	if(light->shadowmapped && screen->mShadowMap->Enabled())
+	if((light->shadowmapped || emitter) && screen->mShadowMap->Enabled())
 	{
 		info.flags |= LIGHTINFO_SHADOWMAPPED;
 		info.shadowIndex = light->mShadowmapIndex;
@@ -139,6 +191,7 @@ void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, bool f
 	if (light->IsSpot())
 	{
 		info.flags |= LIGHTINFO_SPOT;
+		if ((gl_world_relief || gl_sprite_lighting_relief || gl_emitter_lighting) && light->IsLocalFlashlight()) info.flags |= LIGHTINFO_FLASHLIGHT;
 
 		info.spotInnerAngle = (float)light->pSpotInnerAngle->Cos();
 		info.spotOuterAngle = (float)light->pSpotOuterAngle->Cos();

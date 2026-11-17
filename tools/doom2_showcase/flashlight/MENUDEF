@@ -12,7 +12,7 @@ OptionMenu "SDVKFlashlightOptions"
     StaticText "No occlusion shadows or volumetric beam."
     StaticText " "
     Submenu "Position and aim", "SDVKFlashlightMount"
-    Command "Reset flashlight settings", "sdvk_fl_power 100; sdvk_fl_horizontal 56; sdvk_fl_vertical 56; sdvk_fl_range 360; sdvk_fl_lightactors true; sdvk_fl_offset_x 0; sdvk_fl_offset_y 0; sdvk_fl_offset_z 0; sdvk_fl_aim_yaw 0; sdvk_fl_aim_pitch 0"
+    Command "Reset flashlight settings", "resetcvar sdvk_fl_power; resetcvar sdvk_fl_horizontal; resetcvar sdvk_fl_vertical; resetcvar sdvk_fl_range; resetcvar sdvk_fl_lightactors; resetcvar sdvk_fl_offset_x; resetcvar sdvk_fl_offset_y; resetcvar sdvk_fl_offset_z; resetcvar sdvk_fl_aim_yaw; resetcvar sdvk_fl_aim_pitch"
 }
 
 AddOptionMenu "OptionsMenu"
@@ -31,5 +31,5 @@ OptionMenu "SDVKFlashlightMount"
     Slider "Pitch (up / down, degrees)", "sdvk_fl_aim_pitch", -30, 30, 2, 0
     StaticText "Positive moves forward, right or up."
     StaticText "X/Y follow your heading; Z adjusts height."
-    Command "Reset position and aim", "sdvk_fl_offset_x 0; sdvk_fl_offset_y 0; sdvk_fl_offset_z 0; sdvk_fl_aim_yaw 0; sdvk_fl_aim_pitch 0"
+    Command "Reset position and aim", "resetcvar sdvk_fl_offset_x; resetcvar sdvk_fl_offset_y; resetcvar sdvk_fl_offset_z; resetcvar sdvk_fl_aim_yaw; resetcvar sdvk_fl_aim_pitch"
 }

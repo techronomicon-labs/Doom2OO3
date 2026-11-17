@@ -114,6 +114,7 @@ public:
 	// Sets the initial sizes of the GPU buffers and empties the mesh
 	virtual void Reset();
 	void InvalidateMaterialBindings();
+	void InvalidateMaterialUniforms(const FGameTexture* texture);
 
 	uint64_t GetResourceOwner() const { return ResourceOwner; }
 	FRendererEpochToken GetResourceEpoch() const { return ResourceEpoch.Snapshot(); }

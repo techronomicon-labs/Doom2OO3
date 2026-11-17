@@ -20,11 +20,13 @@ layout(set = 1, binding = 0, std140) uniform readonly ViewpointUBO
 	int uLightTilesWidth;	// Levelmesh light tiles
 
 	vec3 SunDir;
-	float Padding;
+	float uStageBAmbient;
 	vec3 SunColor;
 	float SunIntensity;
 
 	vec3 uCameraNormal;
+	float uStageBIntensity;
+	float uStageBAmbientSpecular;
 };
 
 layout(set = 1, binding = 1, std140) uniform readonly MatricesUBO

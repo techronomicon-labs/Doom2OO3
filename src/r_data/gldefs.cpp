@@ -2172,6 +2172,7 @@ class GLDefsParser
 							textures[i] = TexMan.FindGameTexture(sc.String, ETextureType::Any, FTextureManager::TEXMAN_TryAny);
 							if (!textures[i])
 								Printf("%s '%s' not found in texture '%s'\n", notFound[i], sc.String, tex? tex->GetName().GetChars() : "(null)");
+							if (i == 6) mlay.HeightLightingOnly = false;
 
 							// SDVK-005 extends the existing custom-texture sampling syntax to
 							// semantic material layers without changing legacy defaults.
@@ -2180,6 +2181,11 @@ class GLDefsParser
 								while (!sc.CheckToken('}'))
 								{
 									sc.MustGetString();
+									if (i == 6 && type == ETextureType::Sprite && sc.Compare("lightingonly"))
+									{
+										mlay.HeightLightingOnly = true;
+										continue;
+									}
 									if (!sc.Compare("filter"))
 										sc.ScriptError("Unknown semantic-layer property '%s' in texture '%s'", sc.String, tex ? tex->GetName().GetChars() : "(null)");
 									sc.MustGetString();

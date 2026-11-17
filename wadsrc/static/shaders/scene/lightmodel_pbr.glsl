@@ -48,20 +48,68 @@ vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness)
 	return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(1.0 - cosTheta, 5.0);
 }
 
-vec3 ProcessLight(const DynLightInfo light, vec3 albedo, float metallic, float roughness, const vec3 N, const vec3 V, const vec3 F0)
+struct PbrSurface
 {
-	vec3 L = normalize(light.pos.xyz - SDVK_LIGHTING_POSITION);
+	vec3 Position;
+	vec3 View;
+	vec3 Normal;
+};
+
+PbrSurface ApplyStructuralRelief(PbrSurface surface, vec4 relief)
+{
+	vec3 geometricNormal = SDVKReliefGeometricNormal();
+	if (relief.w != 0.0)
+	{
+		vec3 position = surface.Position + geometricNormal * relief.w;
+		vec3 view = uCameraPos.xyz - position;
+		float lengthSquared = dot(view, view);
+		if (lengthSquared > 1e-8)
+		{
+			surface.Position = position;
+			surface.View = view * inversesqrt(lengthSquared);
+		}
+	}
+	surface.Normal = SDVKReliefNormal(surface.Normal, geometricNormal, relief.xyz);
+	return surface;
+}
+
+vec3 ProcessLight(const DynLightInfo light, vec3 albedo, float metallic, float roughness, const vec3 F0,
+	PbrSurface baseSurface, PbrSurface reliefSurface, bool hasRelief)
+{
+	if (!UsePackedLight(light))
+		return vec3(0.0);
+	bool directional = (light.flags & LIGHTINFO_STAGE_B_DIRECTIONAL) != 0;
+	bool useRelief = hasRelief && UseStructuralRelief(light);
+	PbrSurface surface = baseSurface;
+	if (useRelief)
+		surface = reliefSurface;
+	vec3 toLight = light.pos.xyz - surface.Position;
+	if (useRelief && !directional && dot(toLight, toLight) <= 1e-8)
+	{
+		surface = baseSurface;
+		toLight = light.pos.xyz - surface.Position;
+	}
+	vec3 N = surface.Normal;
+	vec3 V = surface.View;
+	vec3 L = directional ? light.spotDir : normalize(toLight);
 	vec3 H = normalize(V + L);
 
-	float attenuation = distanceAttenuation(distance(light.pos.xyz, SDVK_LIGHTING_POSITION), light.radius, light.strength, light.linearity);
+	float attenuation = PackedLightFalloff(light, distance(light.pos.xyz, directional ? baseSurface.Position : surface.Position));
 	if ((light.flags & LIGHTINFO_SPOT) != 0)
 	{
 		attenuation *= spotLightAttenuation(light.pos.xyz, light.spotDir.xyz, light.spotInnerAngle, light.spotOuterAngle);
 	}
 	
-	if ((light.flags & LIGHTINFO_ATTENUATED) != 0)
+	if (directional || (light.flags & LIGHTINFO_ATTENUATED) != 0)
 	{
 		attenuation *= clamp(dot(N, L), 0.0, 1.0);
+	}
+	else if (useRelief && uWorldReliefParams.y > 0.0)
+	{
+		// Preserve the stock unattenuated beam on level structural height.
+		float incidence = clamp(dot(N, L), 0.0, 1.0);
+		float originalIncidence = clamp(dot(baseSurface.Normal, L), 0.0, 1.0);
+		attenuation *= 1.0 + (incidence - originalIncidence);
 	}
 
 	if (attenuation > 0.0)
@@ -80,10 +128,16 @@ vec3 ProcessLight(const DynLightInfo light, vec3 albedo, float metallic, float r
 		}
 		
 		vec3 radiance = light.color.rgb * attenuation * LIGHT_COMPAT_PBR_BRIGHTNESS_SCALE;
-		
-		// cook-torrance brdf
-		float NDF = DistributionGGX(N, H, roughness);
-		float G = GeometrySmith(N, V, L, roughness);
+
+		float specularRoughness = roughness;
+		if (useRelief && uWorldReliefParams.w > 0.0)
+		{
+			// Broaden highlights introduced by the virtual normal on a sprite card.
+			float normalChange = length(N - baseSurface.Normal);
+			specularRoughness = mix(roughness, max(roughness, 0.50), smoothstep(0.005, 0.08, normalChange));
+		}
+		float NDF = DistributionGGX(N, H, specularRoughness);
+		float G = GeometrySmith(N, V, L, specularRoughness);
 		vec3 F = fresnelSchlick(clamp(dot(H, V), 0.0, 1.0), F0);
 		
 		vec3 kS = F;
@@ -129,7 +183,11 @@ vec3 ProcessMaterialLight(Material material, vec3 ambientLight, float sunlightAt
 
 	vec3 F0 = mix(vec3(0.04), albedo, metallic);
 
-	vec3 Lo = uDynLightColor.rgb;
+	bool stageB = STAGE_B_WORLD_LIGHTING;
+	float ambientFill = stageB ? uStageBAmbient : 1.0;
+	float ambientSpecular = stageB ? uStageBAmbientSpecular : 1.0;
+	vec3 Lo = stageB ? vec3(0.0) : uDynLightColor.rgb;
+	bool fullbrightRelief = uWorldReliefParams.w >= 5.0;
 
 	if (sunlightAttenuation > 0.0)
 	{
@@ -152,27 +210,52 @@ vec3 ProcessMaterialLight(Material material, vec3 ambientLight, float sunlightAt
 		Lo += (kD * albedo / PI + specular) * radiance;
 	}
 
-#ifndef UBERSHADER
-	if (uLightIndex >= 0)
+#if !defined(UBERSHADER) || defined(HAS_UNIFORM_VERTEX_DATA)
+#ifdef UBERSHADER
+	if (stageB)
+#endif
+	if (uLightIndex >= 0 && !fullbrightRelief)
 	{
 		ivec4 lightRange = getLightRange();
 		if (lightRange.z > lightRange.x)
 		{
+			PbrSurface baseSurface = PbrSurface(SDVK_LIGHTING_POSITION, V, N);
+			PbrSurface reliefSurface = baseSurface;
+			bool hasRelief = any(notEqual(material.WorldRelief, vec4(0.0)));
+			if (hasRelief)
+				reliefSurface = ApplyStructuralRelief(baseSurface, material.WorldRelief);
+
 			//
 			// modulated lights
 			//
 			for(int i = lightRange.x; i < lightRange.y; i++)
 			{
-				Lo += ProcessLight(getLights()[i], albedo, metallic, roughness, N, V, F0);
+				Lo += ProcessLight(getLights()[i], albedo, metallic, roughness, F0, baseSurface, reliefSurface, hasRelief);
 			}
 			//
 			// subtractive lights
 			//
 			for(int i = lightRange.y; i < lightRange.z; i++)
 			{
-				Lo -= ProcessLight(getLights()[i], albedo, metallic, roughness, N, V, F0);
+				Lo -= ProcessLight(getLights()[i], albedo, metallic, roughness, F0, baseSurface, reliefSurface, hasRelief);
 			}
 		}
+	}
+#endif
+	if (ambientFill <= 0.0 && ambientSpecular <= 0.0)
+		return max(Lo, vec3(0.0));
+
+	float fillRelief = 1.0;
+#ifdef SDVK_STRUCTURAL_RELIEF
+	if (stageB && uWorldReliefParams.w == 0.0 && any(notEqual(material.WorldRelief.xyz, vec3(0.0))))
+	{
+		// Give the retained fill a broad overhead response to structural normals.
+		// Multiply the existing light so zero fill stays dark and direct lights stay separate.
+		vec3 reliefNormal = SDVKReliefNormal(N, SDVKReliefGeometricNormal(), material.WorldRelief.xyz);
+		float hemisphere = clamp(reliefNormal.y - N.y, -0.6, 0.6);
+		vec3 emission = material.Glow.rgb * material.Glow.a + material.Bright.rgb;
+		float solidFill = 1.0 - clamp(max(max(emission.r, emission.g), emission.b), 0.0, 1.0);
+		fillRelief += 0.4 * hemisphere * solidFill;
 	}
 #endif
 
@@ -183,14 +266,14 @@ vec3 ProcessMaterialLight(Material material, vec3 ambientLight, float sunlightAt
 		vec3 LL = N;
 		vec3 HH = normalize(VV + LL);
 
-		vec3 radiance = ambientLight.rgb * LIGHT_COMPAT_PBR_AMBIENT_SCALE;
+		vec3 radiance = ambientLight.rgb * LIGHT_COMPAT_PBR_AMBIENT_SCALE * fillRelief;
 
 		vec3 F = fresnelSchlick(clamp(dot(HH, VV), 0.0, 1.0), F0);
 		vec3 kS = F;
 		vec3 kD = (vec3(1.0) - kS) * (1.0 - metallic);
 		vec3 specular = metallic * albedo * LIGHT_COMPAT_PBR_METAL_SPECULAR_SCALE;
 
-		Lo += (kD * albedo / PI + specular) * radiance;
+		Lo += (kD * albedo / PI * ambientFill + specular * ambientSpecular) * radiance;
 	}
 
 	vec3 F = fresnelSchlickRoughness(clamp(dot(N, V), 0.0, 1.0), F0, roughness);
@@ -245,9 +328,13 @@ vec3 ProcessMaterialLight(Material material, vec3 ambientLight, float sunlightAt
 	vec3 diffuse = irradiance * albedo;
 	kD *= 1.0 - metallic;
 
-	vec3 ambient = (kD * diffuse + specular) * ao;
+	vec3 ambient = (kD * diffuse * ambientFill + specular * ambientSpecular) * ao * fillRelief;
 
 	vec3 color = max(ambient + Lo, vec3(0.0));
+#ifdef SDVK_STRUCTURAL_RELIEF
+	if (fullbrightRelief)
+		color *= SDVKFullbrightReliefScale(material.WorldRelief);
+#endif
 	return color;
 }
 

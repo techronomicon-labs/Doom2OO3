@@ -81,6 +81,7 @@ EXTERN_CVAR(Float, transsouls)
 EXTERN_CVAR(Float, r_actorspriteshadowalpha)
 EXTERN_CVAR(Float, r_actorspriteshadowfadeheight)
 EXTERN_CVAR(Bool, gl_aalines)
+EXTERN_CVAR(Bool, gl_ubershaders)
 
 //==========================================================================
 //
@@ -124,11 +125,24 @@ CVARD(Bool, r_showhitbox, false, CVAR_GLOBALCONFIG | CVAR_CHEAT, "show actor hit
 //
 //==========================================================================
 
+static bool SupportsSpriteLightingRelief(FRenderStyle style, float alpha, int shaderOverride)
+{
+	return shaderOverride == -1 && alpha >= 1.f - FLT_EPSILON &&
+		(style == LegacyRenderStyles[STYLE_Normal] || style == LegacyRenderStyles[STYLE_Translucent]);
+}
+
+bool HWSprite::ReceivesEmitterLighting(const HWDrawInfo* di) const
+{
+	return di->UsesEmitterLighting() && actor && !modelframe && texture && !fullbright &&
+		get_gl_spritelight() == 2 && SupportsSpriteLightingRelief(RenderStyle, trans, OverrideShader);
+}
+
 void HWSprite::DrawSprite(HWDrawInfo *di, FRenderState &state, bool translucent)
 {
 	// Never inherit a sprite basis from a preceding card, view or model.
 	state.ClearSpriteTangentBasis();
 	state.ClearSpriteRelief();
+	state.ClearWorldRelief();
 	SdvkDiagnostics::ClearSpriteBasis();
 	SdvkDiagnostics::ClearActorProbeSelection();
 	SdvkDiagnostics::ClearActorSun();
@@ -392,15 +406,21 @@ void HWSprite::DrawSprite(HWDrawInfo *di, FRenderState &state, bool translucent)
 			}
 
 			CreateVertices(di, state);
+			state.SetEmitterLightingReceiver(ReceivesEmitterLighting(di));
+			bool relief = actor && gl_spritelight == 2 && dynlightindex >= 0 &&
+				SupportsSpriteLightingRelief(RenderStyle, trans, OverrideShader) &&
+				state.EnableSpriteLightingRelief(false, fullbright);
 
 			if (polyoffset)
 			{
 				state.SetDepthBias(-1, -128);
 			}
 
-			state.SetLightIndex(dynlightindex);
+			state.SetLightIndex(fullbright && !relief ? -1 : dynlightindex);
 			state.Draw(DT_TriangleStrip, vertexindex, 4);
 			state.SetLightIndex(-1);
+			state.ClearWorldRelief();
+			state.SetEmitterLightingReceiver(false);
 
 			if (foglayer)
 			{
@@ -808,10 +828,24 @@ inline void HWSprite::PutSprite(HWDrawInfo *di, FRenderState& state, bool transl
 {
 	packedSunProxyCount = 0;
 	tracedSunProxyCount = 0;
-	// That's a lot of checks...
-	if ((get_gl_spritelight() > 0 || (modelframe && !modelframe->isVoxel && !(modelframeflags & MDL_NOPERPIXELLIGHTING))) && RenderStyle.BlendOp != STYLEOP_Shadow && gl_light_sprites && di->Level->HasDynamicLights && !di->isFullbrightScene() && !fullbright)
+	const int spriteLighting = get_gl_spritelight();
+	const bool litScene = gl_light_sprites && di->Level->HasDynamicLights && !di->isFullbrightScene();
+	if (fullbright && litScene && actor && !modelframe && texture && texture->HasLightingOnlyHeight() &&
+		V_IsTrueColor() && !gl_ubershaders && gl_sprite_lighting_relief && spriteLighting == 2 &&
+		SupportsSpriteLightingRelief(RenderStyle, trans, OverrideShader))
 	{
-		di->GetDynSpriteLightList(actor, gl_light_particles ? particle : nullptr, (gl_light_particles && spr != nullptr) ? &spr->StaticLightsTraceCache : nullptr, lightdata, modelframe && !modelframe->isVoxel);
+		// Feed the structural modulation without adding normal illumination to a BRIGHT state.
+		di->GetDynSpriteLightList(actor, actor->X(), actor->Y(), actor->Center(),
+			&actor->StaticLightsTraceCache, lightdata, false, true);
+		dynlightindex = lightdata.arrays[LIGHTARRAY_NORMAL].Size() ||
+			lightdata.arrays[LIGHTARRAY_SUBTRACTIVE].Size() || lightdata.arrays[LIGHTARRAY_ADDITIVE].Size()
+			? state.UploadLights(lightdata) : -1;
+	}
+	// That's a lot of checks...
+	else if ((spriteLighting > 0 || (modelframe && !modelframe->isVoxel && !(modelframeflags & MDL_NOPERPIXELLIGHTING))) && RenderStyle.BlendOp != STYLEOP_Shadow && litScene && !fullbright)
+	{
+		di->GetDynSpriteLightList(actor, gl_light_particles ? particle : nullptr, (gl_light_particles && spr != nullptr) ? &spr->StaticLightsTraceCache : nullptr,
+			lightdata, modelframe && !modelframe->isVoxel, ReceivesEmitterLighting(di));
 		if (actor && !modelframe && SdvkDiagnostics::StateEnabled())
 		{
 			for (const auto& packed : lightdata.arrays[LIGHTARRAY_NORMAL])
@@ -872,7 +906,7 @@ void HWSprite::CreateVertices(HWDrawInfo *di, FRenderState& state)
 		const bool builtInMaterial = materialShader == 0 || materialShader == 3 || materialShader == 4;
 		const float depth = gl_sprite_relief_depth;
 		const int quality = gl_sprite_relief_quality;
-		if (basis.valid && actor && texture && builtInMaterial &&
+		if (basis.valid && actor && texture && builtInMaterial && !texture->HasLightingOnlyHeight() &&
 			depth > 0.f && depth <= 0.0200f && std::isfinite(depth) && quality >= 1 && quality <= 3)
 			state.SetSpriteRelief(depth, quality, ul, vt, ur, vb);
 		else state.ClearSpriteRelief();

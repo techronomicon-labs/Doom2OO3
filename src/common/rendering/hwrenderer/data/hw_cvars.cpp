@@ -42,6 +42,7 @@
 #include "hw_cvars.h"
 #include "menu.h"
 #include "printf.h"
+#include <cmath>
 
 
 CUSTOM_CVAR(Int, gl_fogmode, 2, CVAR_ARCHIVE | CVAR_NOINITCALL)
@@ -53,6 +54,65 @@ CUSTOM_CVAR(Int, gl_fogmode, 2, CVAR_ARCHIVE | CVAR_NOINITCALL)
 
 // OpenGL stuff moved here
 // GL related CVARs
+CVAR(Bool, gl_world_relief, false, 0)
+CVAR(Bool, gl_emitter_lighting, false, 0)
+
+CUSTOM_CVAR(Float, gl_emitter_ambient, 0.35f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (!std::isfinite(float(self)) || self < 0.f) self = 0.f;
+	else if (self > 1.f) self = 1.f;
+}
+
+CUSTOM_CVAR(Float, gl_emitter_ambient_specular, 0.35f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (!std::isfinite(float(self)) || self < 0.f) self = 0.f;
+	else if (self > 1.f) self = 1.f;
+}
+
+CUSTOM_CVAR(Float, gl_emitter_intensity, 1.f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (!std::isfinite(float(self)) || self < 0.f) self = 0.f;
+	else if (self > 2.f) self = 2.f;
+}
+
+CVAR(Bool, gl_sprite_lighting_relief, false, 0)
+
+CUSTOM_CVAR(Float, gl_sprite_lighting_relief_depth, 3.5f, 0)
+{
+	if (!std::isfinite(float(self)) || self < 0.f) self = 0.f;
+	else if (self > 8.f) self = 8.f;
+}
+
+CUSTOM_CVAR(Float, gl_sprite_lighting_relief_orientation, 4.f, 0)
+{
+	if (!std::isfinite(float(self)) || self < 0.f) self = 0.f;
+	else if (self > 8.f) self = 8.f;
+}
+
+CUSTOM_CVAR(Float, gl_sprite_lighting_relief_exaggeration, 1.f, 0)
+{
+	if (!std::isfinite(float(self)) || self < 0.f) self = 0.f;
+	else if (self > 2.f) self = 2.f;
+}
+
+CUSTOM_CVAR(Float, gl_world_relief_depth, 4.f, 0)
+{
+	if (!std::isfinite(float(self)) || self < 0.f) self = 0.f;
+	else if (self > 16.f) self = 16.f;
+}
+
+CUSTOM_CVAR(Float, gl_world_relief_orientation, 2.5f, 0)
+{
+	if (!std::isfinite(float(self)) || self < 0.f) self = 0.f;
+	else if (self > 8.f) self = 8.f;
+}
+
+CUSTOM_CVAR(Float, gl_world_relief_exaggeration, 1.f, 0)
+{
+	if (!std::isfinite(float(self)) || self < 0.f) self = 0.f;
+	else if (self > 2.f) self = 2.f;
+}
+
 CVAR(Bool, gl_portals, true, 0)
 CVAR(Bool,gl_mirrors,true,0)	// This is for debugging only!
 CVAR(Bool,gl_mirror_envmap, true, CVAR_GLOBALCONFIG|CVAR_ARCHIVE)

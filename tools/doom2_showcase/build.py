@@ -48,8 +48,8 @@ def build_flashlight(out):
             )
 
 
-def dbp50_material_inputs(effective_rows, original, replacement):
-    """Yield changed art and switch context using the effective definition and patches."""
+def dbp50_material_inputs(effective_rows, original, replacement, include_unchanged=False):
+    """Yield effective art and switch context for material and relief generation."""
     import dbp50_effective as dbp
     import wall_materials as walls
 
@@ -60,11 +60,60 @@ def dbp50_material_inputs(effective_rows, original, replacement):
     if tables:
         definitions.update(walls.definitions(tables))
     for row in effective_rows:
-        if row["rgba_changed"] and not row["placeholder"]:
+        if (include_unchanged or row["rgba_changed"]) and not row["placeholder"]:
             yield row, walls.context(row, rows, definitions, decoder)
 
 
-def build_materials(out, iwad, pwad, include_gallery):
+def world_relief(row, family, context):
+    from relief_flat_profiles import height_map as flat_height
+    from relief_wall_profiles import height_map as wall_height
+    from structural_relief import height_map as authored_height
+
+    kind, name, pixels = row["kind"], row["name"], row["pixels"]
+    hand_drawn = authored_height(kind, name, pixels)
+    if hand_drawn is not None:
+        data, profile = hand_drawn
+        return data, profile, "hand-authored"
+    profile = (
+        flat_height(name, pixels) if kind == "flat" else wall_height(row, family, context)
+    )
+    if profile is None:
+        return None, "No reliable structure identified", "neutral"
+    data, label = profile
+    return data, label, "material profile" if data is not None else "neutral"
+
+
+def write_wall_pack(out, game, entries, shared, overrides, heights):
+    definitions = []
+    restriction = "iwad " if game == "DoomII" else ""
+    with ZipFile(out / f"{game}-NormalPBR.pk3", "w", ZIP_DEFLATED) as package:
+        for entry in entries:
+            if entry["placeholder"]:
+                continue
+            key = entry["kind"], entry["name"]
+            target = "texture" if key[0] == "wall" else "flat"
+            data = overrides[key] if key in overrides else shared[key]
+            if key in heights:
+                data = dict(data, height=heights[key])
+            paths = {
+                channel: f"sdvkwallpbr/{entry['id']:04}/{channel}.png"
+                for channel in data
+            }
+            for channel, path in paths.items():
+                package.writestr(path, data[channel])
+            layers = " ".join(
+                f'{channel} "{path}" {{ filter {"nearest" if channel == "brightmap" else "linear"} }}'
+                for channel, path in paths.items()
+            )
+            definitions.append(
+                f"material {target} {key[1]} {{ {restriction}{layers} }}"
+            )
+        package.writestr("GLDEFS", "\n".join(definitions) + "\n")
+    return len(definitions)
+
+
+def build_materials(out, iwad, pwad, include_gallery, include_relief=False, include_sprite_relief=False,
+                    include_emitters=False):
     from PIL import Image
 
     import dbp50_effective as dbp
@@ -85,31 +134,6 @@ def build_materials(out, iwad, pwad, include_gallery):
         walls.validate_maps(maps, row["pixels"])
         return maps, info
 
-    def write_wall_pack(game, entries, shared, overrides):
-        definitions = []
-        restriction = "iwad " if game == "DoomII" else ""
-        with ZipFile(out / f"{game}-NormalPBR.pk3", "w", ZIP_DEFLATED) as package:
-            for entry in entries:
-                if entry["placeholder"]:
-                    continue
-                key = entry["kind"], entry["name"]
-                target = "texture" if key[0] == "wall" else "flat"
-                paths = {
-                    channel: f"sdvkwallpbr/{entry['id']:04}/{channel}.png"
-                    for channel in CHANNELS
-                }
-                for channel, path in paths.items():
-                    data = overrides[key] if key in overrides else shared[key]
-                    package.writestr(path, data[channel])
-                layers = " ".join(
-                    f'{c} "{paths[c]}" {{ filter linear }}' for c in CHANNELS
-                )
-                definitions.append(
-                    f"material {target} {key[1]} {{ {restriction}{layers} }}"
-                )
-            package.writestr("GLDEFS", "\n".join(definitions) + "\n")
-        return len(definitions)
-
     wad = base.Wad(iwad)
     rows = sorted(
         wad.textures() + wad.flats(), key=lambda row: (row["kind"], row["name"])
@@ -118,6 +142,10 @@ def build_materials(out, iwad, pwad, include_gallery):
     definitions = walls.definitions(lookup)
     by_key = {(row["kind"], row["name"]): row for row in rows}
     shared = {}
+    doomii_overrides = {}
+    heights = {}
+    relief_profiles = []
+    relief_fallbacks = []
     entries = []
     gallery_entries = []
     for ordinal, row in enumerate(rows, 1):
@@ -128,13 +156,34 @@ def build_materials(out, iwad, pwad, include_gallery):
         entry.update(id=ordinal, family=family)
         entries.append(entry)
         if not entry["placeholder"] or include_gallery:
-            maps, info = wall_maps(
-                row, family, walls.context(row, by_key, definitions, wad)
-            )
+            context = walls.context(row, by_key, definitions, wad)
+            maps, info = wall_maps(row, family, context)
             shared[key] = {
                 channel: sprites.png(base.np.asarray(maps[channel]))
                 for channel in CHANNELS
             }
+            if include_emitters and key == ("wall", "TEKGREN5"):
+                # The validated IWAD has a yellow lamp strip at U 4–58, V 4–11.
+                # A native-texel mask gives those source pixels their own emission.
+                mask = base.np.zeros(row["pixels"].shape[:2], dtype=base.np.uint8)
+                strip = row["pixels"][4:12, 4:59]
+                yellow = (strip[..., 0] == 255) & (strip[..., 1] == 255) & (strip[..., 2] < 224)
+                mask[4:12, 4:59] = yellow * 190
+                doomii_overrides[key] = dict(shared[key], brightmap=sprites.png(mask))
+        if include_relief:
+            if entry["placeholder"]:
+                relief_fallbacks.append(
+                    dict(kind=kind, name=name, reason="IWAD placeholder")
+                )
+            else:
+                data, profile, method = world_relief(row, info["family"], context)
+                if data is None:
+                    relief_fallbacks.append(dict(kind=kind, name=name, reason=profile))
+                else:
+                    heights[key] = sprites.png(data)
+                    relief_profiles.append(
+                        dict(kind=kind, name=name, profile=profile, method=method)
+                    )
         if include_gallery:
             folder = out / "gallery-art" / f"{ordinal:04}"
             folder.mkdir(parents=True)
@@ -161,36 +210,80 @@ def build_materials(out, iwad, pwad, include_gallery):
             )
 
     report = {}
-    count = write_wall_pack("DoomII", entries, shared, {})
-    manifest = sprites.build(out, "DoomII", stock_sprites, palette, set())
+    count = write_wall_pack(out, "DoomII", entries, shared, doomii_overrides, heights)
+    manifest = sprites.build(out, "DoomII", stock_sprites, palette, set(), include_relief=include_sprite_relief)
     report["DoomII"] = {
         "world_bindings": count,
         "sprite_bindings": len(manifest["bindings"]),
     }
+    if include_relief:
+        from capture_relief import prepare, preview_scenes
+
+        preview = out / "DoomII-Relief-Preview.pk3"
+        prepare(preview, preview_scenes(), playable=True)
+        report["DoomII"]["relief_profiles"] = relief_profiles
+        report["DoomII"]["relief_fallbacks"] = relief_fallbacks
+    if include_sprite_relief:
+        from capture_sprite_relief import prepare as prepare_sprite_preview
+
+        prepare_sprite_preview(out / "DoomII-Sprite-Relief-Preview.pk3", playable=True)
+        report["DoomII"]["sprite_relief_bindings"] = len(manifest["relief_bindings"])
+        report["DoomII"]["sprite_relief_fallbacks"] = len(manifest["relief_fallbacks"])
+
+    if include_emitters:
+        from stageb_lighting import build as build_emitter_layout
+
+        build_emitter_layout(out / "DoomII-Emitter-Lighting.pk3")
 
     if pwad:
-        effective_rows = dbp.effective_rows(iwad, pwad, entries)
+        effective_rows = dbp.effective_rows(iwad, pwad, entries, include_custom=include_relief)
         mod_lookup = dbp._lumps(pwad, dbp.PWAD_SHA256, b"PWAD")
         overrides = {}
-        for row, context in dbp50_material_inputs(effective_rows, lookup, mod_lookup):
+        contexts = {}
+        for row, context in dbp50_material_inputs(effective_rows, lookup, mod_lookup, include_relief):
+            key = row["kind"], row["name"]
+            contexts[key] = context
+            if not row["rgba_changed"] and not row.get("custom", False):
+                continue
             maps, _ = wall_maps(row, row["family"], context)
-            overrides[row["kind"], row["name"]] = {
+            overrides[key] = {
                 channel: sprites.png(base.np.asarray(maps[channel]))
                 for channel in CHANNELS
             }
-        count = write_wall_pack("DBP50", entries, shared, overrides)
+        dbp_heights = {}
+        dbp_profiles = []
+        dbp_fallbacks = []
+        if include_relief:
+            from dbp50_structural_relief import height_profiles
+
+            for key, (data, label, method) in height_profiles(effective_rows, contexts, world_relief).items():
+                kind, name = key
+                if data is None:
+                    dbp_fallbacks.append(dict(kind=kind, name=name, reason=label))
+                else:
+                    dbp_heights[key] = sprites.png(data)
+                    dbp_profiles.append(dict(kind=kind, name=name, profile=label, method=method))
+
+        count = write_wall_pack(out, "DBP50", effective_rows, shared, overrides, dbp_heights)
         manifest = sprites.build(
             out,
             "DBP50",
             stock_sprites | mod_sprites,
             mod_palette or palette,
             set(mod_sprites),
+            include_relief=include_sprite_relief,
         )
         report["DBP50"] = {
             "world_bindings": count,
             "sprite_bindings": len(manifest["bindings"]),
             "adapted_world_bindings": len(overrides),
         }
+        if include_relief:
+            report["DBP50"]["relief_profiles"] = dbp_profiles
+            report["DBP50"]["relief_fallbacks"] = dbp_fallbacks
+        if include_sprite_relief:
+            report["DBP50"]["sprite_relief_bindings"] = len(manifest["relief_bindings"])
+            report["DBP50"]["sprite_relief_fallbacks"] = len(manifest["relief_fallbacks"])
 
     if include_gallery:
         import gallery
@@ -208,7 +301,14 @@ def build_materials(out, iwad, pwad, include_gallery):
     (out / "material-build.json").write_text(
         json.dumps(report, indent=2) + "\n", encoding="utf-8"
     )
-    print(json.dumps(report, indent=2))
+    if include_relief:
+        print(f"Built {len(relief_profiles)} Doom II height maps and recorded "
+              f"{len(relief_fallbacks)} neutral entries in material-build.json.")
+        if pwad:
+            print(f"Built {len(dbp_profiles)} DBP50 height maps and recorded "
+                  f"{len(dbp_fallbacks)} neutral entries in material-build.json.")
+    else:
+        print(json.dumps(report, indent=2))
 
 
 def main():
@@ -221,9 +321,21 @@ def main():
         action="store_true",
         help="also build the wall and flat comparison gallery",
     )
+    parser.add_argument(
+        "--relief",
+        action="store_true",
+        help="build structural-height materials for Doom II and the supplied DBP50 WAD",
+    )
+    parser.add_argument(
+        "--sprite-relief",
+        action="store_true",
+        help="build sprite lighting relief for Doom II and the supplied DBP50 WAD",
+    )
+    parser.add_argument("--emitter-lighting", action="store_true",
+                        help="build authored emitter lighting for Doom II Entryway and the comparison rooms")
     args = parser.parse_args()
-    if (args.dbp50 or args.gallery) and not args.doom2:
-        parser.error("--dbp50 and --gallery require --doom2")
+    if (args.dbp50 or args.gallery or args.relief or args.sprite_relief or args.emitter_lighting) and not args.doom2:
+        parser.error("--dbp50, --gallery, --relief, --sprite-relief and --emitter-lighting require --doom2")
     out = args.out.resolve()
     if out.exists():
         parser.error("--out must name a new directory")
@@ -234,7 +346,8 @@ def main():
             prepared.mkdir()
             build_flashlight(prepared)
             if args.doom2:
-                build_materials(prepared, args.doom2, args.dbp50, args.gallery)
+                build_materials(prepared, args.doom2, args.dbp50, args.gallery,
+                                args.relief, args.sprite_relief, args.emitter_lighting)
             prepared.rename(out)
     except (OSError, ValueError, ImportError) as error:
         parser.exit(1, f"{error}\n")

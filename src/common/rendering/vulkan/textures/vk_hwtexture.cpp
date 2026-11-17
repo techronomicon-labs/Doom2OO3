@@ -565,6 +565,31 @@ int VkMaterial::GetHeightLayerIndex(const FMaterialState& state)
 	return GetDescriptorEntry(state).heightLayerIndex;
 }
 
+VulkanSampler* VkMaterial::GetLayerSampler(MaterialLayerSemantic semantic, MaterialLayerSampling filter, int clampmode) const
+{
+	auto samplers = fb->GetSamplerManager();
+	const auto use = Source()->GetUseType();
+	if (use == ETextureType::Wall || use == ETextureType::Flat)
+	{
+		switch (semantic)
+		{
+		case MaterialLayerSemantic::Normal:
+		case MaterialLayerSemantic::LegacySpecular:
+		case MaterialLayerSemantic::Metallic:
+		case MaterialLayerSemantic::Roughness:
+		case MaterialLayerSemantic::AmbientOcclusion:
+		case MaterialLayerSemantic::Brightmap:
+		case MaterialLayerSemantic::Height:
+			return samplers->GetWithAddressing(filter, clampmode);
+		default:
+			break;
+		}
+	}
+	if (semantic == MaterialLayerSemantic::Height && Source()->HasLightingOnlyHeight())
+		return samplers->GetWithAddressing(filter, clampmode);
+	return samplers->Get(filter, clampmode);
+}
+
 VkMaterial::DescriptorEntry& VkMaterial::GetDescriptorEntry(const FMaterialState& state)
 {
 	auto base = Source();
@@ -645,7 +670,9 @@ VkMaterial::DescriptorEntry& VkMaterial::GetDescriptorEntry(const FMaterialState
 		{
 			auto syslayer = static_cast<VkHardwareTexture*>(GetLayer(i, 0, &layer));
 			auto syslayerimage = syslayer->GetImage(layer->layerTexture, 0, layer->scaleFlags | paletteFlags);
-			descriptors->SetBindlessTexture(texIndex++, syslayerimage->View.get(), fb->GetSamplerManager()->Get(GetLayerFilter(i), clampmode), syslayerimage->Layout);
+			const auto filter = GetLayerFilter(i);
+			auto sampler = GetLayerSampler(layer->semantic, filter, clampmode);
+			descriptors->SetBindlessTexture(texIndex++, syslayerimage->View.get(), sampler, syslayerimage->Layout);
 		}
 
 		if(globalshader)
@@ -667,7 +694,8 @@ VkMaterial::DescriptorEntry& VkMaterial::GetDescriptorEntry(const FMaterialState
 				heightLayerIndex = texIndex - bindlessIndex;
 				auto heightTex = static_cast<VkHardwareTexture*>(GetLayer(materialHeightLayer, 0, &layer));
 				auto heightImage = heightTex->GetImage(layer->layerTexture, 0, layer->scaleFlags);
-				descriptors->SetBindlessTexture(texIndex++, heightImage->View.get(), fb->GetSamplerManager()->Get(GetLayerFilter(materialHeightLayer), clampmode), heightImage->Layout);
+				descriptors->SetBindlessTexture(texIndex++, heightImage->View.get(),
+					GetLayerSampler(MaterialLayerSemantic::Height, GetLayerFilter(materialHeightLayer), clampmode), heightImage->Layout);
 			}
 		}
 	}

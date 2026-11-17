@@ -9,21 +9,21 @@ Requires Visual Studio 2022 with Desktop development with C++, x64 compiler and 
 cmake -S . -B build/windows -G "Visual Studio 17 2022" -A x64 -DPK3_QUIET_ZIPDIR=ON
 cmake --build build/windows --config RelWithDebInfo --parallel 4
 & .\build\windows\RelWithDebInfo\vkdoom.exe --version
-& .\build\windows\RelWithDebInfo\vkdoom.exe -iwad "C:\doom2.wad"
+& .\build\windows\RelWithDebInfo\vkdoom.exe -iwad ".\assets\wads\doom2.wad"
 ```
 
 Build output includes `vkdoom.exe`, `vktool.exe`, PK3 resources, DLLs and runtime assets. The `vkdoom` name, version stamp and `ShadeDoomVK` identity are deliberately retained. Run with Vulkan enabled and a real GPU for the owner's visual assessment. Do not mistake a successful compile or software renderer smoke for visual acceptance.
 
 ## Original material and flashlight add-ons
-The unchanged `tools/doom2_showcase/` script creates local opt-in Doom II/DBP50 normal/metallic/roughness/AO packs, flashlight and optional gallery. It never alters original source sprite pixels or gameplay and does not redistribute proprietary WADs.
+The `tools/doom2_showcase/` script creates local opt-in Doom II/DBP50 normal, metallic, roughness, and AO packs, a flashlight, and an optional gallery. Use the original Doom II and DBP50 inputs in `assets/wads`.
 
 ```powershell
 py -m pip install numpy "Pillow>=10.1"
-py tools/doom2_showcase/build.py --doom2 "C:\doom2.wad" --out ".\build\addons"
-.\tools\doom2_showcase\launch.ps1 -Game DoomII -Exe ".\build\windows\RelWithDebInfo\vkdoom.exe" -Doom2 "C:\doom2.wad" -Packages ".\build\addons"
+py tools/doom2_showcase/build.py --doom2 ".\assets\wads\doom2.wad" --out ".\build\addons"
+.\tools\doom2_showcase\launch.ps1 -Game DoomII -Exe ".\build\windows\RelWithDebInfo\vkdoom.exe" -Doom2 ".\assets\wads\doom2.wad" -Packages ".\build\addons"
 ```
 
-`--dbp50 "C:\path\to\DBP50.wad"` and `--gallery` are optional. Generate into a **new** output folder. The generator checks known WAD identities; use supported originals or explicitly extend input support instead of bypassing validation. With no `--doom2`, the builder can create the standalone flashlight using only Python's standard library.
+`--dbp50 ".\assets\wads\DBP50.wad"` and `--gallery` are optional. Generate into a **new** output folder. The generator validates WAD identities before generating materials. With no `--doom2`, the builder can create the standalone flashlight using only Python's standard library.
 
 ## Linux (secondary)
 Requires a C++17 compiler, CMake 3.24+, Git, Python 3 and normal SDL2/GTK/webp/VPX development dependencies:

@@ -119,8 +119,8 @@ struct SurfaceUniforms
 	vec3 uActorCenter;
 	float uDepthFadeThreshold;
 	int uHeightTextureIndex;
-	int uMaterialSemanticPad0;
-	int uMaterialSemanticPad1;
+	int uStageBWorld;
+	float uPBRReliefDepth;
 	int uMaterialSemanticPad2;
 	vec4 uSpriteTangent;
 	vec4 uSpriteNormal;
@@ -128,6 +128,8 @@ struct SurfaceUniforms
 	vec4 uSpriteReliefBounds;
 	vec4 uViewmodelSample;
 	vec4 uViewmodelMode;
+	vec4 uWorldReliefParams;
+	vec4 uPBRMaterialFactors;
 };
 
 struct SurfaceLightUniforms
@@ -152,6 +154,9 @@ struct Fogball
 #define LIGHTINFO_SPOT 4
 #define LIGHTINFO_TRACE 8
 #define LIGHTINFO_SUN 16
+#define LIGHTINFO_FLASHLIGHT 32
+#define LIGHTINFO_STAGE_B_EMITTER 64
+#define LIGHTINFO_STAGE_B_DIRECTIONAL 128
 
 struct DynLightInfo
 {

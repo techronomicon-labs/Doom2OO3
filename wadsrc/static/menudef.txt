@@ -359,6 +359,7 @@ OptionMenu "OptionsMenu" protected
 	Submenu "$OPTMNU_INPUT",			"InputMenu"
 	Submenu "$OPTMNU_GAMEPLAY",			"GameplayMenu"
 	Submenu "$OPTMNU_DISPLAY",			"VideoOptions"
+	Submenu "PBR materials",				"PBRMaterialMenu"
 	Submenu "$OPTMNU_SOUND",			"SoundOptions"
 	Submenu "$OPTMNU_MULTIPLAYER",		"MultiplayerMenu"
 	Submenu "$OPTMNU_MISCELLANEOUS",	"MiscOptions"
@@ -2768,6 +2769,27 @@ OptionMenu "GLTextureGLOptions" protected
 	Option "$GLTEXMNU_PRECACHETEX",		gl_precache,					"YesNo"
 	Option "$GLTEXMNU_SORTDRAWLIST", 	gl_sort_textures,				"YesNo"
 	Class "GLTextureGLOptions"
+}
+
+OptionMenu "PBRMaterialMenu" protected
+{
+	Class "PBRMaterialMenu"
+	Title "PBR materials"
+	DontDim
+	DontBlur
+	StaticTextSwitchable "No material selected", "", "PBRMaterialName", 1
+	PBRMaterialAction "Pick aimed surface", 0
+	PBRMaterialLookup "Find by texture name"
+	StaticText " "
+	PBRMaterialSlider "Roughness offset", 0, -1.0, 1.0
+	PBRMaterialSlider "Metallic offset", 1, -1.0, 1.0
+	PBRMaterialSlider "Normal strength", 2, 0.0, 2.0
+	PBRMaterialSlider "Ambient occlusion strength", 3, 0.0, 2.0
+	PBRMaterialSlider "Relief depth strength", 4, 0.0, 2.0
+	StaticText " "
+	PBRMaterialAction "Save material settings", 1
+	PBRMaterialAction "Preview material defaults", 2
+	StaticTextSwitchable " ", "", "PBRMaterialStatus"
 }
 
 OptionMenu "VR3DMenu" protected

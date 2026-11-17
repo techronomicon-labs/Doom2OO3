@@ -29,6 +29,15 @@ static void UpdateLightmapTiles();
 static int InvalidateLightmap();
 static void InvalidateActorLightTraceCache();
 
+void InvalidatePBRLevelMesh(FGameTexture* texture)
+{
+	for (auto current : AllLevels())
+	{
+		if (current && current->levelMesh)
+			current->levelMesh->InvalidateMaterialUniforms(texture);
+	}
+}
+
 static void RefreshLightmap()
 {
 	if(level.levelMesh)

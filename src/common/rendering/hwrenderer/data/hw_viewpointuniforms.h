@@ -1,6 +1,7 @@
 #pragma once
 
 #include "matrix.h"
+#include <cstddef>
 
 struct HWDrawInfo;
 
@@ -23,6 +24,7 @@ enum class ELightAttenuationMode : uint8_t
 
 struct HWViewpointUniforms
 {
+	static constexpr int EmitterLighting = 1 << 24;
 	VSMatrix mProjectionMatrix;
 	VSMatrix mViewMatrix;
 	VSMatrix mNormalViewMatrix;
@@ -41,17 +43,25 @@ struct HWViewpointUniforms
 	int mLightTilesWidth = 0;
 
 	FVector3 SunDir;
-	float Padding = 0.0f;
+	float StageBAmbient = 0.0f;
 	FVector3 SunColor;
 	float SunIntensity = 0.0f;
 
 	FVector3 mCameraNormal;
+	float StageBIntensity = 0.0f;
+	float StageBAmbientSpecular = 0.0f;
+	float Padding[3] = {};
 
 	void CalcDependencies()
 	{
 		mNormalViewMatrix.computeNormalMatrix(mViewMatrix);
 	}
 };
+
+static_assert(offsetof(HWViewpointUniforms, StageBAmbient) == 268);
+static_assert(offsetof(HWViewpointUniforms, StageBIntensity) == 300);
+static_assert(offsetof(HWViewpointUniforms, StageBAmbientSpecular) == 304);
+static_assert(sizeof(HWViewpointUniforms) == 320);
 
 
 

@@ -21,6 +21,9 @@ class SDVKLocalFlashlightBeamNoActors : SDVKLocalFlashlightBeam
 class SDVKLocalFlashlightHandler : EventHandler
 {
     const MAX_BEAMS = 5;
+    const DEFAULT_OFFSET_X = 16;
+    const DEFAULT_OFFSET_Z = -12;
+    const DEFAULT_AIM_PITCH = 4;
     bool Enabled[MAXPLAYERS];
     bool ActorMode[MAXPLAYERS];
     SDVKLocalFlashlightBeam Beams[MAXPLAYERS * MAX_BEAMS];
@@ -100,7 +103,9 @@ class SDVKLocalFlashlightHandler : EventHandler
             ReadSetting('sdvk_fl_range',p,360,128,768),
             int(ReadSetting('sdvk_fl_lightactors',p,1,0,1) >= .5), count);
         Console.Printf("SDVK_FLASHLIGHT_MOUNT x=%.3f y=%.3f z=%.3f yaw=%.3f pitch=%.3f",
-            ReadSetting('sdvk_fl_offset_x',p,0,-16,16), ReadSetting('sdvk_fl_offset_y',p,0,-16,16), ReadSetting('sdvk_fl_offset_z',p,0,-16,16), ReadSetting('sdvk_fl_aim_yaw',p,0,-30,30), ReadSetting('sdvk_fl_aim_pitch',p,0,-30,30));
+            ReadSetting('sdvk_fl_offset_x',p,DEFAULT_OFFSET_X,-16,16), ReadSetting('sdvk_fl_offset_y',p,0,-16,16),
+            ReadSetting('sdvk_fl_offset_z',p,DEFAULT_OFFSET_Z,-16,16), ReadSetting('sdvk_fl_aim_yaw',p,0,-30,30),
+            ReadSetting('sdvk_fl_aim_pitch',p,DEFAULT_AIM_PITCH,-30,30));
         for (int k = 0; k < MAX_BEAMS; ++k)
         {
             let beam = Beams[p*MAX_BEAMS+k];
@@ -136,11 +141,11 @@ class SDVKLocalFlashlightHandler : EventHandler
                 count = max(horizontal,vertical) / min(horizontal,vertical) <= 2 ? 3 : MAX_BEAMS;
             double minor = min(horizontal,vertical);
             double difference = abs(horizontal-vertical);
-            double fore = ReadSetting('sdvk_fl_offset_x',p,0,-16,16);
+            double fore = ReadSetting('sdvk_fl_offset_x',p,DEFAULT_OFFSET_X,-16,16);
             double side = ReadSetting('sdvk_fl_offset_y',p,0,-16,16);
-            double height = ReadSetting('sdvk_fl_offset_z',p,0,-16,16);
+            double height = ReadSetting('sdvk_fl_offset_z',p,DEFAULT_OFFSET_Z,-16,16);
             double yaw = pawn.Angle - ReadSetting('sdvk_fl_aim_yaw',p,0,-30,30);
-            double pitch = clamp(pawn.Pitch - ReadSetting('sdvk_fl_aim_pitch',p,0,-30,30), -90.0, 90.0);
+            double pitch = clamp(pawn.Pitch - ReadSetting('sdvk_fl_aim_pitch',p,DEFAULT_AIM_PITCH,-30,30), -90.0, 90.0);
             Vector3 eye = (pawn.Pos.X,pawn.Pos.Y,players[p].viewz);
             Vector3 origin = eye + (fore*cos(pawn.Angle)+side*sin(pawn.Angle),
                                     fore*sin(pawn.Angle)-side*cos(pawn.Angle),height);

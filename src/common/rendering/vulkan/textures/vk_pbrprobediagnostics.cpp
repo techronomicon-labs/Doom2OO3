@@ -446,6 +446,11 @@ struct NativeControls
 #extension GL_EXT_nonuniform_qualifier : require
 #define UBERSHADER
 #define BrdfLUT 1
+#define SDVK_LIGHTING_POSITION pixelpos.xyz
+#define STAGE_B_WORLD_LIGHTING false
+const float uStageBAmbient = 1.0;
+const float uStageBAmbientSpecular = 1.0;
+const vec4 uWorldReliefParams = vec4(0.0);
 layout(set=2,binding=0) uniform sampler2D textures[];
 layout(set=2,binding=0) uniform samplerCube cubeTextures[];
 layout(set=2,binding=0) uniform usampler2D uintTextures[];

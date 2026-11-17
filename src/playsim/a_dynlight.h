@@ -247,6 +247,9 @@ struct FDynamicLight
 	bool IsSubtractive() const { return !!((*pLightFlags) & LF_SUBTRACTIVE); }
 	bool IsAdditive() const { return !!((*pLightFlags) & LF_ADDITIVE); }
 	bool IsSpot() const { return !!((*pLightFlags) & LF_SPOT); }
+	bool IsLocalFlashlight() const;
+	bool IsStageBEmitter() const;
+	bool IsStageBDirectional() const;
 	bool IsAttenuated() const { return !!((*pLightFlags) & LF_ATTENUATE); }
 	bool Trace() const { return !!((*pLightFlags) & (LF_TRACE)); }
 	bool TraceActors() const { return Trace() || gl_light_shadows >= 2; }

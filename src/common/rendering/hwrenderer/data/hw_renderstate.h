@@ -223,6 +223,8 @@ public:
 		mSurfaceUniforms.uLightLevel = -1.0f;
 		mSurfaceUniforms.uDepthFadeThreshold = 0.0f;
 		mSurfaceUniforms.uHeightTextureIndex = -1;
+		mSurfaceUniforms.uStageBWorld = 0;
+		ClearWorldRelief();
 		ClearSpriteTangentBasis();
 		ClearSpriteRelief();
 		ClearViewmodelLighting();
@@ -287,6 +289,49 @@ public:
 	{
 		mSurfaceUniforms.uSpriteReliefParams = { 0.f, 0.f, 0.f, 0.f };
 		mSurfaceUniforms.uSpriteReliefBounds = { 0.f, 0.f, 0.f, 0.f };
+	}
+
+	void EnableWorldRelief()
+	{
+		if (!gl_world_relief || !mMaterial.mMaterial || getShaderIndex() != SHADER_PBR ||
+			mMaterial.mMaterial->Source()->HasLightingOnlyHeight() ||
+			mMaterial.mMaterial->FindLayer(MaterialLayerSemantic::Height) < 0)
+			return;
+		mSurfaceUniforms.uWorldReliefParams = {
+			gl_world_relief_depth, gl_world_relief_orientation, gl_world_relief_exaggeration, 0.f
+		};
+	}
+
+	void ClearWorldRelief()
+	{
+		mSurfaceUniforms.uWorldReliefParams = {};
+	}
+
+	void SetEmitterLightingReceiver(bool enabled)
+	{
+		mSurfaceUniforms.uStageBWorld = 0;
+		if (!enabled || mPaletteMode) return;
+		const int shader = getShaderIndex();
+		mSurfaceUniforms.uStageBWorld = shader == SHADER_Default || shader == SHADER_PBR || shader == SHADER_Specular;
+	}
+
+	bool EnableSpriteLightingRelief(bool viewmodel = false, bool fullbright = false)
+	{
+		auto material = mMaterial.mMaterial;
+		if (!gl_sprite_lighting_relief || !material || mPaletteMode || mSurfaceUniforms.uSpriteNormal.W < 0.5f ||
+			!material->Source()->HasLightingOnlyHeight())
+			return false;
+		const int shader = getShaderIndex();
+		if (shader != SHADER_Default && shader != SHADER_PBR)
+			return false;
+		const bool expanded = (material->GetScaleFlags() & CTF_Expand) != 0;
+		const float kind = fullbright ? (expanded ? 6.f : 5.f) :
+			viewmodel ? (expanded ? 3.f : 4.f) : (expanded ? 2.f : 1.f);
+		mSurfaceUniforms.uWorldReliefParams = {
+			gl_sprite_lighting_relief_depth, gl_sprite_lighting_relief_orientation,
+			gl_sprite_lighting_relief_exaggeration, kind
+		};
+		return true;
 	}
 
 	void SetNormal(FVector3 norm)
