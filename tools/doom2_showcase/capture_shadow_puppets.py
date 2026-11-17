@@ -14,13 +14,14 @@ from capture_relief import fixed_pose, require, sha256
 from capture_stageb_lighting import differences, percentiles
 from capture_shadow_silhouette import reference_room, verify_frame_change, verify_projection
 from gallery import wad
-from shadow_puppets import MAP_NAME, PACK_NAME
+from shadow_puppets import FILL_LIGHT, MAP_NAME, PACK_NAME
 
 
 MODES = ("Off", "Stencil", "Depth")
 # Eye pose, simulation tic for the moving Imp's pose, flashlight state.
 VIEWS = {
     "spawn": ((-8, -66, 90, 0), 2, True),
+    "spawn-three": ((-8, -66, 90, 0), 2, True),
     "stationary": ((42, -54, 132, 3), 2, True),
     "moving": ((-65, -57, 54, 1), 25, True),
     "contact": ((-5, 0, 135, 13), 2, True),
@@ -31,11 +32,12 @@ SILHOUETTE_POSES = {
     "silhouette-a": ("A", 270, "TROOA1", False),
     "silhouette-g": ("G", 270, "TROOG1", False),
     "silhouette-mirror": ("G", 315, "TROOG2G8", True),
+    "outer-lobe": ("G", 270, "TROOG1", False),
     "landing-raised": ("G", 263, "TROOG2G8", True),
 }
 VIEWS.update({name: ((-16, -94, 90, 0), 2, True) for name in SILHOUETTE_POSES})
 VIEWS["landing-raised"] = ((-36, -37, 62, 12), 2, True)
-DEFAULT_CASES = ("spawn", "stationary", "moving", "no-flashlight", *SILHOUETTE_POSES)
+DEFAULT_CASES = ("spawn", "spawn-three", "stationary", "moving", "no-flashlight", *SILHOUETTE_POSES)
 ADDONS = ("DoomII-NormalPBR.pk3", "DoomII-SpritePBR.pk3", "Local-Flashlight.pk3", PACK_NAME)
 
 
@@ -92,8 +94,13 @@ class ShadowPuppetCaptureImp : DoomImp
                         "SAMPLE_TIC": tic, "FLASHLIGHT": beam_action, "CAPTURE_ACTOR": replace_actors}.items():
         script = script.replace(name, str(value))
     with ZipFile(path, "w") as archive:
-        if case == "landing-raised":
-            archive.writestr(ZipInfo(f"maps/{MAP_NAME}.wad"), wad(MAP_NAME, reference_room(True).text()),
+        if case in ("landing-raised", "outer-lobe"):
+            room = reference_room(case == "landing-raised")
+            if case == "outer-lobe":
+                # Keep the blue point light on the same receiving surfaces as the outermost beam.
+                fill = next(thing for thing in room.rows["thing"] if thing["type"] == FILL_LIGHT)
+                fill.update(x=12, y=150, arg0=28, arg1=96, arg2=240)
+            archive.writestr(ZipInfo(f"maps/{MAP_NAME}.wad"), wad(MAP_NAME, room.text()),
                              compress_type=ZIP_DEFLATED)
         archive.writestr(ZipInfo("MAPINFO"), 'GameInfo { AddEventHandlers = "ShadowPuppetCaptureView" }\n',
                          compress_type=ZIP_DEFLATED)
@@ -129,8 +136,15 @@ def capture(args, case, mode, fixture, exe, iwad, addons, ambient_only=False):
     log = folder / "engine.log"
     if case in SILHOUETTE_POSES:
         argv += ["+sdvk_fl_offset_y", "16", "+sdvk_fl_range", "720", "+sdvk_fl_horizontal", "84",
-                 "+sdvk_fl_vertical", "84", "+gl_spriteclip", "0", "+sdvk_fl_offset_x", "16",
+                 "+sdvk_fl_vertical", "28" if case == "outer-lobe" else "84",
+                 "+gl_spriteclip", "0", "+sdvk_fl_offset_x", "16",
                  "+sdvk_fl_offset_z", "12" if case == "landing-raised" else "-12"]
+    if case == "outer-lobe":
+        argv += ["+sdvk_fl_aim_yaw", "28", "+sdvk_fl_aim_pitch", "0"]
+    elif case == "spawn-three":
+        argv += ["+sdvk_fl_horizontal", "60.725", "+sdvk_fl_vertical", "63.35", "+sdvk_fl_offset_x", "16",
+                 "+sdvk_fl_offset_y", "0", "+sdvk_fl_offset_z", "16", "+sdvk_fl_aim_pitch", "-15.75",
+                 "+sdvk_fl_range", "306"]
     with log.open("wb") as stream:
         subprocess.run(argv, cwd=exe.parent, stdout=stream, stderr=subprocess.STDOUT, timeout=60, check=True)
     messages = log.read_text(encoding="utf-8", errors="replace")
@@ -153,6 +167,7 @@ def capture(args, case, mode, fixture, exe, iwad, addons, ambient_only=False):
     require(camera["position"][:2] == [x, y] and (camera["angles"][0] - yaw) % 360 == 0
             and camera["angles"][1] == pitch, f"Wrong camera pose in {folder}")
     active = mode if flashlight else 0
+    light_count = {"outer-lobe": 5, "spawn-three": 3}.get(case, 1) if flashlight else 0
     require(all(
         frame["map"] == MAP_NAME and frame["hardware_renderer"] and frame["level_tic"] >= tic
         and frame["walls"] > 0 and frame["flats"] > 0 and fixed_pose(frame) == camera
@@ -160,7 +175,7 @@ def capture(args, case, mode, fixture, exe, iwad, addons, ambient_only=False):
         and frame["settings"]["gl_multisample"] == args.msaa
         and frame["shadow_puppets"]["requested"] == mode and frame["shadow_puppets"]["active"] == active
         and isclose(frame["shadow_puppets"]["depth_softness"], args.depth_softness, abs_tol=1e-6)
-        and (args.timing or frame["relief_flashlight_lights"] == int(flashlight)) for frame in frames),
+        and (args.timing or frame["relief_flashlight_lights"] == light_count) for frame in frames),
         f"Wrong receiver, beam, or shadow mode in {folder}")
     report = {"argv": argv, "build": build, "camera": camera, "walker_pose": walker_pose,
               "scene": frames[-1]["shadow_puppets"], "level_tic": frames[-1]["level_tic"],
@@ -174,6 +189,9 @@ def capture(args, case, mode, fixture, exe, iwad, addons, ambient_only=False):
         report["source_sprite"] = texture
         report["source_mirrored"] = mirror
         report["sloped_receiver"] = case == "landing-raised"
+        if case == "outer-lobe":
+            # The emitter half-angle is 14 degrees and the central lobe points 28 degrees right.
+            report["lobe_yaws"] = [yaw - angle for angle in (0, 14, 28, 42, 56)]
         report["light_sprite"] = "TROOG1" if case == "landing-raised" else texture
         report["light_sprite_mirrored"] = False if case == "landing-raised" else mirror
         if flashlight:

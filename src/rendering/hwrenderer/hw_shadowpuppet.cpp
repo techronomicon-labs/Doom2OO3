@@ -24,7 +24,7 @@ CVAR(Int, gl_shadow_puppets, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
 CVAR(Int, gl_shadow_puppets_active, 0, 0);
 EXTERN_CVAR(Int, gl_spriteclip);
 
-thread_local const FDynamicLight* HWShadowPuppetFlashlight = nullptr;
+thread_local HWShadowPuppetLightSet HWShadowPuppetFlashlight;
 
 namespace
 {
@@ -270,6 +270,19 @@ namespace
 	{
 		return { float(point.X), float(point.Z), float(point.Y) };
 	}
+
+	struct FlashlightCone
+	{
+		FVector3 Direction;
+		float Radius, Sin, Cos;
+
+		bool Reaches(const FVector3& relative, float distance, float extent) const
+		{
+			const float axial = relative | Direction;
+			const float radial = (relative - Direction * axial).Length();
+			return distance <= Radius + extent && axial >= -extent && radial * Cos - axial * Sin <= extent;
+		}
+	};
 }
 
 VSMatrix ShadowPuppetVulkanProjection(const VSMatrix& projection, const VSMatrix& view)
@@ -298,25 +311,46 @@ bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene)
 			return false;
 	}
 
-	const FDynamicLight* beam = nullptr;
+	// The add-on models a noncircular beam with several cones. All rays
+	// originate at the same point, so all lobes share one visibility pass.
+	auto& lights = scene.Flashlight;
+	std::array<FlashlightCone, HWShadowPuppetLightSet::MaxBeams> cones;
+	FVector3 forward(0, 0, 0);
+	float radius = 0.f;
 	for (auto* candidate = level.lights; candidate; candidate = candidate->next)
 	{
 		if (!candidate->IsActive() || !candidate->IsLocalFlashlight() || candidate->target->master != view.camera)
 			continue;
-		// The flashlight can represent an elliptical beam with several spots.
-		if (beam)
+		if (!candidate->Sector || candidate->Sector->PortalGroup != 0 || candidate->GetRadius() <= 0.f ||
+			lights.Count == lights.MaxBeams || (lights.Count && candidate->Pos != lights.Beams[0]->Pos))
 			return false;
-		beam = candidate;
+		const DAngle yaw = candidate->target->Angles.Yaw, pitch = *candidate->pPitch;
+		const DAngle outer = *candidate->pSpotOuterAngle;
+		const FVector3 direction(float(yaw.Cos() * pitch.Cos()), float(-pitch.Sin()), float(yaw.Sin() * pitch.Cos()));
+		cones[lights.Count] = { direction, candidate->GetRadius(), float(outer.Sin()), float(outer.Cos()) };
+		lights.Beams[lights.Count++] = candidate;
+		forward += direction;
+		radius = std::max(radius, candidate->GetRadius());
 	}
-	if (!beam || !beam->Sector || beam->Sector->PortalGroup != 0 || beam->GetRadius() <= 0.f)
+	if (!lights.Count) return false;
+	const auto* beam = lights.Beams[0];
+	double halfAngle = beam->pSpotOuterAngle->Degrees();
+	if (lights.Count > 1)
+	{
+		if (forward.LengthSquared() < 1e-6f) return false;
+		forward.MakeUnit();
+		for (unsigned i = 0; i < lights.Count; ++i)
+		{
+			const auto& axis = cones[i].Direction;
+			const double angle = VecToAngle(forward | axis, (forward ^ axis).Length()).Degrees();
+			halfAngle = std::max(halfAngle, angle + lights.Beams[i]->pSpotOuterAngle->Degrees());
+		}
+	}
+	// One perspective depth image requires every covered ray to face forward.
+	if (!(halfAngle > 0.0 && halfAngle < 90.0))
 		return false;
 
-	const float radius = beam->GetRadius();
-	const DAngle yaw = beam->target->Angles.Yaw;
-	const DAngle pitch = *beam->pPitch;
-	const FVector3 forward(float(yaw.Cos() * pitch.Cos()), float(-pitch.Sin()), float(yaw.Sin() * pitch.Cos()));
 	const FVector3 origin = RenderPosition(beam->Pos);
-	const float coneSin = float(beam->pSpotOuterAngle->Sin()), coneCos = float(beam->pSpotOuterAngle->Cos());
 	struct Caster { LightSprite Card; float Distance; };
 	std::array<Caster, MaxCasters> casters {};
 	unsigned count = 0;
@@ -338,10 +372,10 @@ bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene)
 		const FVector3 span = card.Across + card.Down;
 		const float extent = span.Length() * 0.5f;
 		const FVector3 relative = card.TopLeft + span * 0.5f - origin;
-		const float distance = relative.Length(), axial = relative | forward;
-		const float radial = (relative - forward * axial).Length();
-		if (distance > radius + extent || axial < -extent || radial * coneCos - axial * coneSin > extent ||
-			(count == MaxCasters && distance >= casters.back().Distance) ||
+		const float distance = relative.Length();
+		if ((count == MaxCasters && distance >= casters.back().Distance) ||
+			std::none_of(cones.begin(), cones.begin() + lights.Count,
+				[&](const FlashlightCone& cone) { return cone.Reaches(relative, distance, extent); }) ||
 			!P_CheckSight(beam->target.Get(), actor, SF_IGNOREVISIBILITY))
 			continue;
 		if (std::any_of(casters.begin(), casters.begin() + count,
@@ -363,9 +397,8 @@ bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene)
 	const FVector3 up = std::abs(forward.Y) < 0.98f ? FVector3(0, 1, 0) : FVector3(0, 0, 1);
 	VSMatrix lightView = VSMatrix::identity(), projection = VSMatrix::identity();
 	lightView.lookAt(origin.X, origin.Y, origin.Z, aim.X, aim.Y, aim.Z, up.X, up.Y, up.Z);
-	projection.perspective(float(2.0 * beam->pSpotOuterAngle->Degrees()), 1.f, 1.f, radius + 32.f);
+	projection.perspective(float(2.0 * halfAngle), 1.f, 1.f, radius + 32.f);
 	scene.LightProjection = ShadowPuppetVulkanProjection(projection, lightView);
-	scene.Flashlight = beam;
 	scene.Origin = origin;
 	return true;
 }

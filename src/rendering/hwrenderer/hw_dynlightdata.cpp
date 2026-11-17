@@ -192,7 +192,7 @@ void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, bool f
 	if (light->IsSpot())
 	{
 		info.flags |= LIGHTINFO_SPOT;
-		if (light == HWShadowPuppetFlashlight) info.flags |= LIGHTINFO_SHADOW_PUPPET;
+		if (HWShadowPuppetFlashlight.Contains(light)) info.flags |= LIGHTINFO_SHADOW_PUPPET;
 		if ((gl_world_relief || gl_sprite_lighting_relief || gl_emitter_lighting) && light->IsLocalFlashlight()) info.flags |= LIGHTINFO_FLASHLIGHT;
 
 		info.spotInnerAngle = (float)light->pSpotInnerAngle->Cos();

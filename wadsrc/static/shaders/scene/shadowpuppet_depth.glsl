@@ -64,8 +64,9 @@ float ShadowPuppetDepthVisibility(DynLightInfo light, vec3 position, int image)
 	// A finite flashlight aperture then subtends this many map texels.
 	const float apertureRadius = 0.4; // world units
 	float minusB = -(ShadowPuppetProjection * vec4(light.pos.xyz, 1.0)).z;
-	float coneCos = clamp(light.spotOuterAngle, 0.0, 0.9999);
-	float focalTexels = 0.5 * float(size.x) * coneCos * inversesqrt(1.0 - coneCos * coneCos);
+	// The first row's spatial length is cot(FOV/2) even after view rotation.
+	// This is the enclosing shadow projection, shared by every flashlight lobe.
+	float focalTexels = 0.5 * float(size.x) * length(transpose(ShadowPuppetProjection)[0].xyz);
 	float penumbra = apertureRadius * focalTexels * depthGap / max(minusB, 1e-4);
 	float radius = min(2.5, 0.5 + softness * (0.5 + penumbra));
 	float shadowWeight = 0.0, sumWeights = 0.0;

@@ -38,19 +38,28 @@ bool UseStructuralRelief(DynLightInfo light)
 #ifndef SHADOW_PUPPET_VERTEX_STAGE
 #include <shaders/scene/shadowpuppet_depth.glsl>
 
+// All tagged spots share one optical origin. Evaluate visibility once for
+// this fragment, while each lobe keeps its own falloff and colour.
+float cachedPuppetVisibility = -1.0;
+
 float ShadowPuppetVisibility(DynLightInfo light, vec3 position, ivec2 pixel)
 {
 	if ((light.flags & LIGHTINFO_SHADOW_PUPPET) == 0 || uShadowPuppetTexture <= 0 ||
 		data[uDataIndex].uShadowPuppetReceiver == 0)
 		return 1.0;
+	if (cachedPuppetVisibility >= 0.0) return cachedPuppetVisibility;
 	int image = uShadowPuppetTexture;
 	if (uShadowPuppetMode == 1)
 	{
 		ivec2 size = textureSize(textures[nonuniformEXT(image)], 0);
 		if (any(lessThan(pixel, ivec2(0))) || any(greaterThanEqual(pixel, size))) return 1.0;
-		return texelFetch(textures[nonuniformEXT(image)], pixel, 0).r;
+		cachedPuppetVisibility = texelFetch(textures[nonuniformEXT(image)], pixel, 0).r;
 	}
-	return ShadowPuppetDepthVisibility(light, position, image);
+	else
+	{
+		cachedPuppetVisibility = ShadowPuppetDepthVisibility(light, position, image);
+	}
+	return cachedPuppetVisibility;
 }
 #endif
 

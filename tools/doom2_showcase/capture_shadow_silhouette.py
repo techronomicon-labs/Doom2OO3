@@ -103,6 +103,19 @@ def filter_mask(mask, kernel):
     return np.asarray(Image.fromarray(mask.astype(np.uint8) * 255).filter(kernel)) != 0
 
 
+def lobe_regions(receiver, lamp, yaws):
+    """Isolate the outside spotlight and the areas lit by multiple spots in the horizontal fixture."""
+    x, y, z = (coord - start for coord, start in zip(receiver, lamp))
+    length = np.sqrt(x * x + y * y + z * z)
+    angles = np.deg2rad(yaws)[:, None, None]
+    along = x * np.cos(angles) + y * np.sin(angles)
+    # Leave a quarter-degree margin on both sides of the 14-degree outer cones.
+    inside = along > length * np.cos(np.deg2rad(13.75))
+    near = along > length * np.cos(np.deg2rad(14.25))
+    return {"outer_only": inside[0] & ~np.any(near[1:], axis=0),
+            "overlap": np.sum(inside, axis=0) >= 2}
+
+
 def verify_projection(iwad, captures, ambient, folder):
     off, state = captures[0]
     wad = Wad(iwad)
@@ -130,8 +143,11 @@ def verify_projection(iwad, captures, ambient, folder):
     visible = ~filter_mask(actor_mask, ImageFilter.MaxFilter(7))
     foreground = filter_mask(actor_mask, ImageFilter.MinFilter(7))
     baseline = np.asarray(off, dtype=np.int16)
-    direct = np.max(baseline - np.asarray(ambient, dtype=np.int16), axis=2)
-    usable = (direct >= 12) & visible & (surface != "")
+    fill = np.asarray(ambient, dtype=np.int16)
+    direct = np.max(baseline - fill, axis=2)
+    lobes = lobe_regions(receiver, lamp, state["lobe_yaws"]) if "lobe_yaws" in state else {}
+    # A single peripheral beam carries a fifth of the configured lamp power.
+    usable = (direct >= (8 if lobes else 12)) & visible & (surface != "")
     usable[:round(off.height * 0.1)] = False
     Image.fromarray(np.uint8(expected & visible) * 255).save(folder / "expected-silhouette.png")
     if sloped:
@@ -155,6 +171,22 @@ def verify_projection(iwad, captures, ambient, folder):
         foreground_error = int(np.max(np.abs(delta[foreground])))
         require(foreground_error <= 2, f"{mode} changed the foreground {texture} by {foreground_error} RGB levels")
         measured = {"foreground": {"samples": int(np.sum(foreground)), "max_channel_delta": foreground_error}}
+        if lobes:
+            shadow_pixels = np.asarray(shadow, dtype=np.int16)
+            fill_matches = np.max(np.abs(shadow_pixels - fill), axis=2) <= 2
+            lit_matches = np.max(np.abs(delta), axis=2) <= 2
+            for name, region in lobes.items():
+                opaque = usable & covered & region
+                transparent = usable & clear & region
+                blue = opaque & (fill[:, :, 2] > fill[:, :, 0] + 8)
+                counts = {}
+                for label, mask, matches in (("opaque", opaque, fill_matches), ("blue_fill", blue, fill_matches),
+                                             ("transparent", transparent, lit_matches)):
+                    total, correct = int(np.sum(mask)), int(np.sum(mask & matches))
+                    require(total >= 24 and correct >= total * .99,
+                            f"{mode} {name} {label} matched {correct}/{total} control pixels")
+                    counts[label] = {"samples": total, "matched": correct}
+                measured[name] = counts
         if sloped:
             total = int(np.sum(different))
             correct = int(np.sum((blocked == expected) & different))

@@ -937,7 +937,7 @@ void HWDrawInfo::RenderScene(FRenderState &state)
 
 	drawlists[GLDL_PLAINFLATS].DrawFlats(this, state, false);
 	state.SetShadowPuppetReceiver(false);
-	HWShadowPuppetFlashlight = nullptr;
+	HWShadowPuppetFlashlight.Count = 0;
 
 	// Part 2: masked geometry. This is set up so that only pixels with alpha>gl_mask_threshold will show
 	state.AlphaFunc(Alpha_GEqual, gl_mask_threshold);
