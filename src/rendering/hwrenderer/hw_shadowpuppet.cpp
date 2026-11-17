@@ -1,15 +1,20 @@
 #include "actorinlines.h"
 #include "a_dynlight.h"
+#include "bitmap.h"
 #include "c_cvars.h"
 #include "g_levellocals.h"
-#include "p_local.h"
-#include "r_utility.h"
-#include "r_visualtime.h"
+#include "hw_cvars.h"
 #include "hw_shadowpuppet.h"
+#include "hwrenderer/scene/hw_drawinfo.h"
+#include "hwrenderer/scene/hw_drawstructs.h"
+#include "p_local.h"
+#include "r_visualtime.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <map>
+#include <vector>
 
 CVAR(Int, gl_shadow_puppets, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
 CVAR(Int, gl_shadow_puppets_active, 0, 0);
@@ -19,128 +24,156 @@ thread_local const FDynamicLight* HWShadowPuppetFlashlight = nullptr;
 namespace
 {
 	constexpr unsigned MaxCasters = 4;
-	// Eight convex hulls have 89 rim vertices and 146 triangles in total.
-	// The capped volume cannot exceed 12 * (89 - 8) vertices per puppet.
-	constexpr unsigned VerticesPerPuppet = 438;
+	constexpr unsigned MaxMaskPieces = 4096;
 
-	struct PuppetRing
+	struct PixelRect
 	{
-		FVector3 Center;
-		float Radius;
+		int Left, Top, Right, Bottom;
 	};
 
-	template<size_t Sides, size_t RingCount>
-	void AddHull(TArray<FVector3>& mesh, const std::array<PuppetRing, RingCount>& profile, float width, float length = 1.f)
+	struct PixelEdge
 	{
-		static const auto directions = [] {
-			std::array<FVector2, Sides> ring;
-			for (size_t i = 0; i < Sides; ++i)
-			{
-				// Four-sided soles have flat sides along the forward and lateral axes.
-				const float angle = float((i + (Sides == 4 ? 0.5 : 0.0)) * (2.0 * M_PI / Sides));
-				ring[i] = FVector2(std::cos(angle), std::sin(angle));
-			}
-			return ring;
-		}();
-		std::array<std::array<FVector3, Sides>, RingCount> rings;
-		for (size_t row = 0; row < RingCount; ++row)
-			for (size_t i = 0; i < Sides; ++i)
-			{
-				const auto& radial = directions[i];
-				rings[row][i] = profile[row].Center +
-					FVector3(length * radial.X, 0.f, width * radial.Y) * profile[row].Radius;
-			}
+		int FromX, FromY, ToX, ToY;
+	};
 
-		const auto append = [&](const FVector3& a, const FVector3& b, const FVector3& c) {
-			mesh.Push(a); mesh.Push(b); mesh.Push(c);
+	struct SpriteMask
+	{
+		int Width = 0, Height = 0, Cutoff = -1;
+		std::vector<PixelRect> Rectangles;
+		std::vector<PixelEdge> Edges;
+	};
+
+	// Pixel coordinates are patch edges, with +Y down. Caps and contours
+	// both wind clockwise in that space. Internal edges between horizontal
+	// runs must never extrude, even if the next row has a different length.
+	SpriteMask ReadMask(FTexture& texture, int cutoff)
+	{
+		SpriteMask mask;
+		mask.Cutoff = cutoff;
+		if (!texture.GetImage() || texture.GetWidth() > 4096 || texture.GetHeight() > 4096)
+			return mask;
+
+		const auto bitmap = texture.GetBgraBitmap(nullptr);
+		const auto* pixels = bitmap.GetPixels();
+		const int w = bitmap.GetWidth(), h = bitmap.GetHeight(), pitch = bitmap.GetPitch();
+		if (!pixels || w <= 0 || h <= 0)
+			return mask;
+		mask.Width = w;
+		mask.Height = h;
+		const auto solid = [&](int x, int y) {
+			return x >= 0 && y >= 0 && x < w && y < h && pixels[y * pitch + x * 4 + 3] >= cutoff;
 		};
-		// Triangulate from existing rim vertices. Caps and side walls have
-		// opposite edge winding, with no additional vertices on the caps.
-		for (size_t i = 1; i + 1 < Sides; ++i)
+
+		// Merge identical runs on adjacent rows. This keeps flat areas cheap
+		// to rasterize and retains one-pixel claws, horns and enclosed holes.
+		std::vector<size_t> previous, current;
+		for (int y = 0; y < h; ++y)
 		{
-			append(rings.front()[0], rings.front()[i], rings.front()[i + 1]);
-			append(rings.back()[0], rings.back()[i + 1], rings.back()[i]);
-		}
-		for (size_t row = 1; row < RingCount; ++row)
-		{
-			const auto& low = rings[row - 1];
-			const auto& high = rings[row];
-			for (size_t i = 0; i < Sides; ++i)
+			current.clear();
+			size_t last = 0;
+			for (int x = 0; x < w;)
 			{
-				const size_t next = (i + 1) % Sides;
-				append(low[i], high[i], high[next]);
-				append(low[i], high[next], low[next]);
+				if (!solid(x, y)) { ++x; continue; }
+				const int left = x++;
+				while (x < w && solid(x, y)) ++x;
+				while (last < previous.size() && mask.Rectangles[previous[last]].Left < left) ++last;
+				if (last < previous.size() && mask.Rectangles[previous[last]].Left == left &&
+					mask.Rectangles[previous[last]].Right == x)
+				{
+					mask.Rectangles[previous[last]].Bottom = y + 1;
+					current.push_back(previous[last]);
+				}
+				else
+				{
+					if (mask.Rectangles.size() >= MaxMaskPieces) return SpriteMask{0, 0, cutoff};
+					current.push_back(mask.Rectangles.size());
+					mask.Rectangles.push_back({left, y, x, y + 1});
+				}
+			}
+			previous.swap(current);
+		}
+
+		// A boundary exists only where opacity changes across a texel edge.
+		// Merge collinear edges of the same orientation, including hole rims.
+		for (bool vertical : {false, true})
+		{
+			const int lines = vertical ? w : h, length = vertical ? h : w;
+			for (int line = 0; line <= lines; ++line)
+			{
+				const auto direction = [&](int i) {
+					return vertical ? int(solid(line - 1, i)) - int(solid(line, i)) :
+						int(solid(i, line)) - int(solid(i, line - 1));
+				};
+				for (int i = 0; i < length;)
+				{
+					const int sign = direction(i);
+					const int begin = i++;
+					if (!sign) continue;
+					while (i < length && direction(i) == sign) ++i;
+					const int from = sign > 0 ? begin : i, to = sign > 0 ? i : begin;
+					if (mask.Rectangles.size() + mask.Edges.size() >= MaxMaskPieces)
+						return SpriteMask{0, 0, cutoff};
+					mask.Edges.push_back(vertical ? PixelEdge{line, from, line, to} : PixelEdge{from, line, to, line});
+				}
 			}
 		}
+		return mask;
 	}
 
-	struct PuppetStep
+	const SpriteMask& CachedMask(FTexture& texture, int cutoff)
 	{
-		uint32_t Actor = 0;
-		FVector3 Base = {};
-		float Phase = 0.f;
-		float Strength = 0.f;
-	};
-
-	struct PuppetWalk
-	{
-		const FLevelLocals* Level = nullptr;
-		uint64_t Generation = 0;
-		uint64_t Frame = 0;
-		double Tic = 0;
-		std::array<PuppetStep, MaxCasters> Steps;
-		unsigned Count = 0;
-	};
-
-	PuppetStep UpdateStep(const AActor& actor, FVector3 base, const PuppetWalk& previous, float elapsed)
-	{
-		PuppetStep current { actor.SpawnOrder, base };
-		for (unsigned i = 0; i < previous.Count; ++i)
+		static thread_local std::map<FTexture*, SpriteMask> masks;
+		static thread_local uint64_t generation = 0;
+		const auto now = RenderVisualTime::RuntimeClock().Snapshot().Generation;
+		if (now != generation || (masks.size() >= 128 && masks.find(&texture) == masks.end()))
 		{
-			const auto& last = previous.Steps[i];
-			if (last.Actor != actor.SpawnOrder)
-				continue;
-			const auto delta = base - last.Base;
-			const float travelled = std::hypot(delta.X, delta.Z);
-			// A warp or dropped simulation samples are not a walking stride.
-			if (travelled > 8.f + elapsed * 12.f)
-				break;
-			const auto motion = actor.Pos() - actor.Prev;
-			const float speed = float(std::hypot(motion.X, motion.Y));
-			const float target = std::clamp((speed - 0.10f) / 1.30f, 0.f, 1.f);
-			const float settle = 1.f - std::exp(-elapsed * (target > last.Strength ? 0.45f : 0.36f));
-			current.Strength = last.Strength + (target - last.Strength) * settle;
-			current.Phase = std::fmod(last.Phase + travelled * float(M_PI / 16.0), float(2.0 * M_PI));
-			if (current.Strength < 0.02f && target == 0.f)
-				current.Strength = 0.f;
-			break;
+			masks.clear();
+			generation = now;
 		}
-		return current;
+		auto& mask = masks[&texture];
+		if (mask.Cutoff != cutoff) mask = ReadMask(texture, cutoff);
+		return mask;
 	}
 
-	void AddImpPuppet(TArray<FVector3>& mesh, const PuppetStep& step)
+	void AddSpriteMask(HWDrawInfo& di, HWSprite& sprite, const FVector3& light, HWShadowPuppetScene& scene)
 	{
-		// Forward, height, lateral. The shoulders widen above a tapered waist.
-		AddHull<6>(mesh, std::array { PuppetRing {{0, 18, 0}, 6.5f}, PuppetRing {{0, 34, 0}, 9.4f},
-			PuppetRing {{0, 43, 0}, 7.7f} }, 1.4f);
-		AddHull<5>(mesh, std::array { PuppetRing {{2, 39, 0}, 5.0f}, PuppetRing {{2, 48, 0}, 7.1f},
-			PuppetRing {{0, 54, 0}, 4.9f} }, 1.07f);
+		const float threshold = std::clamp(float(gl_mask_sprite_threshold), 0.f, 1.f);
+		const int cutoff = std::max(1, int(std::ceil(255.f * threshold)));
+		const auto& mask = CachedMask(*sprite.texture->GetTexture(), cutoff);
+		const float du = sprite.ur - sprite.ul, dv = sprite.vb - sprite.vt;
+		if (mask.Rectangles.empty() || du == 0 || dv == 0) return;
 
-		const float swing = std::cos(step.Phase) * step.Strength;
-		const float lift = std::sin(step.Phase) * step.Strength;
-		for (const float side : { -1.f, 1.f })
+		// Use the same transform as HWSprite::CreateVertices, after frame and
+		// rotation selection, floor clipping, interpolation, crop and flips.
+		// Source alpha excludes the optional one-texel transparent GPU border.
+		FVector3 quad[4];
+		sprite.CalculateVertices(&di, quad, &di.Viewpoint.Pos);
+		const int border = sprite.texture->expandSprites() ? 1 : 0;
+		const FVector3 dx = (quad[1] - quad[0]) / (du * (mask.Width + 2 * border));
+		const FVector3 dy = (quad[2] - quad[0]) / (dv * (mask.Height + 2 * border));
+		const FVector3 origin = quad[0] + dx * (border - sprite.ul * (mask.Width + 2 * border)) +
+			dy * (border - sprite.vt * (mask.Height + 2 * border));
+		const float facing = (dx ^ dy) | (light - origin);
+		if (std::abs(facing) < 1e-8f) return;
+		const bool reverse = facing < 0;
+		const auto position = [&](int x, int y) { return origin + dx * float(x) + dy * float(y); };
+
+		scene.Triangles.Grow(unsigned(mask.Rectangles.size()) * 6);
+		for (const auto& r : mask.Rectangles)
 		{
-			const float advance = swing * side;
-			const float footLift = 2.2f * std::max(0.f, lift * side);
-			const float ankle = 0.8f + 2.5f * side + 5.2f * advance;
-			const float footSide = 5.5f * side;
-			AddHull<5>(mesh, std::array { PuppetRing {{6.2f - 3.8f * advance, 27.f, 15.5f * side}, 3.4f},
-				PuppetRing {{-0.8f, 39.f, 10.2f * side}, 5.0f} }, 0.9f);
-			AddHull<5>(mesh, std::array { PuppetRing {{ankle, 3.2f + footLift, footSide}, 3.7f},
-				PuppetRing {{0.f, 23.f, 4.5f * side}, 4.6f} }, 0.95f);
-			AddHull<4>(mesh, std::array { PuppetRing {{ankle + 1.9f, footLift, footSide}, 4.5f},
-				PuppetRing {{ankle + 0.8f, 4.8f + footLift, footSide}, 4.f} }, 1.12f, 1.8f);
+			const auto a = position(r.Left, r.Top), b = position(r.Right, r.Top);
+			const auto c = position(r.Right, r.Bottom), d = position(r.Left, r.Bottom);
+			scene.Triangles.Push(a); scene.Triangles.Push(reverse ? d : b); scene.Triangles.Push(c);
+			scene.Triangles.Push(a); scene.Triangles.Push(c); scene.Triangles.Push(reverse ? b : d);
 		}
+		scene.Edges.Grow(unsigned(mask.Edges.size()) * 2);
+		for (const auto& edge : mask.Edges)
+		{
+			const auto from = position(edge.FromX, edge.FromY), to = position(edge.ToX, edge.ToY);
+			scene.Edges.Push(reverse ? to : from);
+			scene.Edges.Push(reverse ? from : to);
+		}
+		scene.Casters.Push(sprite.actor);
 	}
 
 	FVector3 RenderPosition(const DVector3& point)
@@ -159,12 +192,13 @@ VSMatrix ShadowPuppetVulkanProjection(const VSMatrix& projection, const VSMatrix
 	return clip;
 }
 
-bool BuildShadowPuppetScene(const FRenderViewpoint& view, HWShadowPuppetScene& scene)
+bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene)
 {
+	const auto& view = di.Viewpoint;
 	if (!view.camera || !view.sector || !view.camera->player || view.camera != view.camera->player->mo)
 		return false;
 	auto& level = *view.camera->Level;
-	// A proxy from another portal group does not belong in the root geometry pass.
+	// A sprite from another portal group does not belong in the root geometry pass.
 	if (view.sector->PortalGroup != 0 || level.linePortals.Size() != 0)
 		return false;
 	for (auto& sector : level.sectors)
@@ -192,65 +226,47 @@ bool BuildShadowPuppetScene(const FRenderViewpoint& view, HWShadowPuppetScene& s
 	const DAngle pitch = *beam->pPitch;
 	const FVector3 forward(float(yaw.Cos() * pitch.Cos()), float(-pitch.Sin()), float(yaw.Sin() * pitch.Cos()));
 	const FVector3 origin = RenderPosition(beam->Pos);
-	struct Caster { AActor* Actor; FVector3 Base; float Distance; };
+	const float coneSin = float(beam->pSpotOuterAngle->Sin()), coneCos = float(beam->pSpotOuterAngle->Cos());
+	struct Caster { HWSprite* Sprite; float Distance; };
 	std::array<Caster, MaxCasters> casters {};
 	unsigned count = 0;
-	auto actors = level.GetThinkerIterator<AActor>(FName("DoomImp"));
-	while (auto* actor = actors.Next())
+	const FName imp("DoomImp");
+	// The submitted sprite is authoritative. A cosmetic floor shadow has
+	// index -1 and must never itself block the flashlight.
+	for (auto* sprite : di.drawlists[GLDL_TRANSLUCENT].sprites)
 	{
-		if (actor == view.camera || actor->health <= 0 || actor->Alpha <= 0 || actor->renderflags & RF_INVISIBLE ||
-			!actor->Sector || actor->Sector->PortalGroup != 0)
+		auto* actor = sprite->actor;
+		if (!actor || actor->health <= 0 || !actor->IsKindOf(imp) || sprite->index == -1 ||
+			sprite->modelframe || !sprite->texture || !sprite->texture->GetTexture() ||
+			sprite->OverrideShader != -1 || sprite->trans < 1.f ||
+			(actor->RenderStyle != LegacyRenderStyles[STYLE_Normal] && actor->RenderStyle != LegacyRenderStyles[STYLE_Translucent]) ||
+			(actor->renderflags & RF_SPRITETYPEMASK) != RF_FACESPRITE ||
+			sprite->RenderSurface.throughPortalMode || !actor->Sector || actor->Sector->PortalGroup != 0)
 			continue;
-		const FVector3 base = RenderPosition(actor->InterpolatedPosition(view.TicFrac));
-		const FVector3 relative = base + FVector3(0, 26, 0) - origin;
-		const float distance = relative.Length();
-		if (distance > radius + 32 || (relative | forward) < -32 ||
+		const FVector3 span(sprite->x2 - sprite->x1, sprite->z2 - sprite->z1, sprite->y2 - sprite->y1);
+		const float extent = span.Length() * 0.5f + std::hypot(sprite->offx, sprite->offy);
+		const FVector3 relative = FVector3(sprite->x1, sprite->z1, sprite->y1) + span * 0.5f - origin;
+		const float distance = relative.Length(), axial = relative | forward;
+		const float radial = (relative - forward * axial).Length();
+		if (distance > radius + extent || axial < -extent || radial * coneCos - axial * coneSin > extent ||
 			(count == MaxCasters && distance >= casters.back().Distance) ||
 			!P_CheckSight(beam->target.Get(), actor, SF_IGNOREVISIBILITY))
 			continue;
-		unsigned slot = std::min(count++, MaxCasters - 1);
+		if (std::any_of(casters.begin(), casters.begin() + count,
+			[&](const Caster& caster) { return caster.Sprite->actor == actor; })) continue;
+		unsigned slot = std::min(count, MaxCasters - 1);
 		while (slot > 0 && casters[slot - 1].Distance > distance)
 		{
 			casters[slot] = casters[slot - 1];
 			--slot;
 		}
-		casters[slot] = { actor, base, distance };
-		count = std::min(count, MaxCasters);
+		casters[slot] = { sprite, distance };
+		count = std::min(count + 1, MaxCasters);
 	}
-	if (!count)
-		return false;
-
-	// Keep only the previous presentation sample for the four selected actors.
-	// Both backends see this same state, including across a live mode change.
-	static thread_local PuppetWalk previous;
-	const auto visualTime = RenderVisualTime::RuntimeClock().Snapshot();
-	PuppetWalk current;
-	current.Level = &level;
-	current.Generation = visualTime.Generation;
-	current.Frame = visualTime.MainFrame;
-	current.Tic = level.time + std::clamp(view.TicFrac, 0.0, 1.0);
-	current.Count = count;
-	const float elapsed = float(current.Tic - previous.Tic);
-	const bool continuous = previous.Level == current.Level && previous.Generation == current.Generation &&
-		previous.Frame + 1 == current.Frame && elapsed >= 0.f && elapsed <= 4.f;
-	scene.Triangles.Grow(count * VerticesPerPuppet);
 	for (unsigned i = 0; i < count; ++i)
-	{
-		const auto& caster = casters[i];
-		current.Steps[i] = continuous ? UpdateStep(*caster.Actor, caster.Base, previous, elapsed) :
-			PuppetStep { caster.Actor->SpawnOrder, caster.Base };
-		const unsigned first = scene.Triangles.Size();
-		AddImpPuppet(scene.Triangles, current.Steps[i]);
-		const auto angles = caster.Actor->InterpolatedAngles(view.TicFrac);
-		const float cosine = float(angles.Yaw.Cos()), sine = float(angles.Yaw.Sin());
-		for (unsigned j = first; j < scene.Triangles.Size(); ++j)
-		{
-			auto& vertex = scene.Triangles[j];
-			vertex = caster.Base + FVector3(cosine * vertex.X - sine * vertex.Z, vertex.Y,
-				sine * vertex.X + cosine * vertex.Z);
-		}
-	}
-	previous = current;
+		AddSpriteMask(di, *casters[i].Sprite, origin, scene);
+	if (!scene.Triangles.Size())
+		return false;
 	const FVector3 aim = origin + forward;
 	const FVector3 up = std::abs(forward.Y) < 0.98f ? FVector3(0, 1, 0) : FVector3(0, 0, 1);
 	VSMatrix lightView = VSMatrix::identity(), projection = VSMatrix::identity();

@@ -1,4 +1,5 @@
 #include "vk_shadowpuppet_depth.h"
+#include "vk_shadowpuppet_vertices.h"
 
 #include "matrix.h"
 #include "vulkan/descriptorsets/vk_descriptorset.h"
@@ -8,9 +9,7 @@
 
 namespace
 {
-constexpr unsigned MapSize = 512;
-constexpr unsigned VertexCapacity = 4096;
-static_assert(VertexCapacity * sizeof(FVector3) <= 65536);
+constexpr unsigned MapSize = 1024;
 static_assert(sizeof(FVector3) == sizeof(float) * 3);
 
 constexpr char DepthVertexShader[] = R"(
@@ -86,11 +85,6 @@ bool VkShadowPuppetDepth::CreateResources()
 		.RenderPass(Pass.get())
 		.DebugName("PuppetDepth.Pipeline")
 		.Create(device);
-	Vertices = BufferBuilder()
-		.Size(VertexCapacity * sizeof(FVector3))
-		.Usage(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)
-		.DebugName("PuppetDepth.Vertices")
-		.Create(device);
 	auto descriptors = Fb->GetDescriptorSetManager();
 	TextureIndex = descriptors->AllocBindlessSlot(1);
 	descriptors->SetBindlessTexture(TextureIndex, Depth.View.get(), Sampler.get());
@@ -100,7 +94,7 @@ bool VkShadowPuppetDepth::CreateResources()
 int VkShadowPuppetDepth::Render(const TArray<FVector3>& triangles, const VSMatrix& lightProjection)
 {
 	const auto count = triangles.Size();
-	if (count == 0 || count > VertexCapacity || count % 3 != 0)
+	if (count == 0 || count % 3 != 0)
 		return 0;
 	if (!TriedResources && !CreateResources()) return 0;
 	if (!TextureIndex) return 0;
@@ -110,15 +104,7 @@ int VkShadowPuppetDepth::Render(const TArray<FVector3>& triangles, const VSMatri
 	auto draw = commands->GetDrawCommands();
 	commands->PushGroup(draw, "puppet.depth");
 
-	// Upload into order on the graphics queue. CmdUpdateBuffer copies the CPU
-	// input into its command during recording, so no mapped storage is reused in flight.
-	PipelineBarrier()
-		.AddBuffer(Vertices.get(), VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT)
-		.Execute(draw, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
-	draw->updateBuffer(Vertices->buffer, 0, count * sizeof(FVector3), triangles.Data());
-	PipelineBarrier()
-		.AddBuffer(Vertices.get(), VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT)
-		.Execute(draw, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT);
+	UploadShadowPuppetVertices(Fb, draw, Vertices, triangles.Data(), count * sizeof(FVector3), "PuppetDepth.Vertices");
 	VkImageTransition().AddImage(&Depth, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, false).Execute(draw);
 
 	RenderPassBegin()

@@ -821,9 +821,22 @@ void HWDrawInfo::UpdateLightmaps()
 	VisibleTiles.Result.Clear();
 }
 
+static void RemoveLegacySpriteShadows(HWDrawList& list, const TArray<const AActor*>& casters)
+{
+	// The translucent list hasn't been sorted yet. Remove only the duplicate
+	// floor billboards for actors projected successfully in this view.
+	for (unsigned i = list.Size(); i > 0; --i)
+	{
+		const auto& item = list.drawitems[i - 1];
+		if (item.rendertype != DrawType_SPRITE) continue;
+		const auto* sprite = list.sprites[item.index];
+		if (sprite->index == -1 && casters.Contains(sprite->actor))
+			list.drawitems.Delete(i - 1);
+	}
+}
+
 void HWDrawInfo::RenderScene(FRenderState &state)
 {
-	const auto &vp = Viewpoint;
 	RenderAll.Clock();
 
 	UpdateLightmaps();
@@ -867,7 +880,7 @@ void HWDrawInfo::RenderScene(FRenderState &state)
 		HWShadowPuppetScene puppet;
 		const auto& flats = drawlists[GLDL_PLAINFLATS].flats;
 		const bool simpleFlats = std::none_of(flats.begin(), flats.end(), [](const HWFlat* flat) { return flat->hacktype != 0; });
-		if (simpleFlats && (puppetMode != 1 || device->SupportsShadowPuppetStencil()) && BuildShadowPuppetScene(vp, puppet))
+		if (simpleFlats && (puppetMode != 1 || device->SupportsShadowPuppetStencil()) && BuildShadowPuppetScene(*this, puppet))
 		{
 			int visibility = 0;
 			if (puppetMode == 1)
@@ -880,7 +893,7 @@ void HWDrawInfo::RenderScene(FRenderState &state)
 				state.EnableTexture(gl_texture);
 				state.SetColorMask(true);
 				const auto clip = ShadowPuppetVulkanProjection(VPUniforms.mProjectionMatrix, VPUniforms.mViewMatrix);
-				visibility = device->RenderShadowPuppetStencil(puppet.Triangles, puppet.Origin, clip, screen->mSceneViewport);
+				visibility = device->RenderShadowPuppetStencil(puppet.Triangles, puppet.Edges, puppet.Origin, clip, screen->mSceneViewport);
 			}
 			else
 			{
@@ -888,6 +901,7 @@ void HWDrawInfo::RenderScene(FRenderState &state)
 			}
 			if (visibility > 0)
 			{
+				RemoveLegacySpriteShadows(drawlists[GLDL_TRANSLUCENT], puppet.Casters);
 				VPUniforms.ShadowPuppetTexture = visibility;
 				VPUniforms.ShadowPuppetMode = puppetMode;
 				VPUniforms.ShadowPuppetSoftness = gl_shadow_puppet_softness;

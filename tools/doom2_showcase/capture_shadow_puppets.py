@@ -12,6 +12,7 @@ from PIL import Image, ImageChops, ImageDraw
 
 from capture_relief import fixed_pose, require, sha256
 from capture_stageb_lighting import differences, percentiles
+from capture_shadow_silhouette import verify_frame_change, verify_projection
 from shadow_puppets import MAP_NAME, PACK_NAME
 
 
@@ -24,11 +25,18 @@ VIEWS = {
     "contact": ((-5, 0, 135, 13), 2, True),
     "no-flashlight": ((42, -54, 132, 3), 2, False),
 }
-DEFAULT_CASES = ("spawn", "stationary", "moving", "no-flashlight")
+# Fixed actor frame, yaw, native sprite lump and expected horizontal flip.
+SILHOUETTE_POSES = {
+    "silhouette-a": ("A", 270, "TROOA1", False),
+    "silhouette-g": ("G", 270, "TROOG1", False),
+    "silhouette-mirror": ("G", 315, "TROOG2G8", True),
+}
+VIEWS.update({name: ((-16, -94, 90, 0), 2, True) for name in SILHOUETTE_POSES})
+DEFAULT_CASES = ("spawn", "stationary", "moving", "no-flashlight", *SILHOUETTE_POSES)
 ADDONS = ("DoomII-NormalPBR.pk3", "DoomII-SpritePBR.pk3", "Local-Flashlight.pk3", PACK_NAME)
 
 
-def write_view(path, case):
+def write_view(path, case, ambient_only=False):
     (x, y, yaw, pitch), tic, flashlight = VIEWS[case]
     script = '''version "4.10"
 class ShadowPuppetCaptureView : EventHandler
@@ -49,6 +57,7 @@ class ShadowPuppetCaptureView : EventHandler
             let room = SDVKShadowLabHandler(EventHandler.Find("SDVKShadowLabHandler"));
             if (room == null || room.Walker == null) return;
             let actor = room.Walker;
+            CAPTURE_ACTOR
             Console.Printf("PUPPET_CAPTURE walker %.4f %.4f %.4f yaw %.4f",
                 actor.Pos.X, actor.Pos.Y, actor.Pos.Z, actor.Angle);
             room.Walker = null;
@@ -57,9 +66,27 @@ class ShadowPuppetCaptureView : EventHandler
     }
 }
 '''
-    beam_action = "lamp.Enabled[0] = true" if flashlight else "lamp.ClearPlayer(0)"
+    if case in SILHOUETTE_POSES:
+        frame, actor_yaw, _, _ = SILHOUETTE_POSES[case]
+        script += f'''
+class ShadowPuppetCaptureImp : DoomImp
+{{
+    States {{ CapturePose: TROO {frame} -1; Stop; }}
+}}
+'''
+        replace_actors = f'''
+            room.Walker = null;
+            let actors = ThinkerIterator.Create("SDVKShadowLabImp");
+            Actor original;
+            while ((original = Actor(actors.Next())) != null) original.Destroy();
+            actor = Actor.Spawn("ShadowPuppetCaptureImp", (0, 6, 0), NO_REPLACE);
+            actor.A_SetAngle({actor_yaw});
+            actor.SetStateLabel("CapturePose");'''
+    else:
+        replace_actors = ""
+    beam_action = "lamp.Enabled[0] = true" if flashlight and not ambient_only else "lamp.ClearPlayer(0)"
     for name, value in {"EYE_X": x, "EYE_Y": y, "YAW": yaw, "PITCH": pitch,
-                        "SAMPLE_TIC": tic, "FLASHLIGHT": beam_action}.items():
+                        "SAMPLE_TIC": tic, "FLASHLIGHT": beam_action, "CAPTURE_ACTOR": replace_actors}.items():
         script = script.replace(name, str(value))
     with ZipFile(path, "w") as archive:
         archive.writestr(ZipInfo("MAPINFO"), 'GameInfo { AddEventHandlers = "ShadowPuppetCaptureView" }\n',
@@ -67,9 +94,10 @@ class ShadowPuppetCaptureView : EventHandler
         archive.writestr(ZipInfo("ZSCRIPT"), script, compress_type=ZIP_DEFLATED)
 
 
-def capture(args, case, mode, fixture, exe, iwad, addons):
+def capture(args, case, mode, fixture, exe, iwad, addons, ambient_only=False):
     pose, tic, flashlight = VIEWS[case]
-    folder = args.out / case / MODES[mode].lower()
+    flashlight = flashlight and not ambient_only
+    folder = args.out / case / ("ambient" if ambient_only else MODES[mode].lower())
     folder.mkdir(parents=True)
     ini = folder / "clean.ini"
     ini.write_text("[GlobalSettings]\nvk_rayquery=false\nvid_fullscreen=false\n", encoding="ascii")
@@ -84,7 +112,7 @@ def capture(args, case, mode, fixture, exe, iwad, addons):
             "-sdvkobservegpu", "-sdvkobservequit", "+vid_rendermode", "4", "+vid_setsize", width, height,
             "+gl_levelmesh", "false", "+gl_ubershaders", "false", "+gl_raytrace", "false", "+lm_dynlights", "false",
             "+gl_light_shadows", "0", "+gl_multisample", str(args.msaa), "+gl_lights", "true", "+gl_ssao", "0",
-            "+gl_spritelight", "2", "+gl_light_sprites", "true",
+            "+gl_spritelight", "2", "+gl_light_sprites", "true", "+r_actorspriteshadow", "0",
             "+gl_bloom", "false", "+gl_emitter_lighting", "false", "+gl_world_relief", "true",
             "+gl_sprite_lighting_relief", "true", "+gl_shadow_puppets", str(mode),
             "+gl_shadow_puppet_softness", str(args.depth_softness),
@@ -93,6 +121,9 @@ def capture(args, case, mode, fixture, exe, iwad, addons):
             "+cl_capfps", str(not args.timing).lower(), "+vid_vsync", "false", "+vid_maxfps", "0",
             "+screenshot_type", "png", "+screenshot_quiet", "true", "+map", MAP_NAME]
     log = folder / "engine.log"
+    if case in SILHOUETTE_POSES:
+        argv += ["+sdvk_fl_offset_y", "16", "+sdvk_fl_range", "720", "+sdvk_fl_horizontal", "84",
+                 "+sdvk_fl_vertical", "84", "+gl_spriteclip", "0"]
     with log.open("wb") as stream:
         subprocess.run(argv, cwd=exe.parent, stdout=stream, stderr=subprocess.STDOUT, timeout=60, check=True)
     messages = log.read_text(encoding="utf-8", errors="replace")
@@ -127,6 +158,20 @@ def capture(args, case, mode, fixture, exe, iwad, addons):
     report = {"argv": argv, "build": build, "camera": camera, "walker_pose": walker_pose,
               "scene": frames[-1]["shadow_puppets"], "level_tic": frames[-1]["level_tic"],
               "cpu_render_view_ms": percentiles([frame["cpu_render_view_ms"] for frame in frames])}
+    if case in SILHOUETTE_POSES:
+        _, actor_yaw, texture, mirror = SILHOUETTE_POSES[case]
+        sources = {(row["data"]["material"], row["data"]["surface"]["uv_mirror_x"])
+                   for row in raw["records"] if row["kind"] == "sprite-basis"}
+        require(sources == {(texture, mirror)} and walker_pose == [0, 6, 0, actor_yaw],
+                f"Unexpected submitted actor or texture for {case}: {sources}, {walker_pose}")
+        report["source_sprite"] = texture
+        report["source_mirrored"] = mirror
+        if flashlight:
+            sources = [row["data"]["light"] for row in raw["records"] if row["kind"] == "light-query"
+                       and row["data"].get("light", {}).get("spot")]
+            require(sources and all(light["position"] == [0, -78, 29] for light in sources),
+                    f"Unexpected flashlight position in {folder}")
+            report["light_origin"] = sources[0]["position"]
     gpu = {}
     for row in raw["records"]:
         if row["kind"] == "timing" and row["data"].get("clock") == "gpu":
@@ -223,13 +268,25 @@ def main():
         report["inputs"] = {str(path): sha256(path) for path in (exe, iwad, *addons)}
         report["runtime_pk3"] = {path.name: sha256(path) for path in sorted(exe.parent.glob("*.pk3"))}
         report["capture_source_sha256"] = sha256(Path(__file__))
+        report["sprite_projection_source_sha256"] = sha256(Path(__file__).with_name("capture_shadow_silhouette.py"))
+        witnesses = {}
         for case in cases:
             fixture = args.out / f"{case}-view.pk3"
             write_view(fixture, case)
             captures = [capture(args, case, mode, fixture, exe, iwad, addons) for mode in range(len(MODES))]
             report["cases"][case] = {"captures": {mode: shot[1] for mode, shot in zip(MODES, captures)},
                                      "comparison": compare(args.out, case, captures)}
+            if case in SILHOUETTE_POSES:
+                ambient_fixture = args.out / f"{case}-ambient-view.pk3"
+                write_view(ambient_fixture, case, ambient_only=True)
+                ambient, control = capture(args, case, 0, ambient_fixture, exe, iwad, addons, ambient_only=True)
+                report["cases"][case]["ambient"] = control
+                metrics, witnesses[case] = verify_projection(iwad, captures, ambient, args.out / case)
+                report["cases"][case]["sprite_projection"] = metrics
             print(f"{case} passed", flush=True)
+        if "silhouette-a" in witnesses and "silhouette-g" in witnesses:
+            report["fixed_position_frame_change"] = verify_frame_change(witnesses["silhouette-a"],
+                                                                        witnesses["silhouette-g"])
         report["status"] = "captured_pending_owner_review"
     except (KeyError, OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         report["error"] = str(error)

@@ -1,4 +1,5 @@
 #include "vk_shadowpuppet_stencil.h"
+#include "vk_shadowpuppet_vertices.h"
 
 #include "intrect.h"
 #include "matrix.h"
@@ -8,17 +9,13 @@
 #include "vulkan/vk_renderstate.h"
 
 #include <algorithm>
-#include <array>
-#include <map>
 
 namespace
 {
 constexpr auto VisibilityFormat = VK_FORMAT_R8_UNORM;
 constexpr auto VisibilityUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-constexpr unsigned VertexCapacity = 4096;
 constexpr auto DepthStages = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
 constexpr auto DepthAccess = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-static_assert(VertexCapacity * sizeof(FVector4) <= 65536);
 static_assert(sizeof(FVector4) == sizeof(float) * 4);
 
 constexpr char VolumeVertexShader[] = R"(
@@ -53,14 +50,6 @@ layout(location = 0) out float Visibility;
 void main() { Visibility = 0.0; }
 )";
 
-using Point = std::array<float, 3>;
-using Edge = std::pair<Point, Point>;
-
-Point EdgePoint(FVector3 point)
-{
-	return { point.X, point.Y, point.Z };
-}
-
 FVector4 Homogeneous(FVector3 position, float w)
 {
 	return { position.X, position.Y, position.Z, w };
@@ -73,42 +62,25 @@ void AddTriangle(TArray<FVector4>& output, FVector4 a, FVector4 b, FVector4 c)
 	output.Push(c);
 }
 
-void BuildVolume(TArray<FVector4>& output, const TArray<FVector3>& triangles, FVector3 light)
+void BuildVolume(TArray<FVector4>& output, const TArray<FVector3>& triangles, const TArray<FVector3>& edges, FVector3 light)
 {
-	std::map<Edge, unsigned> silhouette;
-	for (unsigned i = 0; i + 2 < triangles.Size(); i += 3)
+	output.Grow(2 * triangles.Size() + 3 * edges.Size());
+	for (unsigned i = 0; i < triangles.Size(); i += 3)
 	{
 		auto a = triangles[i], b = triangles[i + 1], c = triangles[i + 2];
-		if ((((b - a) ^ (c - a)) | (light - a)) <= 0.0f) continue;
-
-		// Each light-facing triangle forms the near cap and the opposite-winding
-		// far cap. Directions with w=0 close the volume at infinity.
+		// The opaque sprite pixels form the near cap. The opposite-winding
+		// cap at infinity keeps the z-fail count valid when the view intersects it.
 		AddTriangle(output, Homogeneous(a, 1), Homogeneous(b, 1), Homogeneous(c, 1));
 		AddTriangle(output, Homogeneous(c - light, 0), Homogeneous(b - light, 0), Homogeneous(a - light, 0));
-		const Point cap[3] = { EdgePoint(a), EdgePoint(b), EdgePoint(c) };
-		for (unsigned edge = 0; edge < 3; ++edge)
-		{
-			const auto& from = cap[edge];
-			const auto& to = cap[(edge + 1) % 3];
-			auto opposite = silhouette.find({ to, from });
-			if (opposite == silhouette.end())
-				++silhouette[{ from, to }];
-			else if (--opposite->second == 0)
-				silhouette.erase(opposite);
-		}
 	}
 
-	// Edges shared by two facing triangles cancel. Cap boundary edges each
-	// extrude into a quad whose winding closes the corresponding near edge.
-	for (const auto& [edge, count] : silhouette)
+	// Extrude only the actual alpha boundaries, including holes. Internal
+	// strip seams never enter the volume, even when two adjacent runs differ.
+	for (unsigned i = 0; i < edges.Size(); i += 2)
 	{
-		const auto& [from, to] = edge;
-		FVector3 a(from[0], from[1], from[2]), b(to[0], to[1], to[2]);
-		for (unsigned i = 0; i < count; ++i)
-		{
-			AddTriangle(output, Homogeneous(a, 1), Homogeneous(a - light, 0), Homogeneous(b - light, 0));
-			AddTriangle(output, Homogeneous(a, 1), Homogeneous(b - light, 0), Homogeneous(b, 1));
-		}
+		auto a = edges[i], b = edges[i + 1];
+		AddTriangle(output, Homogeneous(a, 1), Homogeneous(a - light, 0), Homogeneous(b - light, 0));
+		AddTriangle(output, Homogeneous(a, 1), Homogeneous(b - light, 0), Homogeneous(b, 1));
 	}
 }
 }
@@ -171,11 +143,6 @@ void VkShadowPuppetStencil::CreatePipelines()
 			.AddressMode(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
 			.MinFilter(VK_FILTER_NEAREST).MagFilter(VK_FILTER_NEAREST).MaxLod(0)
 			.DebugName("PuppetStencil.Nearest")
-			.Create(device);
-		Vertices = BufferBuilder()
-			.Size(VertexCapacity * sizeof(FVector4))
-			.Usage(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)
-			.DebugName("PuppetStencil.Vertices")
 			.Create(device);
 	}
 
@@ -248,10 +215,10 @@ void VkShadowPuppetStencil::ResizeVisibility(int width, int height)
 	}
 }
 
-int VkShadowPuppetStencil::Render(const TArray<FVector3>& triangles, FVector3 light,
+int VkShadowPuppetStencil::Render(const TArray<FVector3>& triangles, const TArray<FVector3>& edges, FVector3 light,
 	const VSMatrix& cameraProjection, const IntRect& viewport)
 {
-	if (!Supported() || triangles.Size() == 0 || triangles.Size() % 3 != 0) return 0;
+	if (!Supported() || triangles.Size() == 0 || triangles.Size() % 3 != 0 || edges.Size() == 0 || edges.Size() % 2 != 0) return 0;
 	auto buffers = Fb->GetBuffers();
 	auto& sceneDepth = buffers->SceneDepthStencil;
 	const int width = buffers->GetWidth(), height = buffers->GetHeight();
@@ -260,8 +227,7 @@ int VkShadowPuppetStencil::Render(const TArray<FVector3>& triangles, FVector3 li
 	if (x0 >= x1 || y0 >= y1 || sceneDepth.Layout != VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) return 0;
 
 	TArray<FVector4> volume;
-	BuildVolume(volume, triangles, light);
-	if (volume.Size() == 0 || volume.Size() > VertexCapacity) return 0;
+	BuildVolume(volume, triangles, edges, light);
 	const auto samples = buffers->GetSceneSamples();
 	const bool newPass = !Pass || Samples != samples;
 	if (newPass || !Visibility.Image || Visibility.Image->width != width || Visibility.Image->height != height)
@@ -287,11 +253,7 @@ int VkShadowPuppetStencil::Render(const TArray<FVector3>& triangles, FVector3 li
 	auto commands = Fb->GetCommands();
 	auto draw = commands->GetDrawCommands();
 	commands->PushGroup(draw, "puppet.stencil");
-	PipelineBarrier().AddBuffer(Vertices.get(), VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT, VK_ACCESS_TRANSFER_WRITE_BIT)
-		.Execute(draw, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
-	draw->updateBuffer(Vertices->buffer, 0, volume.Size() * sizeof(FVector4), volume.Data());
-	PipelineBarrier().AddBuffer(Vertices.get(), VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT)
-		.Execute(draw, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT);
+	UploadShadowPuppetVertices(Fb, draw, Vertices, volume.Data(), volume.Size() * sizeof(FVector4), "PuppetStencil.Vertices");
 	VkImageTransition transition;
 	transition.AddImage(&Visibility, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, false);
 	if (multisampled)

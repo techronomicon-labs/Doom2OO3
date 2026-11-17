@@ -16,7 +16,8 @@ public:
 
 	// The camera matrix produces Vulkan clip coordinates. Scene depth already
 	// contains the opaque receiver prepass. Returns the sampled visibility slot.
-	int Render(const TArray<FVector3>& triangles, FVector3 light, const VSMatrix& cameraProjection, const IntRect& viewport);
+	int Render(const TArray<FVector3>& triangles, const TArray<FVector3>& edges, FVector3 light,
+		const VSMatrix& cameraProjection, const IntRect& viewport);
 
 private:
 	void CreatePipelines();

@@ -86,7 +86,8 @@ public:
 	void ImageTransitionScene(bool unknown) override;
 	void SetActiveRenderTarget() override;
 	bool SupportsShadowPuppetStencil();
-	int RenderShadowPuppetStencil(const TArray<FVector3>& triangles, FVector3 origin, const VSMatrix& cameraProjection, const IntRect& viewport);
+	int RenderShadowPuppetStencil(const TArray<FVector3>& triangles, const TArray<FVector3>& edges, FVector3 origin,
+		const VSMatrix& cameraProjection, const IntRect& viewport);
 	int RenderShadowPuppetDepth(const TArray<FVector3>& triangles, const VSMatrix& lightProjection);
 
 	IHardwareTexture *CreateHardwareTexture(int numchannels) override;
