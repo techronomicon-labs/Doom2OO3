@@ -28,7 +28,7 @@ py tools/doom2_showcase/capture_relief.py `
 
 Use a new output directory. The batch runs the native renderer on the same camera and flashlight poses at 17°, 26° and 33° from the plane for each material. A featureless grey PBR wall with a constant neutral height exercises the same relief branch and must produce identical OFF and ON images. For a shorter run, repeat `--material` with your chosen names. Add `--depth 5 --orientation 5 --exaggeration 1.25` to capture with the launcher’s settings.
 
-To check the alignment and detailed materials at a single angle, use `--incidence 26 --material FLOOR0_1 --material FLOOR3_3 --material MODWALL1 --material SW1SKULL --material CEIL5_2`. The last material checks the stock fallback without a height binding.
+To check alignment and fine detail at a single angle, use `--incidence 26 --material FLOOR0_1 --material FLOOR3_3 --material MODWALL1 --material SW1SKULL --material CEIL5_2 --material NUKEDGE1`. `CEIL5_2` shows the pitted ceiling coating. The painted slime edge on `NUKEDGE1` checks the stock fallback without a height binding.
 
 The output includes native screenshots, labelled comparison sheets, unscaled difference PNGs, RGB difference statistics and raw renderer observations. `manifest.json` records the inputs, source and runtime identity, fixed poses, timing samples and SHA-256 hashes. CPU measurements cover `RenderView`. The Vulkan timestamps cover individual named groups, which can overlap. These short instrumented samples are a frame-cost check alongside live play. Review the unamplified screenshots and the moving flashlight in game for visual acceptance.
 

@@ -4,6 +4,8 @@ Start in Doom II Entryway and press **B** to compare emitter lighting with the l
 
 **Legacy ambient fill** controls room brightness from the original sector lighting, lightmaps, diffuse probe lighting, and map sunlight. **PBR ambient reflections** controls how strongly PBR materials reflect ambient light, including reflections from light probes where present. Both sliders range from 0 to 1 and default to 0.35 in emitter mode. Direct highlights from the flashlight and authored emitters respond to their own light settings.
 
+For an emitter-only comparison, enable emitter lighting with **B**, set both ambient sliders to zero in **F1**, and keep **Emitter intensity** at 1. Press **B** again to compare the same view with legacy lighting. Use **L** to include or remove the flashlight in either view.
+
 **Emitter intensity** controls authored room and sky lighting. Set it and both ambient sliders to zero for a flashlight-only view with visible self-emitting materials. Flashlight power, spread, and range have independent controls.
 
 The flashlight starts 16 map units forward and 12 below eye level, with a 4° upward aim. Open **Position and aim** in **Flashlight settings** to change or reset the mount.
@@ -23,7 +25,7 @@ py tools/doom2_showcase/build.py --doom2 C:\doom2.wad --relief --sprite-relief `
   -Exe .\build\windows\RelWithDebInfo\vkdoom.exe -Doom2 C:\doom2.wad -Packages .\build\emitter-addons
 ```
 
-The stock Doom II campaign and three comparison rooms support emitter lighting. Each campaign layout checks the map checksum before placing emitters. Stock levels without a visible light source still respond to the ambient controls and flashlight. Unrecognized maps use the legacy renderer unless they supply emitters. Emitter lighting starts off and uses the immediate Vulkan renderer in true color. Level mesh, ray tracing, palette rendering, powerup vision, and offscreen views use their established paths.
+The stock Doom II campaign and three comparison rooms support emitter lighting. Each campaign layout checks the map checksum before placing emitters. Stock levels without a visible light source still respond to the ambient controls and flashlight. Unrecognized maps use the legacy renderer unless they supply emitters. Emitter lighting starts off and uses the immediate Vulkan renderer in true color. Level mesh, ubershaders, dynamic lightmapping, ray tracing, palette rendering, powerup vision, and offscreen views use their established paths.
 
 ## Lighting and coverage
 
@@ -45,3 +47,7 @@ py tools/doom2_showcase/capture_stageb_lighting.py `
 ```
 
 Use a new output directory. The batch includes interior point lights, a directional courtyard, the sealed-room control, and stock Entryway. The sealed room checks for light crossing the wall, legacy ambient at zero fill, and the response to the independent flashlight.
+
+Add `--case MAP01-corridor --case MAP02-lamp --case MAP02-yard` to compare Entryway’s yellow wall strips, Underhalls’ fluorescent fixtures, and its courtyard. Each scene shows legacy lighting, zero ambient with emitters, and zero ambient with emitter intensity muted. The manifest records the matched camera poses, selected sources, native renderer identity, image differences, and file hashes.
+
+Repeat the command with `--timing`, a fresh output directory, and the cases you want to measure. Timing defaults to 120 uncapped frames at 1280 × 960 per mode, with VSync off. `--size WIDTH HEIGHT` and `--frames N` change the sample. The report records median and 95th-percentile frame spacing, CPU `RenderView` time, and individual Vulkan timestamp groups. The GPU groups measure specific passes and can overlap.

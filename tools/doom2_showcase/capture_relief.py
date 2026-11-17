@@ -42,7 +42,7 @@ EXTRA_PREVIEW_MATERIALS = {
     "FLOOR4_8": ("Bevelled floor tiles", "flat"),
     "FLAT18": ("Painted floor panels", "flat"),
     "RROCK14": ("Stone floor blocks", "flat"),
-    "CEIL5_2": ("Low-contrast stock control", "flat"),
+    "CEIL5_2": ("Pitted ceiling coating", "flat"),
     "BRONZE1": ("Bronze panels", "wall"),
     "FLOOR0_1": ("Entryway floor tiles", "flat"),
     "MODWALL1": ("Detailed machinery panel", "wall"),
@@ -54,11 +54,12 @@ MATERIALS = {
     "BRONZE2": ("Entryway wall panels", "wall"),
     "FLOOR3_3": ("Weathered floor grain", "flat"),
     "FLOOR7_1": ("Fine wood floor", "flat"),
+    "NUKEDGE1": ("Painted slime edge without relief", "wall"),
     "RROCK18": ("Dense stone aggregate", "flat"),
     "SW1SKULL": ("Carved skull switch", "wall"),
     "ZIMMER2": ("Rough stone seams", "wall"),
 }
-UNBOUND_CONTROLS = {"CEIL5_2"}
+UNBOUND_CONTROLS = {"NUKEDGE1"}
 NEUTRAL_CONTROLS = UNBOUND_CONTROLS | {"RLCTRL"}
 PREVIEW_MENU = "DoomIIReliefPreviewMenu"
 

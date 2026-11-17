@@ -14,9 +14,10 @@ import numpy as np
 from PIL import Image
 
 import build
-from capture_relief import prepare, preview_scenes
+from capture_relief import MATERIALS, NEUTRAL_CONTROLS, UNBOUND_CONTROLS, prepare, preview_scenes
 from dbp50_effective import reconstruct_rows
 import gallery
+from material_generator import Wad, family_of
 from material_profiles_v2 import build_channels, cpu_controls
 from relief_flat_profiles import height_map as flat_height_map
 from relief_wall_profiles import height_map as wall_height_map
@@ -24,6 +25,9 @@ from sprite_materials import maps_for
 from sprite_structural_relief import SpriteRelief
 from structural_relief import height_map
 from wall_materials import context as wall_context
+
+
+IWAD = Path(__file__).resolve().parents[2] / "assets" / "wads" / "doom2.wad"
 
 
 def switch_fixture():
@@ -234,6 +238,21 @@ class ShowcaseTests(unittest.TestCase):
                 menu = archive.read("MENUDEF").decode()
                 for name in names:
                     self.assertIn(f'"map {name}"', menu)
+
+    @unittest.skipUnless(IWAD.is_file(), "requires the local Doom II IWAD")
+    def test_relief_capture_controls_match_stock_height_profiles(self):
+        wad = Wad(IWAD)
+        names = UNBOUND_CONTROLS | {"CEIL5_2"}
+        rows = {row["name"]: row for row in wad.textures() + wad.flats()
+                if row["name"] in names}
+        for name in names:
+            with self.subTest(material=name):
+                row = rows[name]
+                self.assertEqual(MATERIALS[name][1], row["kind"])
+                self.assertTrue(np.all(row["pixels"][:, :, 3] == 255))
+                data, _, _ = build.world_relief(row, family_of(name, row["kind"]), {})
+                self.assertEqual(data is None, name in UNBOUND_CONTROLS)
+                self.assertEqual(data is None, name in NEUTRAL_CONTROLS)
 
     def test_entryway_tile_relief_matches_authored_source_joints(self):
         art = np.full((64, 64, 4), 255, dtype=np.uint8)
