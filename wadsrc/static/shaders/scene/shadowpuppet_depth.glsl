@@ -32,24 +32,53 @@ float ShadowPuppetDepthVisibility(DynLightInfo light, vec3 position, int image)
 	softness *= 1.0 - smoothstep(0.00075, 0.002, max(abs(depthPerTexel.x), abs(depthPerTexel.y)));
 	if (softness == 0.0) return hardVisibility;
 
-	// Compare before weighting. A texel-wide tent gives bilinear PCF at the
-	// default setting and fades taps in continuously as the footprint grows.
-	float radius = 0.5 + 0.5 * softness;
-	float visibility = 0.0, sumWeights = 0.0;
-	for (int y = -1; y <= 1; ++y)
+	// Search on both sides of an edge, including when the centre ray is lit.
+	// Each comparison uses this fragment's receiver plane. Keep the closest
+	// covered tap in image space, so unrelated blocker layers aren't averaged.
+	uint covered = 0u;
+	float nearestSquared = 1e10, depthGap = 0.0;
+	for (int y = -2; y <= 2; ++y)
 	{
-		for (int x = -1; x <= 1; ++x)
+		for (int x = -2; x <= 2; ++x)
 		{
 			ivec2 tap = center + ivec2(x, y);
-			vec2 weights = max(radius - abs(vec2(tap) + 0.5 - texelPosition), 0.0);
+			if (any(lessThan(tap, ivec2(0))) || any(greaterThanEqual(tap, size))) continue;
+			vec2 offset = vec2(tap) + 0.5 - texelPosition;
+			float receiverDepth = projected.z + dot(depthPerTexel, offset);
+			float blockerDepth = (x == 0 && y == 0) ? centerDepth : texelFetch(textures[nonuniformEXT(image)], tap, 0).r;
+			if (blockerDepth >= receiverDepth || receiverDepth > 1.0) continue;
+			covered |= 1u << uint((y + 2) * 5 + (x + 2));
+			float d2 = dot(offset, offset);
+			if (d2 < nearestSquared)
+			{
+				nearestSquared = d2;
+				depthGap = receiverDepth - blockerDepth;
+			}
+		}
+	}
+	if (covered == 0u) return 1.0;
+	if (covered == 0x1ffffffu) return 0.0;
+
+	// Perspective depth = A + B / lightViewDistance. The light origin's
+	// clip-space z is B, so depthGap / -B is 1/blockerZ - 1/receiverZ.
+	// A finite flashlight aperture then subtends this many map texels.
+	const float apertureRadius = 0.4; // world units
+	float minusB = -(ShadowPuppetProjection * vec4(light.pos.xyz, 1.0)).z;
+	float coneCos = clamp(light.spotOuterAngle, 0.0, 0.9999);
+	float focalTexels = 0.5 * float(size.x) * coneCos * inversesqrt(1.0 - coneCos * coneCos);
+	float penumbra = apertureRadius * focalTexels * depthGap / max(minusB, 1e-4);
+	float radius = min(2.5, 0.5 + softness * (0.5 + penumbra));
+	float shadowWeight = 0.0, sumWeights = 0.0;
+	for (int y = -2; y <= 2; ++y)
+	{
+		for (int x = -2; x <= 2; ++x)
+		{
+			vec2 offset = vec2(center + ivec2(x, y)) + 0.5 - texelPosition;
+			vec2 weights = max(radius - abs(offset), 0.0);
 			float weight = weights.x * weights.y;
-			if (weight == 0.0) continue;
-			tap = clamp(tap, ivec2(0), size - 1);
-			float receiverDepth = clamp(projected.z + dot(depthPerTexel, vec2(tap) + 0.5 - texelPosition), 0.0, 1.0);
-			float blockerDepth = texelFetch(textures[nonuniformEXT(image)], tap, 0).r;
-			visibility += weight * step(receiverDepth, blockerDepth);
+			if ((covered & (1u << uint((y + 2) * 5 + (x + 2)))) != 0u) shadowWeight += weight;
 			sumWeights += weight;
 		}
 	}
-	return sumWeights > 0.0 ? visibility / sumWeights : hardVisibility;
+	return sumWeights > 0.0 ? 1.0 - shadowWeight / sumWeights : hardVisibility;
 }

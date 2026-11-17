@@ -1,6 +1,6 @@
 # Shadow puppet feasibility
 
-The prototype compares two ways for a Doom II Imp to block the player's flashlight. Both use the sprite submitted by the main view that frame. A change of pose, rotation, or mirror selects the corresponding opaque texels, including gaps between limbs. The renderer maps that outline through the sprite's final UVs and world-space corners. Shadows therefore follow the same animation, placement, scale, and floor clipping the player sees. The caster has no gameplay or collision role.
+The prototype compares two ways for a Doom II Imp to block the player's flashlight. For each animated Imp in the main view, Doom selects the current frame's directional artwork and mirror as seen from the flashlight. The silhouette stands upright at the actor's interpolated position, using the selected patch's offsets, scale and floor clipping. Rays through its opaque texels cast onto real map surfaces. The two views can see different sides of the same Imp when the flashlight is close or off to one side. Modded actors that explicitly require a rolled, isometric, tilted or offset camera-facing sprite use their authored presentation geometry.
 
 | Backend | Integration in the immediate Vulkan renderer | Main risks |
 | --- | --- | --- |
@@ -13,11 +13,11 @@ The prototype compares two ways for a Doom II Imp to block the player's flashlig
 
 ## Play the comparison room
 
-Open **Play Doom II - Shadow Puppets.cmd**. The room starts in **Off**, with the flashlight on. Press **J** to cycle **Off**, **Stencil**, and **Depth** while moving. **F1** opens the mode and depth softness controls. **L** toggles the flashlight. Strafe past the stationary Imp, aim across the floor toward the steps, and track the other Imp as it turns. The blue fill on the rear right is a separate light. The overlay reports the requested mode and shows a fallback if the renderer cannot run it.
+Open **Play Doom II - Shadow Puppets.cmd**. The room starts in **Off**, with the flashlight on. A new comparison profile places the beam 12 units above eye height. Subsequent launches use the saved mount. Press **J** to cycle **Off**, **Stencil**, and **Depth** while moving. **F1** opens the settings and **L** toggles the flashlight. Strafe past the stationary Imp and aim toward the steps to see the shadow cross from a tread onto its riser. The blue fill on the rear right is a separate light.
 
 The comparison launcher selects true-colour immediate Vulkan rendering, requests 4× MSAA, and disables SSAO and the optional legacy sprite-floor shadows. In normal play an Imp that successfully casts a flashlight shadow also skips its duplicate legacy floor shadow for that view. Opaque walls and flats receive projected shadows. Masked materials, sprites, viewmodels, special vision, and portal views use their ordinary lighting. The prototype supports one circular flashlight beam. A flashlight split into several beams, multiplayer, and maps with 3D floors or linked portals fall back. Stencil needs depth clamp and a visibility attachment matching the scene's actual sample count.
 
-The comparison covers up to four living Imps submitted in the main view, with line of sight from the flashlight. A sprite outside that draw list cannot cast. Depth uses a 1024 × 1024 image (4 MiB D32 or 2 MiB D16), a 0.30-unit contact bias, and a filter that compares each tap against the receiver plane. **Depth edge softness** defaults to 1 and ranges from a hard edge at 0 to a wider filter at 2. Stencil retains hard edges at 1× and resolves actual sample coverage at higher sample counts. Its visibility storage at N× MSAA adds an N-sample 8-bit attachment beside the resolved 8-bit image.
+The comparison covers up to four living Imps submitted in the main view, with line of sight from the flashlight. The stock artwork supplies eight horizontal views. Directly above or below the sprite, its upright extent presents no area to the light. Depth uses a 1024 × 1024 image (4 MiB D32 or 2 MiB D16) and a 0.30-unit contact bias. **Depth edge softness** defaults to 1. At zero it makes a single hard comparison. Higher values estimate how far the receiver lies behind the blocker and soften the shadow over up to 5 × 5 depth texels, comparing each sample against the local receiver plane. Stencil has a hard edge and resolves actual sample coverage with MSAA.
 
 To reproduce the room with a Windows runtime built from this branch, generate current relief, sprite, and flashlight add-ons, then add the demonstration map.
 
@@ -28,7 +28,7 @@ py tools/doom2_showcase/shadow_puppets.py --out build/puppet-addons/DoomII-Shado
   -Exe .\build\windows\RelWithDebInfo\vkdoom.exe -Doom2 .\assets\wads\doom2.wad -Packages .\build\puppet-addons
 ```
 
-The native capture script takes a packaged build with `runtime`, `addons`, and `doom2.wad` alongside its launcher. Use a new output directory for each run. Its silhouette checks hold the Imp in place, change its sprite, and trace reference rays from the flashlight through the original IWAD alpha onto the floor, stair risers and rear wall. A flashlight-off capture isolates the light available to block. Comparisons exclude the visible Imp and the filtered shadow edge.
+The native capture script takes a packaged build with `runtime`, `addons`, and `doom2.wad` alongside its launcher. Use a new output directory for each run. Its silhouette checks trace reference rays through the original IWAD artwork. The `landing-raised` case looks down from an angle at a floor, sloped tread, riser and rear wall, with the flashlight at Z +12. It checks samples where the camera and lamp select different silhouettes and checks continuity across the stair edge. A flashlight-off capture isolates the light available to block.
 
 ```powershell
 py tools/doom2_showcase/capture_shadow_puppets.py --pack build/issue-2-shadow-puppets-playtest `

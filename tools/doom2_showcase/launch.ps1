@@ -124,6 +124,9 @@ if ($EmitterLighting) {
 if ($ShadowPuppets) {
     $argv += @('+gl_shadow_puppets', '0', '+r_actorspriteshadow', '0', '+gl_ssao', '0', '+gl_multisample', '4', '+crosshair', '2',
               '+bind', 'J', 'shadow_puppets_cycle', '+bind', 'F1', 'openmenu DoomIIShadowPuppetsMenu')
+    if (!(Test-Path -LiteralPath $config)) {
+        $argv += @('+sdvk_fl_offset_z', '12')
+    }
 }
 if ($Relief) {
     $argv += @('+gl_world_relief', 'true', '+gl_world_relief_depth', '5',

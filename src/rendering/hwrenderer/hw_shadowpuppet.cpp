@@ -5,10 +5,14 @@
 #include "g_levellocals.h"
 #include "hw_cvars.h"
 #include "hw_shadowpuppet.h"
+#include "hwrenderer/scene/hw_drawcontext.h"
 #include "hwrenderer/scene/hw_drawinfo.h"
 #include "hwrenderer/scene/hw_drawstructs.h"
+#include "hwrenderer/scene/hw_visualtime.h"
 #include "p_local.h"
+#include "r_state.h"
 #include "r_visualtime.h"
+#include "texturemanager.h"
 
 #include <algorithm>
 #include <array>
@@ -18,6 +22,7 @@
 
 CVAR(Int, gl_shadow_puppets, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
 CVAR(Int, gl_shadow_puppets_active, 0, 0);
+EXTERN_CVAR(Int, gl_spriteclip);
 
 thread_local const FDynamicLight* HWShadowPuppetFlashlight = nullptr;
 
@@ -135,24 +140,109 @@ namespace
 		return mask;
 	}
 
-	void AddSpriteMask(HWDrawInfo& di, HWSprite& sprite, const FVector3& light, HWShadowPuppetScene& scene)
+	struct LightSprite
+	{
+		AActor* Actor = nullptr;
+		FGameTexture* Texture = nullptr;
+		FVector3 TopLeft, Across, Down; // complete untrimmed source image
+	};
+
+	bool ResolveLightSprite(HWDrawInfo& di, HWSprite& sprite, const FVector3& light, LightSprite& card)
+	{
+		auto& actor = *sprite.actor;
+		card.Actor = &actor;
+		const bool forcedTilt = (actor.renderflags & RF_FORCEXYBILLBOARD) && sprite.RenderSurface.xyBillboard;
+		const bool cameraOffset = (actor.renderflags2 & RF2_BILLBOARDFACECAMERA) && sprite.RenderSurface.facesCamera &&
+			(sprite.offx != 0 || sprite.offy != 0);
+		if ((actor.renderflags & RF_ROLLSPRITE) || (actor.renderflags2 & RF2_ISOMETRICSPRITES) || forcedTilt || cameraOffset)
+		{
+			// These modes rotate, translate or deform the artwork out of the
+			// upright frame. Use their submitted transform and its matching UVs.
+			const float du = sprite.ur - sprite.ul, dv = sprite.vb - sprite.vt;
+			const int w = sprite.texture->GetTexture()->GetWidth(), h = sprite.texture->GetTexture()->GetHeight();
+			if (!du || !dv || w <= 0 || h <= 0) return false;
+			FVector3 quad[4];
+			sprite.CalculateVertices(&di, quad, &di.Viewpoint.Pos);
+			const int border = sprite.texture->expandSprites() ? 1 : 0;
+			const FVector3 dx = (quad[1] - quad[0]) / (du * (w + 2 * border));
+			const FVector3 dy = (quad[2] - quad[0]) / (dv * (h + 2 * border));
+			card.Texture = sprite.texture;
+			card.Across = dx * float(w);
+			card.Down = dy * float(h);
+			card.TopLeft = quad[0] + dx * (border - sprite.ul * (w + 2 * border)) +
+				dy * (border - sprite.vt * (h + 2 * border));
+			return true;
+		}
+
+		// Billboard axes in the main view are camera-relative. The blocker
+		// is observed from the lamp, with its upright axis anchored to gravity.
+		const DVector2 toActor(sprite.x - light.X, sprite.y - light.Z);
+		const double distance = toActor.Length();
+		if (distance < 0.001) return false; // a vertical card is edge-on directly above or below
+		const FVector3 right(float(toActor.Y / distance), 0.f, float(-toActor.X / distance));
+		auto* texture = sprite.texture;
+		bool mirrorX = sprite.RenderSurface.uvMirrorX;
+		if (!actor.picnum.isValid())
+		{
+			bool frameMirror = false;
+			const auto angle = actor.GetSpriteAngle(toActor.Angle(), di.Viewpoint.TicFrac);
+			const auto patch = sprites[actor.sprite].GetSpriteFrame(actor.frame, -1, angle, &frameMirror,
+				!!(actor.renderflags & RF_SPRITEFLIP));
+			if (!patch.isValid()) return false;
+			texture = TexMan.GetGameTexture(patch, false);
+			if (!texture || !texture->isValid() || !texture->GetTexture()) return false;
+			mirrorX ^= frameMirror != sprite.RenderSurface.frameMirrored;
+		}
+
+		const double fraction = HWVisualInterpolationFraction(di.drawctx->portalState.RenderContext, di.Viewpoint.TicFrac);
+		const auto actorScale = actor.InterpolatedScale(fraction);
+		auto scale = actorScale;
+		if ((actor.renderflags2 & RF2_SQUAREPIXELS) && !(actor.renderflags2 & RF2_STRETCHPIXELS))
+		{
+			const double stretch = std::sqrt(di.Level->pixelstretch);
+			scale.X *= stretch;
+			scale.Y /= stretch;
+		}
+		if (!scale.X || !scale.Y) return false;
+		const auto& positioning = texture->GetSpritePositioning(1);
+		HWSprite clip{};
+		const auto rect = positioning.GetSpriteRect();
+		clip.z1 = sprite.z - float(scale.Y * rect.top);
+		clip.z2 = clip.z1 - float(scale.Y * rect.height);
+		const float spriteHeight = float(actorScale.Y * (clip.z1 - clip.z2));
+		// The camera's anamorphic clipping mode (-1) keeps a physical
+		// floor anchor for the lamp; its view-dependent warp is display-only.
+		if (spriteHeight > 0 && (gl_spriteclip > 0 || gl_spriteclip == -1))
+			clip.PerformSpriteClipAdjustment(&actor, actor.InterpolatedPosition(di.Viewpoint.TicFrac).XY(), spriteHeight);
+		const float clipOffset = clip.z1 - (sprite.z - float(scale.Y * rect.top));
+
+		// Native placement uses the authored texture origin before GPU border
+		// expansion and trimming. Mirroring about that origin keeps the feet
+		// registered when adjacent rotations have different sizes or offsets.
+		card.Texture = texture;
+		const float horizontal = float(scale.X) * (mirrorX ? -1.f : 1.f);
+		card.Across = right * (horizontal * texture->GetDisplayWidth());
+		card.Down = FVector3(0.f, -float(scale.Y) * texture->GetDisplayHeight(), 0.f);
+		card.TopLeft = FVector3(sprite.x, sprite.z + clipOffset + sprite.offy, sprite.y)
+			- right * (sprite.offx + horizontal * texture->GetDisplayLeftOffset(r_spriteadjustHW));
+		card.TopLeft.Y += float(scale.Y) * texture->GetDisplayTopOffset(r_spriteadjustHW);
+		if (sprite.RenderSurface.uvMirrorY)
+		{
+			// HWSprite swaps V within its trimmed quad, retaining that quad's bounds.
+			card.TopLeft.Y = clip.z1 + clip.z2 + 2.f * sprite.offy - card.TopLeft.Y;
+			card.Down = -card.Down;
+		}
+		return true;
+	}
+
+	void AddSpriteMask(const LightSprite& card, const FVector3& light, HWShadowPuppetScene& scene)
 	{
 		const float threshold = std::clamp(float(gl_mask_sprite_threshold), 0.f, 1.f);
 		const int cutoff = std::max(1, int(std::ceil(255.f * threshold)));
-		const auto& mask = CachedMask(*sprite.texture->GetTexture(), cutoff);
-		const float du = sprite.ur - sprite.ul, dv = sprite.vb - sprite.vt;
-		if (mask.Rectangles.empty() || du == 0 || dv == 0) return;
-
-		// Use the same transform as HWSprite::CreateVertices, after frame and
-		// rotation selection, floor clipping, interpolation, crop and flips.
-		// Source alpha excludes the optional one-texel transparent GPU border.
-		FVector3 quad[4];
-		sprite.CalculateVertices(&di, quad, &di.Viewpoint.Pos);
-		const int border = sprite.texture->expandSprites() ? 1 : 0;
-		const FVector3 dx = (quad[1] - quad[0]) / (du * (mask.Width + 2 * border));
-		const FVector3 dy = (quad[2] - quad[0]) / (dv * (mask.Height + 2 * border));
-		const FVector3 origin = quad[0] + dx * (border - sprite.ul * (mask.Width + 2 * border)) +
-			dy * (border - sprite.vt * (mask.Height + 2 * border));
+		const auto& mask = CachedMask(*card.Texture->GetTexture(), cutoff);
+		if (mask.Rectangles.empty()) return;
+		const FVector3 dx = card.Across / float(mask.Width), dy = card.Down / float(mask.Height);
+		const FVector3 origin = card.TopLeft;
 		const float facing = (dx ^ dy) | (light - origin);
 		if (std::abs(facing) < 1e-8f) return;
 		const bool reverse = facing < 0;
@@ -173,7 +263,7 @@ namespace
 			scene.Edges.Push(reverse ? to : from);
 			scene.Edges.Push(reverse ? from : to);
 		}
-		scene.Casters.Push(sprite.actor);
+		scene.Casters.Push(card.Actor);
 	}
 
 	FVector3 RenderPosition(const DVector3& point)
@@ -227,7 +317,7 @@ bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene)
 	const FVector3 forward(float(yaw.Cos() * pitch.Cos()), float(-pitch.Sin()), float(yaw.Sin() * pitch.Cos()));
 	const FVector3 origin = RenderPosition(beam->Pos);
 	const float coneSin = float(beam->pSpotOuterAngle->Sin()), coneCos = float(beam->pSpotOuterAngle->Cos());
-	struct Caster { HWSprite* Sprite; float Distance; };
+	struct Caster { LightSprite Card; float Distance; };
 	std::array<Caster, MaxCasters> casters {};
 	unsigned count = 0;
 	const FName imp("DoomImp");
@@ -243,9 +333,11 @@ bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene)
 			(actor->renderflags & RF_SPRITETYPEMASK) != RF_FACESPRITE ||
 			sprite->RenderSurface.throughPortalMode || !actor->Sector || actor->Sector->PortalGroup != 0)
 			continue;
-		const FVector3 span(sprite->x2 - sprite->x1, sprite->z2 - sprite->z1, sprite->y2 - sprite->y1);
-		const float extent = span.Length() * 0.5f + std::hypot(sprite->offx, sprite->offy);
-		const FVector3 relative = FVector3(sprite->x1, sprite->z1, sprite->y1) + span * 0.5f - origin;
+		LightSprite card;
+		if (!ResolveLightSprite(di, *sprite, origin, card)) continue;
+		const FVector3 span = card.Across + card.Down;
+		const float extent = span.Length() * 0.5f;
+		const FVector3 relative = card.TopLeft + span * 0.5f - origin;
 		const float distance = relative.Length(), axial = relative | forward;
 		const float radial = (relative - forward * axial).Length();
 		if (distance > radius + extent || axial < -extent || radial * coneCos - axial * coneSin > extent ||
@@ -253,18 +345,18 @@ bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene)
 			!P_CheckSight(beam->target.Get(), actor, SF_IGNOREVISIBILITY))
 			continue;
 		if (std::any_of(casters.begin(), casters.begin() + count,
-			[&](const Caster& caster) { return caster.Sprite->actor == actor; })) continue;
+			[&](const Caster& caster) { return caster.Card.Actor == actor; })) continue;
 		unsigned slot = std::min(count, MaxCasters - 1);
 		while (slot > 0 && casters[slot - 1].Distance > distance)
 		{
 			casters[slot] = casters[slot - 1];
 			--slot;
 		}
-		casters[slot] = { sprite, distance };
+		casters[slot] = { card, distance };
 		count = std::min(count + 1, MaxCasters);
 	}
 	for (unsigned i = 0; i < count; ++i)
-		AddSpriteMask(di, *casters[i].Sprite, origin, scene);
+		AddSpriteMask(casters[i].Card, origin, scene);
 	if (!scene.Triangles.Size())
 		return false;
 	const FVector3 aim = origin + forward;

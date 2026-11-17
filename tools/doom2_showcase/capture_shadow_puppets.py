@@ -2,7 +2,7 @@
 
 import argparse
 import json
-from math import isclose
+from math import cos, isclose, radians, sin
 from pathlib import Path
 import re
 import subprocess
@@ -12,7 +12,8 @@ from PIL import Image, ImageChops, ImageDraw
 
 from capture_relief import fixed_pose, require, sha256
 from capture_stageb_lighting import differences, percentiles
-from capture_shadow_silhouette import verify_frame_change, verify_projection
+from capture_shadow_silhouette import reference_room, verify_frame_change, verify_projection
+from gallery import wad
 from shadow_puppets import MAP_NAME, PACK_NAME
 
 
@@ -30,8 +31,10 @@ SILHOUETTE_POSES = {
     "silhouette-a": ("A", 270, "TROOA1", False),
     "silhouette-g": ("G", 270, "TROOG1", False),
     "silhouette-mirror": ("G", 315, "TROOG2G8", True),
+    "landing-raised": ("G", 263, "TROOG2G8", True),
 }
 VIEWS.update({name: ((-16, -94, 90, 0), 2, True) for name in SILHOUETTE_POSES})
+VIEWS["landing-raised"] = ((-36, -37, 62, 12), 2, True)
 DEFAULT_CASES = ("spawn", "stationary", "moving", "no-flashlight", *SILHOUETTE_POSES)
 ADDONS = ("DoomII-NormalPBR.pk3", "DoomII-SpritePBR.pk3", "Local-Flashlight.pk3", PACK_NAME)
 
@@ -89,6 +92,9 @@ class ShadowPuppetCaptureImp : DoomImp
                         "SAMPLE_TIC": tic, "FLASHLIGHT": beam_action, "CAPTURE_ACTOR": replace_actors}.items():
         script = script.replace(name, str(value))
     with ZipFile(path, "w") as archive:
+        if case == "landing-raised":
+            archive.writestr(ZipInfo(f"maps/{MAP_NAME}.wad"), wad(MAP_NAME, reference_room(True).text()),
+                             compress_type=ZIP_DEFLATED)
         archive.writestr(ZipInfo("MAPINFO"), 'GameInfo { AddEventHandlers = "ShadowPuppetCaptureView" }\n',
                          compress_type=ZIP_DEFLATED)
         archive.writestr(ZipInfo("ZSCRIPT"), script, compress_type=ZIP_DEFLATED)
@@ -123,7 +129,8 @@ def capture(args, case, mode, fixture, exe, iwad, addons, ambient_only=False):
     log = folder / "engine.log"
     if case in SILHOUETTE_POSES:
         argv += ["+sdvk_fl_offset_y", "16", "+sdvk_fl_range", "720", "+sdvk_fl_horizontal", "84",
-                 "+sdvk_fl_vertical", "84", "+gl_spriteclip", "0"]
+                 "+sdvk_fl_vertical", "84", "+gl_spriteclip", "0", "+sdvk_fl_offset_x", "16",
+                 "+sdvk_fl_offset_z", "12" if case == "landing-raised" else "-12"]
     with log.open("wb") as stream:
         subprocess.run(argv, cwd=exe.parent, stdout=stream, stderr=subprocess.STDOUT, timeout=60, check=True)
     messages = log.read_text(encoding="utf-8", errors="replace")
@@ -166,10 +173,17 @@ def capture(args, case, mode, fixture, exe, iwad, addons, ambient_only=False):
                 f"Unexpected submitted actor or texture for {case}: {sources}, {walker_pose}")
         report["source_sprite"] = texture
         report["source_mirrored"] = mirror
+        report["sloped_receiver"] = case == "landing-raised"
+        report["light_sprite"] = "TROOG1" if case == "landing-raised" else texture
+        report["light_sprite_mirrored"] = False if case == "landing-raised" else mirror
         if flashlight:
             sources = [row["data"]["light"] for row in raw["records"] if row["kind"] == "light-query"
                        and row["data"].get("light", {}).get("spot")]
-            require(sources and all(light["position"] == [0, -78, 29] for light in sources),
+            heading = radians(yaw)
+            expected = (x + 16 * (cos(heading) + sin(heading)), y + 16 * (sin(heading) - cos(heading)),
+                        camera["position"][2] + (12 if case == "landing-raised" else -12))
+            require(sources and all(all(isclose(a, b, abs_tol=1e-4) for a, b in zip(light["position"], expected))
+                                    for light in sources),
                     f"Unexpected flashlight position in {folder}")
             report["light_origin"] = sources[0]["position"]
     gpu = {}
