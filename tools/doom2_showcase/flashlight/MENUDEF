@@ -27,9 +27,9 @@ OptionMenu "SDVKFlashlightMount"
     Slider "X offset (forward / back)", "sdvk_fl_offset_x", -16, 16, 1, 0
     Slider "Y offset (right / left)", "sdvk_fl_offset_y", -16, 16, 1, 0
     Slider "Z offset (up / down)", "sdvk_fl_offset_z", -16, 16, 1, 0
-    Slider "Yaw (right / left, degrees)", "sdvk_fl_aim_yaw", -30, 30, 2, 0
-    Slider "Pitch (up / down, degrees)", "sdvk_fl_aim_pitch", -30, 30, 2, 0
+    Slider "Aim offset right / left (degrees)", "sdvk_fl_aim_yaw", -30, 30, 2, 0
+    Slider "Aim offset up / down (degrees)", "sdvk_fl_aim_pitch", -30, 30, 2, 0
     StaticText "Positive moves forward, right or up."
-    StaticText "X/Y follow your heading; Z adjusts height."
+    StaticText "The mount and beam tilt with mouselook."
     Command "Reset position and aim", "resetcvar sdvk_fl_offset_x; resetcvar sdvk_fl_offset_y; resetcvar sdvk_fl_offset_z; resetcvar sdvk_fl_aim_yaw; resetcvar sdvk_fl_aim_pitch"
 }

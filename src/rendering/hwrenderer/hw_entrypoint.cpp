@@ -37,6 +37,7 @@
 #include "swrenderer/r_swscene.h"
 #include "swrenderer/r_renderer.h"
 #include "hw_dynlightdata.h"
+#include "hw_flashlight.h"
 #include "hw_shadowselection.h"
 #include "hw_clock.h"
 #include "flatvertices.h"
@@ -180,6 +181,7 @@ sector_t* RenderViewpoint(FRenderViewpoint& mainvp, AActor* camera, IntRect* bou
 	const auto contextType = ClassifyHWRenderContext(mainview, toscreen, side);
 
 	R_SetupFrame(mainvp, r_viewwindow, camera, side);
+	const HWFlashlightView flashlightView(contextType == HWRenderContextType::MainView && !gl_levelmesh && !gl_raytrace ? &mainvp : nullptr);
 
 	// Only the visible PF-010 MainView top-level invocation owns renderer time.
 	// Camera textures, probes, save pictures and portal recursion may consume a

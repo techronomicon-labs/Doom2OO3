@@ -1,8 +1,11 @@
 version "4.10"
 
-// Original local add-on. No replacement player/weapon classes or engine edits.
+// Simulation uses the pawn's eye. The first-person renderer places the same
+// local vectors at the presented eye between game tics.
 class SDVKLocalFlashlightBeam : SpotLight
 {
+    Vector3 HeadOffset, HeadDirection; // +X forward, +Y left, +Z up
+
     Default
     {
         Args 255, 240, 216, 180;
@@ -144,18 +147,24 @@ class SDVKLocalFlashlightHandler : EventHandler
             double fore = ReadSetting('sdvk_fl_offset_x',p,DEFAULT_OFFSET_X,-16,16);
             double side = ReadSetting('sdvk_fl_offset_y',p,0,-16,16);
             double height = ReadSetting('sdvk_fl_offset_z',p,DEFAULT_OFFSET_Z,-16,16);
-            double yaw = pawn.Angle - ReadSetting('sdvk_fl_aim_yaw',p,0,-30,30);
-            double pitch = clamp(pawn.Pitch - ReadSetting('sdvk_fl_aim_pitch',p,DEFAULT_AIM_PITCH,-30,30), -90.0, 90.0);
-            Vector3 eye = (pawn.Pos.X,pawn.Pos.Y,players[p].viewz);
-            Vector3 origin = eye + (fore*cos(pawn.Angle)+side*sin(pawn.Angle),
-                                    fore*sin(pawn.Angle)-side*cos(pawn.Angle),height);
+            double yawTrim = ReadSetting('sdvk_fl_aim_yaw',p,0,-30,30);
+            double pitchTrim = ReadSetting('sdvk_fl_aim_pitch',p,DEFAULT_AIM_PITCH,-30,30);
+            Vector3 headOffset = (fore, -side, height);
             // Keep the emitter clear of the enhanced weapon's 8-unit sample.
-            Vector3 viewForward = (cos(pawn.Pitch)*cos(pawn.Angle),cos(pawn.Pitch)*sin(pawn.Angle),-sin(pawn.Pitch));
-            Vector3 weaponSample = eye + viewForward*8;
-            if ((origin-weaponSample).Length() < 1) origin = weaponSample-viewForward;
-            Vector3 forward = (cos(pitch)*cos(yaw),cos(pitch)*sin(yaw),-sin(pitch));
-            Vector3 right = (sin(yaw),-cos(yaw),0);
-            Vector3 up = (sin(pitch)*cos(yaw),sin(pitch)*sin(yaw),cos(pitch));
+            if ((headOffset - (8,0,0)).Length() < 1) headOffset = (7,0,0);
+
+            // Construct the beam in head space so its aim and spread remain
+            // continuous even when a tilted outer lobe crosses vertical.
+            Vector3 heading = (cos(yawTrim), -sin(yawTrim), 0);
+            Vector3 right = (-sin(yawTrim), -cos(yawTrim), 0);
+            Vector3 headUp = (0, 0, 1);
+            Vector3 forward = heading*cos(pitchTrim) + headUp*sin(pitchTrim);
+            Vector3 up = headUp*cos(pitchTrim) - heading*sin(pitchTrim);
+            Vector3 viewForward = (cos(pawn.Pitch)*cos(pawn.Angle), cos(pawn.Pitch)*sin(pawn.Angle), -sin(pawn.Pitch));
+            Vector3 viewLeft = (-sin(pawn.Angle), cos(pawn.Angle), 0);
+            Vector3 viewUp = (sin(pawn.Pitch)*cos(pawn.Angle), sin(pawn.Pitch)*sin(pawn.Angle), cos(pawn.Pitch));
+            Vector3 eye = (pawn.Pos.X,pawn.Pos.Y,players[p].viewz);
+            Vector3 origin = eye + viewForward*headOffset.X + viewLeft*headOffset.Y + viewUp*headOffset.Z;
             for (int k = 0; k < MAX_BEAMS; ++k)
             {
                 if (k >= count) { DropBeam(p,k); continue; }
@@ -173,7 +182,9 @@ class SDVKLocalFlashlightHandler : EventHandler
                 double halfCount = (count-1) / 2.0;
                 double offset = count == 1 ? 0 : (k-halfCount)*difference/halfCount;
                 Vector3 axis = horizontal > vertical ? right : up;
-                Vector3 direction = forward*cos(offset)+axis*sin(offset);
+                beam.HeadOffset = headOffset;
+                beam.HeadDirection = forward*cos(offset)+axis*sin(offset);
+                Vector3 direction = viewForward*beam.HeadDirection.X + viewLeft*beam.HeadDirection.Y + viewUp*beam.HeadDirection.Z;
                 beam.SetOrigin(origin,true);
                 beam.A_SetAngle(atan2(direction.Y,direction.X),SPF_INTERPOLATE);
                 beam.A_SetPitch(-atan2(direction.Z,direction.XY.Length()),SPF_INTERPOLATE);

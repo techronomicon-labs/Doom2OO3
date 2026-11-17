@@ -34,6 +34,7 @@
 #include "actorinlines.h"
 #include "hw_drawcontext.h"
 #include "hw_dynlightdata.h"
+#include "hwrenderer/hw_flashlight.h"
 #include "hw_shadowmap.h"
 #include "hw_visibilitycache.h"
 #include "hwrenderer/scene/hw_drawinfo.h"
@@ -132,6 +133,11 @@ public:
 		FDynamicLight* light = node->lightsource;
 		if (!light->TraceActors() || !level.levelMesh || !Actor)
 			return true;
+
+		// The first-person flashlight can move between tics. Its actor trace
+		// cache is keyed to simulation movement, so trace the presented origin directly.
+		if (const auto* pose = HWPresentedFlashlight(light))
+			return !level.levelMesh->Trace(FVector3(pose->Position), -L, dist);
 
 		unsigned index = light->ActorList.SortedFind(Actor, false);
 		auto validity = BaseValidity;
@@ -245,6 +251,7 @@ void HWDrawInfo::GetDynSpriteLight(AActor *self, sun_trace_cache_t * traceCache,
 			if (observing) observationDecision = "radius-rejected";
 			float dist;
 			FVector3 L;
+			const auto origin = HWLightPosition(light);
 
 			// This is a performance critical section of code where we cannot afford to let the compiler decide whether to inline the function or not.
 			// This will do the calculations explicitly rather than calling one of AActor's utility functions.
@@ -255,12 +262,12 @@ void HWDrawInfo::GetDynSpriteLight(AActor *self, sun_trace_cache_t * traceCache,
 				if (fromgroup == togroup || fromgroup == 0 || togroup == 0) goto direct;
 
 				DVector2 offset = Level->Displacements.getOffset(fromgroup, togroup);
-				L = FVector3(x - (float)(light->X() + offset.X), y - (float)(light->Y() + offset.Y), z - (float)light->Z());
+				L = FVector3(x - (float)(origin.X + offset.X), y - (float)(origin.Y + offset.Y), z - (float)origin.Z);
 			}
 			else
 			{
 			direct:
-				L = FVector3(x - (float)light->X(), y - (float)light->Y(), z - (float)light->Z());
+				L = FVector3(x - (float)origin.X, y - (float)origin.Y, z - (float)origin.Z);
 			}
 
 			dist = (float)L.LengthSquared();
@@ -288,17 +295,12 @@ void HWDrawInfo::GetDynSpriteLight(AActor *self, sun_trace_cache_t * traceCache,
 
 					if (light->IsSpot())
 					{
-						DAngle negPitch = -*light->pPitch;
-						DAngle Angle = light->target->Angles.Yaw;
-						double xyLen = negPitch.Cos();
-						double spotDirX = -Angle.Cos() * xyLen;
-						double spotDirY = -Angle.Sin() * xyLen;
-						double spotDirZ = -negPitch.Sin();
-						double cosDir = L.X * spotDirX + L.Y * spotDirY + L.Z * spotDirZ;
+						const auto direction = HWSpotDirection(light);
+						double cosDir = -(L.X * direction.X + L.Y * direction.Y + L.Z * direction.Z);
 						frac *= (float)smoothstep(light->pSpotOuterAngle->Cos(), light->pSpotInnerAngle->Cos(), cosDir);
 					}
 
-					if (frac > 0 && (!light->shadowmapped || (self && light->TraceActors()) || screen->mShadowMap->ShadowTest(light->Pos, { x, y, z })))
+					if (frac > 0 && (!light->shadowmapped || (self && light->TraceActors()) || screen->mShadowMap->ShadowTest(origin, { x, y, z })))
 					{
 						if (observing) observationDecision = "selected";
 						lr = light->GetRed() / 255.0f;
@@ -410,7 +412,7 @@ void HWDrawInfo::GetDynSpriteLightList(AActor *self, double x, double y, double 
 				continue;
 			}
 
-			DVector3 pos = light->PosRelative(group);
+			DVector3 pos = HWLightPositionRelative(light, group);
 			float radius = (float)(light->GetRadius() + actorradius);
 			double dx = pos.X - x;
 			double dy = pos.Y - y;

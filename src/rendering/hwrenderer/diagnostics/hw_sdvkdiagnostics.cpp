@@ -26,6 +26,7 @@
 #include "hw_levelmesh.h"
 #include "flatvertices.h"
 #include "r_utility.h"
+#include "hwrenderer/hw_flashlight.h"
 #include "hwrenderer/scene/hw_drawinfo.h"
 #include "hwrenderer/scene/hw_drawcontext.h"
 #include "hwrenderer/scene/hw_portal.h"
@@ -1126,7 +1127,11 @@ void LightDecision(const HWDrawInfo* di, const AActor* actor, const FDynamicLigh
     try
     {
         const std::string query = '[' + Number(x) + ',' + Number(y) + ',' + Number(z) + ']';
-        Emit("light-query", Object().Raw("context", Context(di)).Str("path", path)
+        Object record;
+        if (const auto* pose = HWPresentedFlashlight(light))
+            record.Raw("presented_flashlight", Object().Raw("position", Vector(pose->Position))
+                .Raw("direction", Vector(pose->Direction)).Json());
+        Emit("light-query", record.Raw("context", Context(di)).Str("path", path)
             .Int("actor_tid", actor ? actor->tid : 0).Str("actor_class", actor ? actor->GetClass()->TypeName.GetChars() : "particle")
             .Raw("query_position", query).Int("portal_group", group).Str("candidate_source", source)
             .Str("decision", decision).Raw("light", light ? LightIdentity(light) : Unavailable("empty query has no light candidate")).Json(), true);

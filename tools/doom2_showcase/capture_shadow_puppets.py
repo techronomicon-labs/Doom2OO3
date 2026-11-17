@@ -2,7 +2,7 @@
 
 import argparse
 import json
-from math import cos, isclose, radians, sin
+from math import cos, dist, isclose, radians, sin
 from pathlib import Path
 import re
 import subprocess
@@ -22,6 +22,8 @@ MODES = ("Off", "Stencil", "Depth")
 VIEWS = {
     "spawn": ((-8, -66, 90, 0), 2, True),
     "spawn-three": ((-8, -66, 90, 0), 2, True),
+    "look-up": ((-8, -66, 84, -18), 2, True),
+    "look-down": ((-8, -66, 101, 18), 2, True),
     "stationary": ((42, -54, 132, 3), 2, True),
     "moving": ((-65, -57, 54, 1), 25, True),
     "contact": ((-5, 0, 135, 13), 2, True),
@@ -37,13 +39,16 @@ SILHOUETTE_POSES = {
     "penumbra": ("G", 263, "TROOG2G8", True),
 }
 SLOPED_CASES = ("landing-raised", "penumbra")
+LOOK_CASES = ("look-up", "look-down")
+SAVED_BEAM_CASES = ("spawn-three", *LOOK_CASES)
+BEAM_COUNTS = {**dict.fromkeys(SAVED_BEAM_CASES, 3), "outer-lobe": 5}
 VIEWS.update({name: ((-16, -94, 90, 0), 2, True) for name in SILHOUETTE_POSES})
 VIEWS.update({name: ((-36, -37, 62, 12), 2, True) for name in SLOPED_CASES})
-DEFAULT_CASES = ("spawn", "spawn-three", "stationary", "moving", "no-flashlight", *SILHOUETTE_POSES)
+DEFAULT_CASES = ("spawn", "spawn-three", *LOOK_CASES, "stationary", "moving", "no-flashlight", *SILHOUETTE_POSES)
 ADDONS = ("DoomII-NormalPBR.pk3", "DoomII-SpritePBR.pk3", "Local-Flashlight.pk3", PACK_NAME)
 
 
-def write_view(path, case, ambient_only=False):
+def write_view(path, case, ambient_only=False, view_pitch=False):
     (x, y, yaw, pitch), tic, flashlight = VIEWS[case]
     script = '''version "4.10"
 class ShadowPuppetCaptureView : EventHandler
@@ -55,7 +60,7 @@ class ShadowPuppetCaptureView : EventHandler
             let sector = level.PointInSector((EYE_X, EYE_Y));
             players[0].mo.SetOrigin((EYE_X, EYE_Y, sector.floorplane.ZatPoint((EYE_X, EYE_Y))), false);
             players[0].mo.A_SetAngle(YAW);
-            players[0].mo.A_SetPitch(PITCH);
+            players[0].mo.PITCH_ACTION(PITCH);
             let lamp = SDVKLocalFlashlightHandler(EventHandler.Find("SDVKLocalFlashlightHandler"));
             if (lamp != null) FLASHLIGHT;
         }
@@ -92,7 +97,8 @@ class ShadowPuppetCaptureImp : DoomImp
     else:
         replace_actors = ""
     beam_action = "lamp.Enabled[0] = true" if flashlight and not ambient_only else "lamp.ClearPlayer(0)"
-    for name, value in {"EYE_X": x, "EYE_Y": y, "YAW": yaw, "PITCH": pitch,
+    for name, value in {"EYE_X": x, "EYE_Y": y, "YAW": yaw,
+                        "PITCH_ACTION": "A_SetViewPitch" if view_pitch else "A_SetPitch", "PITCH": pitch,
                         "SAMPLE_TIC": tic, "FLASHLIGHT": beam_action, "CAPTURE_ACTOR": replace_actors}.items():
         script = script.replace(name, str(value))
     with ZipFile(path, "w") as archive:
@@ -109,19 +115,52 @@ class ShadowPuppetCaptureImp : DoomImp
         archive.writestr(ZipInfo("ZSCRIPT"), script, compress_type=ZIP_DEFLATED)
 
 
-def capture(args, case, mode, fixture, exe, iwad, addons, ambient_only=False, hard_reference=False):
+def mounted_origin(camera, forward, right, up):
+    x, y, z = camera["position"]
+    yaw, pitch = map(radians, camera["angles"][:2])
+    along = forward * cos(pitch) + up * sin(pitch)
+    return (x + along * cos(yaw) + right * sin(yaw), y + along * sin(yaw) - right * cos(yaw),
+            z - forward * sin(pitch) + up * cos(pitch))
+
+
+def verify_saved_beam(camera, queries):
+    """Compare the three rendered spots with the preserved 60.725° × 63.35° head-mounted beam."""
+    lights = {q["light"]["semantic_key"]: q["presented_flashlight"] for q in queries if "presented_flashlight" in q}
+    require(len(lights) == 3, "Missing one of the three presented local flashlight lobes")
+    origin = mounted_origin(camera, 16, 0, 16)
+    yaw, pitch = camera["angles"][:2]
+    separation = (63.35 - 60.725) / 2
+    expected = []
+    for offset in (-separation, 0, separation):
+        elevation = radians(15.75 + pitch + offset)
+        heading = radians(yaw)
+        expected.append((cos(heading) * cos(elevation), sin(heading) * cos(elevation), -sin(elevation)))
+    directions = sorted((light["direction"] for light in lights.values()), key=lambda d: d[2])
+    expected.sort(key=lambda d: d[2])
+    require(all(dist(light["position"], origin) < 1e-3 for light in lights.values()),
+            f"Flashlight mount does not follow camera at {camera['angles']}")
+    require(all(dist(actual, target) < 1e-4 for actual, target in zip(directions, expected)),
+            f"Flashlight aim does not follow camera at {camera['angles']}")
+
+
+def capture(args, case, mode, fixture, exe, iwad, addons, ambient_only=False, hard_reference=False,
+            view_pitch=False):
     pose, tic, flashlight = VIEWS[case]
     flashlight = flashlight and not ambient_only
     softness = 0.0 if hard_reference else args.depth_softness
     label = "ambient" if ambient_only else MODES[mode].lower()
     if hard_reference:
         label = "depth-hard"
+    if view_pitch:
+        label += "-view-pitch"
     folder = args.out / case / label
     folder.mkdir(parents=True)
     ini = folder / "clean.ini"
     settings = "[GlobalSettings]\nvk_rayquery=false\nvid_fullscreen=false\n"
     # The console argument parser treats a leading minus as a new switch.
-    pitch_override = {"spawn-three": -15.75, "penumbra": -20}.get(case)
+    pitch_override = -20 if case == "penumbra" else None
+    if case in SAVED_BEAM_CASES:
+        pitch_override = -15.75
     if pitch_override is not None:
         settings += f"\n[Doom.Player.Mod]\nsdvk_fl_aim_pitch={pitch_override}\n"
     ini.write_text(settings, encoding="ascii")
@@ -153,7 +192,7 @@ def capture(args, case, mode, fixture, exe, iwad, addons, ambient_only=False, ha
             argv += ["+sdvk_fl_offset_z", "12"]
     if case == "outer-lobe":
         argv += ["+sdvk_fl_aim_yaw", "28", "+sdvk_fl_aim_pitch", "0"]
-    elif case == "spawn-three":
+    elif case in SAVED_BEAM_CASES:
         argv += ["+sdvk_fl_horizontal", "60.725", "+sdvk_fl_vertical", "63.35", "+sdvk_fl_offset_x", "16",
                  "+sdvk_fl_offset_y", "0", "+sdvk_fl_offset_z", "16",
                  "+sdvk_fl_range", "306"]
@@ -182,7 +221,7 @@ def capture(args, case, mode, fixture, exe, iwad, addons, ambient_only=False, ha
     require(camera["position"][:2] == [x, y] and (camera["angles"][0] - yaw) % 360 == 0
             and camera["angles"][1] == pitch, f"Wrong camera pose in {folder}")
     active = mode if flashlight else 0
-    light_count = {"outer-lobe": 5, "spawn-three": 3}.get(case, 1) if flashlight else 0
+    light_count = BEAM_COUNTS.get(case, 1) if flashlight else 0
     require(all(
         frame["map"] == MAP_NAME and frame["hardware_renderer"] and frame["level_tic"] >= tic
         and frame["walls"] > 0 and frame["flats"] > 0 and fixed_pose(frame) == camera
@@ -195,6 +234,9 @@ def capture(args, case, mode, fixture, exe, iwad, addons, ambient_only=False, ha
     report = {"argv": argv, "build": build, "camera": camera, "walker_pose": walker_pose,
               "scene": frames[-1]["shadow_puppets"], "level_tic": frames[-1]["level_tic"],
               "cpu_render_view_ms": percentiles([frame["cpu_render_view_ms"] for frame in frames])}
+    queries = [row["data"] for row in raw["records"] if row["kind"] == "light-query"]
+    if case in LOOK_CASES:
+        verify_saved_beam(camera, queries)
     if case in SILHOUETTE_POSES:
         _, actor_yaw, texture, mirror = SILHOUETTE_POSES[case]
         sources = {(row["data"]["material"], row["data"]["surface"]["uv_mirror_x"])
@@ -212,11 +254,9 @@ def capture(args, case, mode, fixture, exe, iwad, addons, ambient_only=False, ha
         report["light_sprite"] = "TROOG1" if case in SLOPED_CASES else texture
         report["light_sprite_mirrored"] = False if case in SLOPED_CASES else mirror
         if flashlight:
-            sources = [row["data"]["light"] for row in raw["records"] if row["kind"] == "light-query"
-                       and row["data"].get("light", {}).get("spot")]
-            heading = radians(yaw)
-            expected = (x + 16 * (cos(heading) + sin(heading)), y + 16 * (sin(heading) - cos(heading)),
-                        camera["position"][2] + (12 if case in SLOPED_CASES else -12))
+            sources = [q["presented_flashlight"] for q in queries if "presented_flashlight" in q]
+            height = 12 if case in SLOPED_CASES else -12
+            expected = mounted_origin(camera, 16, 16, height)
             require(sources and all(all(isclose(a, b, abs_tol=1e-4) for a, b in zip(light["position"], expected))
                                     for light in sources),
                     f"Unexpected flashlight position in {folder}")
@@ -325,6 +365,20 @@ def main():
             captures = [capture(args, case, mode, fixture, exe, iwad, addons) for mode in range(len(MODES))]
             report["cases"][case] = {"captures": {mode: shot[1] for mode, shot in zip(MODES, captures)},
                                      "comparison": compare(args.out, case, captures)}
+            if case in LOOK_CASES:
+                # Both paths turn the rendered camera through the same angle. Only
+                # one changes pawn.Pitch, which a tic-only beam would follow.
+                view_fixture = args.out / f"{case}-view-pitch.pk3"
+                write_view(view_fixture, case, view_pitch=True)
+                for index, (image, state) in enumerate(captures):
+                    alternate, view_state = capture(args, case, index, view_fixture, exe, iwad, addons,
+                                                    view_pitch=True)
+                    require(state["camera"] == view_state["camera"] and state["walker_pose"] == view_state["walker_pose"],
+                            f"Different mounted views in {case}/{MODES[index]}")
+                    delta = ImageChops.difference(image, alternate)
+                    require(all(high <= 1 for _, high in delta.getextrema()),
+                            f"Flashlight moved relative to the rendered camera in {case}/{MODES[index]}")
+                    report["cases"][case].setdefault("view_pitch", {})[MODES[index]] = view_state
             if case in SILHOUETTE_POSES:
                 ambient_fixture = args.out / f"{case}-ambient-view.pk3"
                 write_view(ambient_fixture, case, ambient_only=True)

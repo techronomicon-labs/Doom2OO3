@@ -4,6 +4,7 @@
 #include "c_cvars.h"
 #include "g_levellocals.h"
 #include "hw_cvars.h"
+#include "hw_flashlight.h"
 #include "hw_shadowpuppet.h"
 #include "hwrenderer/scene/hw_drawcontext.h"
 #include "hwrenderer/scene/hw_drawinfo.h"
@@ -322,11 +323,10 @@ bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene)
 		if (!candidate->IsActive() || !candidate->IsLocalFlashlight() || candidate->target->master != view.camera)
 			continue;
 		if (!candidate->Sector || candidate->Sector->PortalGroup != 0 || candidate->GetRadius() <= 0.f ||
-			lights.Count == lights.MaxBeams || (lights.Count && candidate->Pos != lights.Beams[0]->Pos))
+			lights.Count == lights.MaxBeams || (lights.Count && HWLightPosition(candidate) != HWLightPosition(lights.Beams[0])))
 			return false;
-		const DAngle yaw = candidate->target->Angles.Yaw, pitch = *candidate->pPitch;
 		const DAngle outer = *candidate->pSpotOuterAngle;
-		const FVector3 direction(float(yaw.Cos() * pitch.Cos()), float(-pitch.Sin()), float(yaw.Sin() * pitch.Cos()));
+		const FVector3 direction = RenderPosition(HWSpotDirection(candidate));
 		cones[lights.Count] = { direction, candidate->GetRadius(), float(outer.Sin()), float(outer.Cos()) };
 		lights.Beams[lights.Count++] = candidate;
 		forward += direction;
@@ -350,7 +350,8 @@ bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene)
 	if (!(halfAngle > 0.0 && halfAngle < 90.0))
 		return false;
 
-	const FVector3 origin = RenderPosition(beam->Pos);
+	const FVector3 origin = RenderPosition(HWLightPosition(beam));
+	const auto* presented = HWPresentedFlashlight(beam);
 	struct Caster { LightSprite Card; float Distance; };
 	std::array<Caster, MaxCasters> casters {};
 	unsigned count = 0;
@@ -375,9 +376,12 @@ bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene)
 		const float distance = relative.Length();
 		if ((count == MaxCasters && distance >= casters.back().Distance) ||
 			std::none_of(cones.begin(), cones.begin() + lights.Count,
-				[&](const FlashlightCone& cone) { return cone.Reaches(relative, distance, extent); }) ||
-			!P_CheckSight(beam->target.Get(), actor, SF_IGNOREVISIBILITY))
+				[&](const FlashlightCone& cone) { return cone.Reaches(relative, distance, extent); }))
 			continue;
+		const bool visible = presented
+			? P_CheckSightFromRenderPoint(presented->Position, actor, {sprite->x, sprite->y, sprite->z})
+			: P_CheckSight(beam->target.Get(), actor, SF_IGNOREVISIBILITY);
+		if (!visible) continue;
 		if (std::any_of(casters.begin(), casters.begin() + count,
 			[&](const Caster& caster) { return caster.Card.Actor == actor; })) continue;
 		unsigned slot = std::min(count, MaxCasters - 1);

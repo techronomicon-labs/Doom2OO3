@@ -28,6 +28,7 @@
 #include "actorinlines.h"
 #include "a_dynlight.h"
 #include "hw_dynlightdata.h"
+#include "hw_flashlight.h"
 #include "hw_lightcompat.h"
 #include "hw_shadowselection.h"
 #include "hw_shadowpuppet.h"
@@ -35,9 +36,85 @@
 #include "v_video.h"
 #include "hwrenderer/scene/hw_drawstructs.h"
 #include "g_levellocals.h"
+#include "quaternion.h"
+#include "r_utility.h"
+#include "types.h"
 
 // If we want to share the array to avoid constant allocations it needs to be thread local unless it'd be littered with expensive synchronization.
 thread_local FDynLightData lightdata;
+
+const HWFlashlightView* HWFlashlightView::Current = nullptr;
+
+HWFlashlightView::HWFlashlightView(const FRenderViewpoint* view) : Previous(Current)
+{
+	Current = nullptr;
+	if (!view || view->showviewer || !view->sector || !view->camera ||
+		view->camera != players[consoleplayer].mo || view->camera != players[consoleplayer].camera)
+		return;
+
+	// Older flashlight packages have a complete simulation pose but no
+	// head-local mount. Continue using their original actor and angles.
+	static const FName beamName("SDVKLocalFlashlightBeam"), offsetName("HeadOffset"), directionName("HeadDirection");
+	auto* beamClass = PClass::FindClass(beamName);
+	if (!beamClass) return;
+	auto* offset = dyn_cast<PField>(beamClass->FindSymbol(offsetName, true));
+	auto* direction = dyn_cast<PField>(beamClass->FindSymbol(directionName, true));
+	if (!offset || !direction || offset->Type != TypeVector3 || direction->Type != TypeVector3 ||
+		((offset->Flags | direction->Flags) & VARF_Meta))
+		return;
+
+	const auto rotation = DQuaternion::FromAngles(view->Angles.Yaw, view->Angles.Pitch, view->Angles.Roll);
+	for (auto* light = view->ViewLevel->lights; light; light = light->next)
+	{
+		const auto* beam = light->target.Get();
+		if (!beam || beam->master != view->camera || !light->IsActive() || !light->IsSpot() ||
+			!beam->IsKindOf(beamClass) || !light->Sector || light->Sector->PortalGroup != view->sector->PortalGroup)
+			continue;
+		const auto* data = reinterpret_cast<const uint8_t*>(beam);
+		const auto& localDir = *reinterpret_cast<const DVector3*>(data + direction->Offset);
+		if (!(std::abs(localDir.LengthSquared() - 1.0) <= 1e-5)) continue;
+		const auto& localPos = *reinterpret_cast<const DVector3*>(data + offset->Offset);
+		const DVector3 origin = view->Pos + rotation * localPos;
+		if (!std::isfinite(origin.X) || !std::isfinite(origin.Y) || !std::isfinite(origin.Z) ||
+			view->ViewLevel->PointInRenderSubsector(origin)->sector->PortalGroup != light->Sector->PortalGroup)
+			continue;
+		Poses[Count++] = { light, origin, rotation * localDir };
+		if (Count == Poses.size()) break;
+	}
+	if (Count) Current = this;
+}
+
+HWFlashlightView::~HWFlashlightView()
+{
+	Current = Previous;
+}
+
+const HWFlashlightPose* HWPresentedFlashlight(const FDynamicLight* light)
+{
+	const auto* view = HWFlashlightView::Current;
+	if (view)
+		for (unsigned i = 0; i < view->Count; ++i)
+			if (view->Poses[i].Light == light) return &view->Poses[i];
+	return nullptr;
+}
+
+DVector3 HWLightPosition(const FDynamicLight* light)
+{
+	if (auto* pose = HWPresentedFlashlight(light)) return pose->Position;
+	return light->Pos;
+}
+
+DVector3 HWLightPositionRelative(const FDynamicLight* light, int portalGroup)
+{
+	return HWLightPosition(light) + light->Level->Displacements.getOffset(light->Sector->PortalGroup, portalGroup);
+}
+
+DVector3 HWSpotDirection(const FDynamicLight* light)
+{
+	if (auto* pose = HWPresentedFlashlight(light)) return pose->Direction;
+	const auto pitch = *light->pPitch;
+	return { light->target->Angles.Yaw.ToVector(pitch.Cos()), -pitch.Sin() };
+}
 
 //==========================================================================
 //
@@ -94,7 +171,7 @@ bool StageBEmitterAllowed(const FDynLightData& dld, const FDynamicLight* light, 
 bool GetLight(FDynLightData& dld, int group, Plane & p, FDynamicLight * light, bool checkside, const sector_t* emitterReceiver)
 {
 	if (light->IsStageBEmitter() && !StageBEmitterAllowed(dld, light, emitterReceiver)) return false;
-	DVector3 pos = light->PosRelative(group);
+	DVector3 pos = HWLightPositionRelative(light, group);
 	float radius = (light->GetRadius());
 
 	auto dist = fabs(p.DistToPoint((float)pos.X, (float)pos.Z, (float)pos.Y));
@@ -122,7 +199,7 @@ void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, bool f
 
 	int i = LIGHTARRAY_NORMAL;
 
-	DVector3 pos = light->PosRelative(group);
+	DVector3 pos = HWLightPositionRelative(light, group);
 	
 	info.radius = light->GetRadius();
 
@@ -198,12 +275,10 @@ void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, bool f
 		info.spotInnerAngle = (float)light->pSpotInnerAngle->Cos();
 		info.spotOuterAngle = (float)light->pSpotOuterAngle->Cos();
 
-		DAngle negPitch = -*light->pPitch;
-		DAngle Angle = light->target->Angles.Yaw;
-		double xzLen = negPitch.Cos();
-		info.spotDirX = float(-Angle.Cos() * xzLen);
-		info.spotDirY = float(-negPitch.Sin());
-		info.spotDirZ = float(-Angle.Sin() * xzLen);
+		const auto direction = HWSpotDirection(light);
+		info.spotDirX = float(-direction.X);
+		info.spotDirY = float(-direction.Z);
+		info.spotDirZ = float(-direction.Y);
 	}
 
 	if(light->Trace() && doTrace)

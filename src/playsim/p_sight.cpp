@@ -126,10 +126,15 @@ public:
 
 	void init(AActor * t1, AActor * t2, sector_t *startsector, SightTask *task, int flags)
 	{
-		sightstart = t1->PosRelative(task->portalgroup);
-		sightend = t2->PosRelative(task->portalgroup).XY();
-		sightstart.Z += t1->Height * 0.75;
+		auto start = t1->PosRelative(task->portalgroup);
+		start.Z += t1->Height * 0.75;
+		init(start, t2->PosRelative(task->portalgroup).XY(), t2, startsector, task, flags);
+	}
 
+	void init(const DVector3& start, const DVector2& end, AActor *t2, sector_t *startsector, SightTask *task, int flags)
+	{
+		sightstart = start;
+		sightend = end;
 		portalgroup = task->portalgroup;
 		Startfrac = task->Frac;
 		Trace = { sightstart.X, sightstart.Y, sightend.X - sightstart.X, sightend.Y - sightstart.Y };
@@ -941,6 +946,24 @@ sightcounts[0]++;
 done:
 	SightCycles.Unclock();
 	return res;
+}
+
+// Renderer-only visibility from the optical origin to any height of the submitted sprite.
+// The caller has excluded linked portals, fake sectors, and 3D floors for the whole level.
+bool P_CheckSightFromRenderPoint(const DVector3& origin, AActor* target, const DVector3& feet)
+{
+	auto* level = target->Level;
+	auto* startSector = level->PointInRenderSubsector(origin)->sector;
+	auto* endSector = level->PointInRenderSubsector(feet)->sector;
+	if (!level->CheckReject(startSector, endSector)) return false;
+
+	validcount++;
+	portals.Clear();
+	const double bottom = feet.Z - origin.Z;
+	SightTask task = { 0, bottom + target->Height, bottom, -1, startSector->PortalGroup };
+	SightCheck sight(level);
+	sight.init(origin, feet.XY(), target, startSector, &task, SF_IGNOREVISIBILITY);
+	return sight.P_SightPathTraverse();
 }
 
 ADD_STAT (sight)

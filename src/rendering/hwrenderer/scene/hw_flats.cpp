@@ -45,6 +45,7 @@
 #include "hwrenderer/scene/hw_drawinfo.h"
 #include "flatvertices.h"
 #include "hw_drawstructs.h"
+#include "hwrenderer/hw_flashlight.h"
 #include "hw_renderstate.h"
 #include "texturemanager.h"
 #include "hw_flatdispatcher.h"
@@ -190,8 +191,9 @@ void HWFlat::SetupLights(HWFlatDispatcher *di, FRenderState& state, FLightNode *
 
 		// we must do the side check here because gl_GetLight needs the correct plane orientation
 		// which we don't have for Legacy-style 3D-floors
-		double planeh = plane.plane.ZatPoint(light->Pos);
-		if ((planeh<light->Z() && ceiling) || (planeh>light->Z() && !ceiling))
+		const auto pos = HWLightPosition(light);
+		double planeh = plane.plane.ZatPoint(pos);
+		if ((planeh<pos.Z && ceiling) || (planeh>pos.Z && !ceiling))
 		{
 			node = node->nextLight;
 			continue;
