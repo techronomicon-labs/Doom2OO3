@@ -52,7 +52,7 @@ struct HWViewpointUniforms
 	float StageBAmbientSpecular = 0.0f;
 	int ShadowPuppetTexture = 0;
 	int ShadowPuppetMode = 0;
-	int Padding = 0;
+	float ShadowPuppetSoftness = 1.0f;
 	VSMatrix ShadowPuppetProjection = VSMatrix::identity();
 
 	void CalcDependencies()

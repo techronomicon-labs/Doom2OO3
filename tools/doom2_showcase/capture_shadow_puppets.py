@@ -2,6 +2,7 @@
 
 import argparse
 import json
+from math import isclose
 from pathlib import Path
 import re
 import subprocess
@@ -82,10 +83,11 @@ def capture(args, case, mode, fixture, exe, iwad, addons):
             "-sdvkobservewarmup", "120" if args.timing else "42", "-sdvkobserveframes", str(samples),
             "-sdvkobservegpu", "-sdvkobservequit", "+vid_rendermode", "4", "+vid_setsize", width, height,
             "+gl_levelmesh", "false", "+gl_ubershaders", "false", "+gl_raytrace", "false", "+lm_dynlights", "false",
-            "+gl_light_shadows", "0", "+gl_multisample", "0", "+gl_lights", "true", "+gl_ssao", "0",
+            "+gl_light_shadows", "0", "+gl_multisample", str(args.msaa), "+gl_lights", "true", "+gl_ssao", "0",
             "+gl_spritelight", "2", "+gl_light_sprites", "true",
             "+gl_bloom", "false", "+gl_emitter_lighting", "false", "+gl_world_relief", "true",
             "+gl_sprite_lighting_relief", "true", "+gl_shadow_puppets", str(mode),
+            "+gl_shadow_puppet_softness", str(args.depth_softness),
             "+gl_precache", "true", "+r_drawplayersprites", "false", "+screenblocks", "12", "+fov", "90",
             "+crosshair", "0", "+con_notifylines", "0", "+show_messages", "false", "+use_mouse", "false",
             "+cl_capfps", str(not args.timing).lower(), "+vid_vsync", "false", "+vid_maxfps", "0",
@@ -117,7 +119,9 @@ def capture(args, case, mode, fixture, exe, iwad, addons):
         frame["map"] == MAP_NAME and frame["hardware_renderer"] and frame["level_tic"] >= tic
         and frame["walls"] > 0 and frame["flats"] > 0 and fixed_pose(frame) == camera
         and (frame["width"], frame["height"]) == tuple(args.size)
+        and frame["settings"]["gl_multisample"] == args.msaa
         and frame["shadow_puppets"]["requested"] == mode and frame["shadow_puppets"]["active"] == active
+        and isclose(frame["shadow_puppets"]["depth_softness"], args.depth_softness, abs_tol=1e-6)
         and (args.timing or frame["relief_flashlight_lights"] == int(flashlight)) for frame in frames),
         f"Wrong receiver, beam, or shadow mode in {folder}")
     report = {"argv": argv, "build": build, "camera": camera, "walker_pose": walker_pose,
@@ -194,15 +198,22 @@ def main():
     parser.add_argument("--timing", action="store_true", help="time the stationary view instead of taking screenshots")
     parser.add_argument("--size", type=int, nargs=2, metavar=("WIDTH", "HEIGHT"))
     parser.add_argument("--samples", type=int, default=120)
+    parser.add_argument("--msaa", type=int, choices=(0, 2, 4, 8), default=0,
+                        help="scene MSAA sample count, or 0 to disable it")
+    parser.add_argument("--depth-softness", type=float, default=1.0,
+                        help="Depth edge filter, from 0 for hard edges to 2 for the widest filter")
     args = parser.parse_args()
     args.size = args.size or ((1280, 960) if args.timing else (640, 480))
     cases = tuple(args.case) if args.case else (("stationary",) if args.timing else DEFAULT_CASES)
     if min(args.size) <= 0 or not 2 <= args.samples <= 4096 or (args.timing and cases != ("stationary",)):
         parser.error("expected positive dimensions, 2–4096 timing samples, and only the stationary timing case")
+    if not 0.0 <= args.depth_softness <= 2.0:
+        parser.error("expected depth softness between 0 and 2")
     exe = args.pack / "runtime" / "vkdoom.exe"
     iwad = args.pack / "doom2.wad"
     addons = [args.pack / "addons" / name for name in ADDONS]
-    report = {"status": "incomplete", "size": args.size, "mode": "timing" if args.timing else "state", "cases": {}}
+    report = {"status": "incomplete", "size": args.size, "mode": "timing" if args.timing else "state",
+              "msaa": args.msaa, "depth_softness": args.depth_softness, "cases": {}}
     try:
         require(all(path.is_file() for path in (exe, iwad, *addons)), f"Missing package inputs under {args.pack}")
         args.out.mkdir(parents=True)

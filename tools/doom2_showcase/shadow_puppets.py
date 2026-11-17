@@ -129,7 +129,7 @@ class SDVKShadowLabHandler : EventHandler
             mode = mode .. "  (lighting fallback)";
         Screen.DrawText(SmallFont, Font.CR_WHITE, 8, 8, "Shadow puppets  |  " .. mode,
             DTA_VirtualWidth, 480, DTA_VirtualHeight, 360, DTA_Shadow, true);
-        Screen.DrawText(SmallFont, Font.CR_WHITE, 8, 20, "F1 Compare  L Flashlight",
+        Screen.DrawText(SmallFont, Font.CR_WHITE, 8, 20, "J Compare  F1 Settings  L Flashlight",
             DTA_VirtualWidth, 480, DTA_VirtualHeight, 360, DTA_Shadow, true);
     }
 }
@@ -147,6 +147,7 @@ OptionMenu DoomIIShadowPuppetsMenu
 {
     Title "Shadow Puppets"
     Option "Shadow mode", "gl_shadow_puppets", "ShadowLabModes"
+    Slider "Depth edge softness", "gl_shadow_puppet_softness", 0.0, 2.0, 0.25, 2
     Submenu "Flashlight settings", "SDVKFlashlightOptions"
     Command "Restart comparison room", "map SHPDEMO"
 }

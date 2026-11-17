@@ -4,6 +4,7 @@
 #include "g_levellocals.h"
 #include "p_local.h"
 #include "r_utility.h"
+#include "r_visualtime.h"
 #include "hw_shadowpuppet.h"
 
 #include <algorithm>
@@ -18,42 +19,128 @@ thread_local const FDynamicLight* HWShadowPuppetFlashlight = nullptr;
 namespace
 {
 	constexpr unsigned MaxCasters = 4;
-	constexpr unsigned Sides = 6;
+	// Eight convex hulls have 89 rim vertices and 146 triangles in total.
+	// The capped volume cannot exceed 12 * (89 - 8) vertices per puppet.
+	constexpr unsigned VerticesPerPuppet = 438;
 
-	void AddPrimitive(TArray<FVector3>& mesh, FVector3 bottom, FVector3 top, float bottomRadius, float topRadius)
+	struct PuppetRing
 	{
-		std::array<FVector3, Sides> low, high;
-		for (unsigned i = 0; i < Sides; ++i)
+		FVector3 Center;
+		float Radius;
+	};
+
+	template<size_t Sides, size_t RingCount>
+	void AddHull(TArray<FVector3>& mesh, const std::array<PuppetRing, RingCount>& profile, float width, float length = 1.f)
+	{
+		static const auto directions = [] {
+			std::array<FVector2, Sides> ring;
+			for (size_t i = 0; i < Sides; ++i)
+			{
+				// Four-sided soles have flat sides along the forward and lateral axes.
+				const float angle = float((i + (Sides == 4 ? 0.5 : 0.0)) * (2.0 * M_PI / Sides));
+				ring[i] = FVector2(std::cos(angle), std::sin(angle));
+			}
+			return ring;
+		}();
+		std::array<std::array<FVector3, Sides>, RingCount> rings;
+		for (size_t row = 0; row < RingCount; ++row)
+			for (size_t i = 0; i < Sides; ++i)
+			{
+				const auto& radial = directions[i];
+				rings[row][i] = profile[row].Center +
+					FVector3(length * radial.X, 0.f, width * radial.Y) * profile[row].Radius;
+			}
+
+		const auto append = [&](const FVector3& a, const FVector3& b, const FVector3& c) {
+			mesh.Push(a); mesh.Push(b); mesh.Push(c);
+		};
+		// Triangulate from existing rim vertices. Caps and side walls have
+		// opposite edge winding, with no additional vertices on the caps.
+		for (size_t i = 1; i + 1 < Sides; ++i)
 		{
-			const float angle = float(i * (2.0 * M_PI / Sides));
-			const FVector3 radial(std::cos(angle), 0.f, std::sin(angle));
-			low[i] = bottom + radial * bottomRadius;
-			high[i] = top + radial * topRadius;
+			append(rings.front()[0], rings.front()[i], rings.front()[i + 1]);
+			append(rings.back()[0], rings.back()[i + 1], rings.back()[i]);
 		}
-		for (unsigned i = 0; i < Sides; ++i)
+		for (size_t row = 1; row < RingCount; ++row)
 		{
-			const unsigned next = (i + 1) % Sides;
-			mesh.Push(bottom); mesh.Push(low[i]); mesh.Push(low[next]);
-			mesh.Push(top); mesh.Push(high[next]); mesh.Push(high[i]);
-			mesh.Push(low[i]); mesh.Push(high[i]); mesh.Push(high[next]);
-			mesh.Push(low[i]); mesh.Push(high[next]); mesh.Push(low[next]);
+			const auto& low = rings[row - 1];
+			const auto& high = rings[row];
+			for (size_t i = 0; i < Sides; ++i)
+			{
+				const size_t next = (i + 1) % Sides;
+				append(low[i], high[i], high[next]);
+				append(low[i], high[next], low[next]);
+			}
 		}
 	}
 
-	const TArray<FVector3>& ImpPuppet()
+	struct PuppetStep
 	{
-		static const TArray<FVector3> mesh = [] {
-			TArray<FVector3> vertices;
-			// Forward, height, lateral. A neutral asymmetrical stance reads in motion.
-			AddPrimitive(vertices, {0, 19, 0}, {-1, 43, 0}, 8, 11);
-			AddPrimitive(vertices, {0, 39, 0}, {2, 54, 0}, 7, 6);
-			AddPrimitive(vertices, {5, 26, -16}, {-1, 39, -9}, 3.5f, 5);
-			AddPrimitive(vertices, {8, 28, 15}, {-1, 39, 9}, 3.5f, 5);
-			AddPrimitive(vertices, {4, 0, -5}, {0, 23, -4}, 4.5f, 5);
-			AddPrimitive(vertices, {-5, 0, 5}, {1, 23, 4}, 4.5f, 5);
-			return vertices;
-		}();
-		return mesh;
+		uint32_t Actor = 0;
+		FVector3 Base = {};
+		float Phase = 0.f;
+		float Strength = 0.f;
+	};
+
+	struct PuppetWalk
+	{
+		const FLevelLocals* Level = nullptr;
+		uint64_t Generation = 0;
+		uint64_t Frame = 0;
+		double Tic = 0;
+		std::array<PuppetStep, MaxCasters> Steps;
+		unsigned Count = 0;
+	};
+
+	PuppetStep UpdateStep(const AActor& actor, FVector3 base, const PuppetWalk& previous, float elapsed)
+	{
+		PuppetStep current { actor.SpawnOrder, base };
+		for (unsigned i = 0; i < previous.Count; ++i)
+		{
+			const auto& last = previous.Steps[i];
+			if (last.Actor != actor.SpawnOrder)
+				continue;
+			const auto delta = base - last.Base;
+			const float travelled = std::hypot(delta.X, delta.Z);
+			// A warp or dropped simulation samples are not a walking stride.
+			if (travelled > 8.f + elapsed * 12.f)
+				break;
+			const auto motion = actor.Pos() - actor.Prev;
+			const float speed = float(std::hypot(motion.X, motion.Y));
+			const float target = std::clamp((speed - 0.10f) / 1.30f, 0.f, 1.f);
+			const float settle = 1.f - std::exp(-elapsed * (target > last.Strength ? 0.45f : 0.36f));
+			current.Strength = last.Strength + (target - last.Strength) * settle;
+			current.Phase = std::fmod(last.Phase + travelled * float(M_PI / 16.0), float(2.0 * M_PI));
+			if (current.Strength < 0.02f && target == 0.f)
+				current.Strength = 0.f;
+			break;
+		}
+		return current;
+	}
+
+	void AddImpPuppet(TArray<FVector3>& mesh, const PuppetStep& step)
+	{
+		// Forward, height, lateral. The shoulders widen above a tapered waist.
+		AddHull<6>(mesh, std::array { PuppetRing {{0, 18, 0}, 6.5f}, PuppetRing {{0, 34, 0}, 9.4f},
+			PuppetRing {{0, 43, 0}, 7.7f} }, 1.4f);
+		AddHull<5>(mesh, std::array { PuppetRing {{2, 39, 0}, 5.0f}, PuppetRing {{2, 48, 0}, 7.1f},
+			PuppetRing {{0, 54, 0}, 4.9f} }, 1.07f);
+
+		const float swing = std::cos(step.Phase) * step.Strength;
+		const float lift = std::sin(step.Phase) * step.Strength;
+		for (const float side : { -1.f, 1.f })
+		{
+			const float advance = swing * side;
+			const float footLift = 2.2f * std::max(0.f, lift * side);
+			const float ankle = 0.8f + 2.5f * side + 5.2f * advance;
+			const float footSide = 5.5f * side;
+			AddHull<5>(mesh, std::array { PuppetRing {{6.2f - 3.8f * advance, 27.f, 15.5f * side}, 3.4f},
+				PuppetRing {{-0.8f, 39.f, 10.2f * side}, 5.0f} }, 0.9f);
+			AddHull<5>(mesh, std::array { PuppetRing {{ankle, 3.2f + footLift, footSide}, 3.7f},
+				PuppetRing {{0.f, 23.f, 4.5f * side}, 4.6f} }, 0.95f);
+			AddHull<4>(mesh, std::array { PuppetRing {{ankle + 1.9f, footLift, footSide}, 4.5f},
+				PuppetRing {{ankle + 0.8f, 4.8f + footLift, footSide}, 4.f} }, 1.12f, 1.8f);
+		}
 	}
 
 	FVector3 RenderPosition(const DVector3& point)
@@ -133,16 +220,37 @@ bool BuildShadowPuppetScene(const FRenderViewpoint& view, HWShadowPuppetScene& s
 	if (!count)
 		return false;
 
-	const auto& mesh = ImpPuppet();
+	// Keep only the previous presentation sample for the four selected actors.
+	// Both backends see this same state, including across a live mode change.
+	static thread_local PuppetWalk previous;
+	const auto visualTime = RenderVisualTime::RuntimeClock().Snapshot();
+	PuppetWalk current;
+	current.Level = &level;
+	current.Generation = visualTime.Generation;
+	current.Frame = visualTime.MainFrame;
+	current.Tic = level.time + std::clamp(view.TicFrac, 0.0, 1.0);
+	current.Count = count;
+	const float elapsed = float(current.Tic - previous.Tic);
+	const bool continuous = previous.Level == current.Level && previous.Generation == current.Generation &&
+		previous.Frame + 1 == current.Frame && elapsed >= 0.f && elapsed <= 4.f;
+	scene.Triangles.Grow(count * VerticesPerPuppet);
 	for (unsigned i = 0; i < count; ++i)
 	{
 		const auto& caster = casters[i];
+		current.Steps[i] = continuous ? UpdateStep(*caster.Actor, caster.Base, previous, elapsed) :
+			PuppetStep { caster.Actor->SpawnOrder, caster.Base };
+		const unsigned first = scene.Triangles.Size();
+		AddImpPuppet(scene.Triangles, current.Steps[i]);
 		const auto angles = caster.Actor->InterpolatedAngles(view.TicFrac);
 		const float cosine = float(angles.Yaw.Cos()), sine = float(angles.Yaw.Sin());
-		for (const auto& vertex : mesh)
-			scene.Triangles.Push(caster.Base + FVector3(cosine * vertex.X - sine * vertex.Z, vertex.Y,
-				sine * vertex.X + cosine * vertex.Z));
+		for (unsigned j = first; j < scene.Triangles.Size(); ++j)
+		{
+			auto& vertex = scene.Triangles[j];
+			vertex = caster.Base + FVector3(cosine * vertex.X - sine * vertex.Z, vertex.Y,
+				sine * vertex.X + cosine * vertex.Z);
+		}
 	}
+	previous = current;
 	const FVector3 aim = origin + forward;
 	const FVector3 up = std::abs(forward.Y) < 0.98f ? FVector3(0, 1, 0) : FVector3(0, 0, 1);
 	VSMatrix lightView = VSMatrix::identity(), projection = VSMatrix::identity();

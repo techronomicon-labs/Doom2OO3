@@ -29,7 +29,7 @@ layout(set = 1, binding = 0, std140) uniform readonly ViewpointUBO
 	float uStageBAmbientSpecular;
 	int uShadowPuppetTexture;
 	int uShadowPuppetMode;
-	int uShadowPuppetPadding;
+	float uShadowPuppetSoftness;
 	mat4 ShadowPuppetProjection;
 };
 

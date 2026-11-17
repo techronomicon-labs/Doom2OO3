@@ -122,8 +122,8 @@ if ($EmitterLighting) {
               '+bind', 'B', 'toggle gl_emitter_lighting', '+bind', 'F1', 'openmenu DoomIIEmitterLightingMenu')
 }
 if ($ShadowPuppets) {
-    $argv += @('+gl_shadow_puppets', '0', '+gl_ssao', '0', '+gl_multisample', '0', '+crosshair', '2',
-              '+bind', 'F1', 'openmenu DoomIIShadowPuppetsMenu')
+    $argv += @('+gl_shadow_puppets', '0', '+gl_ssao', '0', '+gl_multisample', '4', '+crosshair', '2',
+              '+bind', 'J', 'shadow_puppets_cycle', '+bind', 'F1', 'openmenu DoomIIShadowPuppetsMenu')
 }
 if ($Relief) {
     $argv += @('+gl_world_relief', 'true', '+gl_world_relief_depth', '5',

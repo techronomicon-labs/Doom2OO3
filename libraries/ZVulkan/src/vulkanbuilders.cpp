@@ -1123,21 +1123,14 @@ GraphicsPipelineBuilder& GraphicsPipelineBuilder::DepthStencilEnable(bool test, 
 
 GraphicsPipelineBuilder& GraphicsPipelineBuilder::Stencil(VkStencilOp failOp, VkStencilOp passOp, VkStencilOp depthFailOp, VkCompareOp compareOp, uint32_t compareMask, uint32_t writeMask, uint32_t reference)
 {
-	depthStencil.front.failOp = failOp;
-	depthStencil.front.passOp = passOp;
-	depthStencil.front.depthFailOp = depthFailOp;
-	depthStencil.front.compareOp = compareOp;
-	depthStencil.front.compareMask = compareMask;
-	depthStencil.front.writeMask = writeMask;
-	depthStencil.front.reference = reference;
+	const VkStencilOpState state = { failOp, passOp, depthFailOp, compareOp, compareMask, writeMask, reference };
+	return Stencil(state, state);
+}
 
-	depthStencil.back.failOp = failOp;
-	depthStencil.back.passOp = passOp;
-	depthStencil.back.depthFailOp = depthFailOp;
-	depthStencil.back.compareOp = compareOp;
-	depthStencil.back.compareMask = compareMask;
-	depthStencil.back.writeMask = writeMask;
-	depthStencil.back.reference = reference;
+GraphicsPipelineBuilder& GraphicsPipelineBuilder::Stencil(const VkStencilOpState& front, const VkStencilOpState& back)
+{
+	depthStencil.front = front;
+	depthStencil.back = back;
 	return *this;
 }
 
@@ -1511,6 +1504,14 @@ RenderPassBuilder& RenderPassBuilder::AddSubpassColorAttachmentRef(uint32_t inde
 	subpassData.back()->colorRefs.push_back(colorAttachmentRef);
 	subpasses.back().pColorAttachments = subpassData.back()->colorRefs.data();
 	subpasses.back().colorAttachmentCount = (uint32_t)subpassData.back()->colorRefs.size();
+	return *this;
+}
+
+RenderPassBuilder& RenderPassBuilder::AddSubpassResolveAttachmentRef(uint32_t index, VkImageLayout layout)
+{
+	auto& refs = subpassData.back()->resolveRefs;
+	refs.push_back({ index, layout });
+	subpasses.back().pResolveAttachments = refs.data();
 	return *this;
 }
 

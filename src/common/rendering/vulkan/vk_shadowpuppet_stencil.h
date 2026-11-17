@@ -24,10 +24,12 @@ private:
 
 	VulkanRenderDevice* Fb;
 	VkTextureImage Visibility;
+	VkTextureImage MultisampledVisibility;
 	std::unique_ptr<VulkanSampler> Sampler;
 	std::unique_ptr<VulkanRenderPass> Pass;
 	std::unique_ptr<VulkanPipelineLayout> Layout;
-	std::unique_ptr<VulkanPipeline> FrontFaces, BackFaces, Resolve;
+	std::unique_ptr<VulkanPipeline> Volume, Resolve;
 	std::unique_ptr<VulkanBuffer> Vertices;
+	VkSampleCountFlagBits Samples = VK_SAMPLE_COUNT_1_BIT;
 	int TextureIndex = 0;
 };

@@ -35,30 +35,24 @@ bool UseStructuralRelief(DynLightInfo light)
 		(STAGE_B_WORLD_LIGHTING && (light.flags & LIGHTINFO_STAGE_B_EMITTER) != 0);
 }
 
+#ifndef SHADOW_PUPPET_VERTEX_STAGE
+#include <shaders/scene/shadowpuppet_depth.glsl>
+
 float ShadowPuppetVisibility(DynLightInfo light, vec3 position, ivec2 pixel)
 {
 	if ((light.flags & LIGHTINFO_SHADOW_PUPPET) == 0 || uShadowPuppetTexture <= 0 ||
 		data[uDataIndex].uShadowPuppetReceiver == 0)
 		return 1.0;
 	int image = uShadowPuppetTexture;
-	ivec2 size = textureSize(textures[nonuniformEXT(image)], 0);
 	if (uShadowPuppetMode == 1)
 	{
+		ivec2 size = textureSize(textures[nonuniformEXT(image)], 0);
 		if (any(lessThan(pixel, ivec2(0))) || any(greaterThanEqual(pixel, size))) return 1.0;
 		return texelFetch(textures[nonuniformEXT(image)], pixel, 0).r;
 	}
-	// Use geometric position so a material's virtual depth cannot move its shadow.
-	vec3 toLight = light.pos.xyz - position;
-	vec3 biased = position + toLight * min(1.0, 0.65 / max(length(toLight), 1e-4));
-	vec4 clip = ShadowPuppetProjection * vec4(biased, 1.0);
-	if (clip.w <= 0.0) return 1.0;
-	vec3 projected = clip.xyz / clip.w;
-	if (any(greaterThanEqual(abs(projected.xy), vec2(1.0))) || projected.z < 0.0 || projected.z > 1.0)
-		return 1.0;
-	ivec2 texel = clamp(ivec2((projected.xy * 0.5 + 0.5) * vec2(size)), ivec2(0), size - 1);
-	float casterDepth = texelFetch(textures[nonuniformEXT(image)], texel, 0).r;
-	return projected.z <= casterDepth ? 1.0 : 0.0;
+	return ShadowPuppetDepthVisibility(light, position, image);
 }
+#endif
 
 float PackedLightFalloff(DynLightInfo light, float lightDistance)
 {

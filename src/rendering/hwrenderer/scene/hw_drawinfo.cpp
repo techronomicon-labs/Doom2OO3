@@ -890,6 +890,7 @@ void HWDrawInfo::RenderScene(FRenderState &state)
 			{
 				VPUniforms.ShadowPuppetTexture = visibility;
 				VPUniforms.ShadowPuppetMode = puppetMode;
+				VPUniforms.ShadowPuppetSoftness = gl_shadow_puppet_softness;
 				VPUniforms.ShadowPuppetProjection = puppet.LightProjection;
 				vpIndex = state.SetViewpoint(VPUniforms);
 				HWShadowPuppetFlashlight = puppet.Flashlight;

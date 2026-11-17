@@ -14,6 +14,7 @@
 namespace
 {
 constexpr auto VisibilityFormat = VK_FORMAT_R8_UNORM;
+constexpr auto VisibilityUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
 constexpr unsigned VertexCapacity = 4096;
 constexpr auto DepthStages = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
 constexpr auto DepthAccess = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
@@ -120,63 +121,89 @@ VkShadowPuppetStencil::~VkShadowPuppetStencil()
 
 bool VkShadowPuppetStencil::Supported() const
 {
-	if (!Fb->GetBuffers() || Fb->GetBuffers()->GetSceneSamples() != VK_SAMPLE_COUNT_1_BIT ||
-		!Fb->GetDevice()->EnabledFeatures.Features.depthClamp || Fb->DepthStencilFormat == VK_FORMAT_UNDEFINED)
+	const auto buffers = Fb->GetBuffers();
+	const auto device = Fb->GetDevice();
+	if (!buffers || !buffers->SceneDepthStencil.Image || !device->EnabledFeatures.Features.depthClamp ||
+		Fb->DepthStencilFormat == VK_FORMAT_UNDEFINED)
 		return false;
 
-	return Pass || ImageBuilder().Size(1, 1).Format(VisibilityFormat)
-		.Usage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)
-		.IsFormatSupported(Fb->GetDevice());
+	const auto samples = buffers->GetSceneSamples();
+	const int width = buffers->GetWidth(), height = buffers->GetHeight();
+	if (Pass && Samples == samples && Visibility.Image && Visibility.Image->width == width && Visibility.Image->height == height)
+		return true;
+
+	auto format = ImageBuilder().Size(width, height).Format(VisibilityFormat).Usage(VisibilityUsage);
+	return format.IsFormatSupported(device) && (samples == VK_SAMPLE_COUNT_1_BIT ||
+		format.Samples(samples).Usage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT).IsFormatSupported(device));
 }
 
 void VkShadowPuppetStencil::CreatePipelines()
 {
 	auto device = Fb->GetDevice();
-	Pass = RenderPassBuilder()
-		.AddAttachment(VisibilityFormat, VK_SAMPLE_COUNT_1_BIT,
-			VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE,
+	const bool multisampled = Samples != VK_SAMPLE_COUNT_1_BIT;
+	RenderPassBuilder pass;
+	pass.AddAttachment(VisibilityFormat, Samples, VK_ATTACHMENT_LOAD_OP_CLEAR,
+			multisampled ? VK_ATTACHMENT_STORE_OP_DONT_CARE : VK_ATTACHMENT_STORE_OP_STORE,
 			VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
-		.AddDepthStencilAttachment(Fb->DepthStencilFormat, VK_SAMPLE_COUNT_1_BIT,
+		.AddDepthStencilAttachment(Fb->DepthStencilFormat, Samples,
 			VK_ATTACHMENT_LOAD_OP_LOAD, VK_ATTACHMENT_STORE_OP_STORE,
 			VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_DONT_CARE,
-			VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-		.AddSubpass()
-		.AddSubpassColorAttachmentRef(0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
-		.AddSubpassDepthStencilAttachmentRef(1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-		.DebugName("PuppetStencil.Pass")
-		.Create(device);
-	Layout = PipelineLayoutBuilder()
-		.AddPushConstantRange(VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float) * 16)
-		.DebugName("PuppetStencil.Layout")
-		.Create(device);
-
-	const auto volumeVert = CachedGLSLCompiler().Type(ShaderType::Vertex)
-		.AddSource("puppet_stencil_volume.vert", VolumeVertexShader).Compile(Fb);
-	const auto volumeFrag = CachedGLSLCompiler().Type(ShaderType::Fragment)
-		.AddSource("puppet_stencil_volume.frag", VolumeFragmentShader).Compile(Fb);
-	const auto makeVolumePipeline = [&](VkCullModeFlags cull, VkStencilOp depthFail, const char* name)
+			VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+	if (multisampled)
 	{
-		return GraphicsPipelineBuilder()
-			.AddVertexShader(volumeVert)
-			.AddFragmentShader(volumeFrag)
-			.AddVertexBufferBinding(0, sizeof(FVector4))
-			.AddVertexAttribute(0, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 0)
-			.Topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
-			.AddDynamicState(VK_DYNAMIC_STATE_VIEWPORT)
-			.AddDynamicState(VK_DYNAMIC_STATE_SCISSOR)
-			.Cull(cull, VK_FRONT_FACE_COUNTER_CLOCKWISE)
-			.DepthClampEnable(true)
-			.DepthStencilEnable(true, false, true)
-			.DepthFunc(VK_COMPARE_OP_LESS_OR_EQUAL)
-			.Stencil(VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP, depthFail, VK_COMPARE_OP_ALWAYS, 0xff, 0xff, 0)
-			.AddColorBlendAttachment(ColorBlendAttachmentBuilder().ColorWriteMask(0).Create())
-			.Layout(Layout.get())
-			.RenderPass(Pass.get())
-			.DebugName(name)
+		pass.AddAttachment(VisibilityFormat, VK_SAMPLE_COUNT_1_BIT,
+			VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_STORE,
+			VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+	}
+	pass.AddSubpass()
+		.AddSubpassColorAttachmentRef(0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+		.AddSubpassDepthStencilAttachmentRef(1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+	if (multisampled)
+		pass.AddSubpassResolveAttachmentRef(2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+	Pass = pass.DebugName("PuppetStencil.Pass").Create(device);
+	if (!Layout)
+	{
+		Layout = PipelineLayoutBuilder()
+			.AddPushConstantRange(VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float) * 16)
+			.DebugName("PuppetStencil.Layout")
 			.Create(device);
-	};
-	FrontFaces = makeVolumePipeline(VK_CULL_MODE_BACK_BIT, VK_STENCIL_OP_DECREMENT_AND_WRAP, "PuppetStencil.Front");
-	BackFaces = makeVolumePipeline(VK_CULL_MODE_FRONT_BIT, VK_STENCIL_OP_INCREMENT_AND_WRAP, "PuppetStencil.Back");
+		Sampler = SamplerBuilder()
+			.AddressMode(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
+			.MinFilter(VK_FILTER_NEAREST).MagFilter(VK_FILTER_NEAREST).MaxLod(0)
+			.DebugName("PuppetStencil.Nearest")
+			.Create(device);
+		Vertices = BufferBuilder()
+			.Size(VertexCapacity * sizeof(FVector4))
+			.Usage(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)
+			.DebugName("PuppetStencil.Vertices")
+			.Create(device);
+	}
+
+	const VkStencilOpState front = { VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_DECREMENT_AND_WRAP,
+		VK_COMPARE_OP_ALWAYS, 0xff, 0xff, 0 };
+	const VkStencilOpState back = { VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_INCREMENT_AND_WRAP,
+		VK_COMPARE_OP_ALWAYS, 0xff, 0xff, 0 };
+	Volume = GraphicsPipelineBuilder()
+		.AddVertexShader(CachedGLSLCompiler().Type(ShaderType::Vertex)
+			.AddSource("puppet_stencil_volume.vert", VolumeVertexShader).Compile(Fb))
+		.AddFragmentShader(CachedGLSLCompiler().Type(ShaderType::Fragment)
+			.AddSource("puppet_stencil_volume.frag", VolumeFragmentShader).Compile(Fb))
+		.AddVertexBufferBinding(0, sizeof(FVector4))
+		.AddVertexAttribute(0, 0, VK_FORMAT_R32G32B32A32_SFLOAT, 0)
+		.Topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
+		.AddDynamicState(VK_DYNAMIC_STATE_VIEWPORT)
+		.AddDynamicState(VK_DYNAMIC_STATE_SCISSOR)
+		.RasterizationSamples(Samples)
+		.Cull(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
+		.DepthClampEnable(true)
+		.DepthStencilEnable(true, false, true)
+		.DepthFunc(VK_COMPARE_OP_LESS_OR_EQUAL)
+		.Stencil(front, back)
+		.AddColorBlendAttachment(ColorBlendAttachmentBuilder().ColorWriteMask(0).Create())
+		.Layout(Layout.get())
+		.RenderPass(Pass.get())
+		.DebugName("PuppetStencil.Volume")
+		.Create(device);
 
 	Resolve = GraphicsPipelineBuilder()
 		.AddVertexShader(CachedGLSLCompiler().Type(ShaderType::Vertex)
@@ -186,6 +213,7 @@ void VkShadowPuppetStencil::CreatePipelines()
 		.Topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST)
 		.AddDynamicState(VK_DYNAMIC_STATE_VIEWPORT)
 		.AddDynamicState(VK_DYNAMIC_STATE_SCISSOR)
+		.RasterizationSamples(Samples)
 		.Cull(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
 		.DepthStencilEnable(false, false, true)
 		.Stencil(VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP, VK_COMPARE_OP_NOT_EQUAL, 0xff, 0, 0)
@@ -194,37 +222,30 @@ void VkShadowPuppetStencil::CreatePipelines()
 		.RenderPass(Pass.get())
 		.DebugName("PuppetStencil.Resolve")
 		.Create(device);
-
-	Sampler = SamplerBuilder()
-		.AddressMode(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
-		.MinFilter(VK_FILTER_NEAREST).MagFilter(VK_FILTER_NEAREST).MaxLod(0)
-		.DebugName("PuppetStencil.Nearest")
-		.Create(device);
-	Vertices = BufferBuilder()
-		.Size(VertexCapacity * sizeof(FVector4))
-		.Usage(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT)
-		.DebugName("PuppetStencil.Vertices")
-		.Create(device);
 }
 
 void VkShadowPuppetStencil::ResizeVisibility(int width, int height)
 {
 	auto descriptors = Fb->GetDescriptorSetManager();
-	if (Visibility.Image)
-	{
-		// The bindless allocator can reuse a slot immediately. Wait for old
-		// readers before rebinding this slot to the resized image.
-		Fb->WaitForCommands(false);
-		Visibility.Reset(Fb);
-	}
+	Visibility.Reset(Fb);
+	MultisampledVisibility.Reset(Fb);
 	Visibility.Image = ImageBuilder().Size(width, height).Format(VisibilityFormat)
-		.Usage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)
+		.Usage(VisibilityUsage)
 		.DebugName("PuppetStencil.Visibility").Create(Fb->GetDevice());
 	Visibility.View = ImageViewBuilder()
 		.Image(Visibility.Image.get(), VisibilityFormat, VK_IMAGE_ASPECT_COLOR_BIT)
 		.DebugName("PuppetStencil.VisibilityView").Create(Fb->GetDevice());
 	if (!TextureIndex) TextureIndex = descriptors->AllocBindlessSlot(1);
 	descriptors->SetBindlessTexture(TextureIndex, Visibility.View.get(), Sampler.get());
+	if (Samples != VK_SAMPLE_COUNT_1_BIT)
+	{
+		MultisampledVisibility.Image = ImageBuilder().Size(width, height).Format(VisibilityFormat).Samples(Samples)
+			.Usage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)
+			.DebugName("PuppetStencil.MultisampledVisibility").Create(Fb->GetDevice());
+		MultisampledVisibility.View = ImageViewBuilder()
+			.Image(MultisampledVisibility.Image.get(), VisibilityFormat, VK_IMAGE_ASPECT_COLOR_BIT)
+			.DebugName("PuppetStencil.MultisampledVisibilityView").Create(Fb->GetDevice());
+	}
 }
 
 int VkShadowPuppetStencil::Render(const TArray<FVector3>& triangles, FVector3 light,
@@ -241,13 +262,26 @@ int VkShadowPuppetStencil::Render(const TArray<FVector3>& triangles, FVector3 li
 	TArray<FVector4> volume;
 	BuildVolume(volume, triangles, light);
 	if (volume.Size() == 0 || volume.Size() > VertexCapacity) return 0;
-	if (!Pass) CreatePipelines();
-	if (!Visibility.Image || Visibility.Image->width != width || Visibility.Image->height != height)
+	const auto samples = buffers->GetSceneSamples();
+	const bool newPass = !Pass || Samples != samples;
+	if (newPass || !Visibility.Image || Visibility.Image->width != width || Visibility.Image->height != height)
+	{
+		// A recorded draw can still hold both the descriptor and the old pass.
+		if (Visibility.Image) Fb->WaitForCommands(false);
+		if (newPass)
+		{
+			Samples = samples;
+			CreatePipelines();
+		}
 		ResizeVisibility(width, height);
+	}
 
-	auto framebuffer = FramebufferBuilder().Size(width, height).RenderPass(Pass.get())
-		.AddAttachment(Visibility.View.get()).AddAttachment(sceneDepth.View.get())
-		.DebugName("PuppetStencil.Framebuffer").Create(Fb->GetDevice());
+	const bool multisampled = Samples != VK_SAMPLE_COUNT_1_BIT;
+	auto& target = multisampled ? MultisampledVisibility : Visibility;
+	FramebufferBuilder attachments;
+	attachments.Size(width, height).RenderPass(Pass.get()).AddAttachment(target.View.get()).AddAttachment(sceneDepth.View.get());
+	if (multisampled) attachments.AddAttachment(Visibility.View.get());
+	auto framebuffer = attachments.DebugName("PuppetStencil.Framebuffer").Create(Fb->GetDevice());
 
 	Fb->GetRenderState()->EndRenderPass();
 	auto commands = Fb->GetCommands();
@@ -258,7 +292,24 @@ int VkShadowPuppetStencil::Render(const TArray<FVector3>& triangles, FVector3 li
 	draw->updateBuffer(Vertices->buffer, 0, volume.Size() * sizeof(FVector4), volume.Data());
 	PipelineBarrier().AddBuffer(Vertices.get(), VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT)
 		.Execute(draw, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT);
-	VkImageTransition().AddImage(&Visibility, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, false).Execute(draw);
+	VkImageTransition transition;
+	transition.AddImage(&Visibility, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, false);
+	if (multisampled)
+	{
+		if (target.Layout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+		{
+			// The previous pass can still be resolving from this attachment.
+			constexpr auto color = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+			constexpr auto stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+			constexpr auto access = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+			PipelineBarrier().AddImage(target.Image.get(), color, color, access, access).Execute(draw, stage, stage);
+		}
+		else
+		{
+			transition.AddImage(&target, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, false);
+		}
+	}
+	transition.Execute(draw);
 	PipelineBarrier().AddMemory(DepthAccess, DepthAccess).Execute(draw, DepthStages, DepthStages);
 
 	RenderPassBegin().RenderPass(Pass.get()).RenderArea(0, 0, width, height).Framebuffer(framebuffer.get())
@@ -272,9 +323,7 @@ int VkShadowPuppetStencil::Render(const TArray<FVector3>& triangles, FVector3 li
 	float projection[16];
 	for (int i = 0; i < 16; ++i) projection[i] = static_cast<float>(cameraProjection.get()[i]);
 	draw->pushConstants(Layout.get(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(projection), projection);
-	draw->bindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, FrontFaces.get());
-	draw->draw(volume.Size(), 1, 0, 0);
-	draw->bindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, BackFaces.get());
+	draw->bindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, Volume.get());
 	draw->draw(volume.Size(), 1, 0, 0);
 	draw->bindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, Resolve.get());
 	draw->draw(3, 1, 0, 0);
