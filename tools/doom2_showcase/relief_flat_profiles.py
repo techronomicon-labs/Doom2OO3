@@ -38,6 +38,19 @@ def _large_blocks(tile):
             depth=0.47, width=2.8)
 
 
+def _flagstone(tile):
+    # FLAT5 draws a staggered hexagonal repeat, with an eight-texel
+    # horizontal joint alternating between the two column positions.
+    spans = []
+    for course in range(8):
+        y = 4.5 + course * 8
+        for x in (course % 2 * 16 + 0.5, course % 2 * 16 + 32.5):
+            spans.extend(((x - 4, y, x + 4, y),
+                          (x - 4, y, x - 12, y + 8),
+                          (x + 4, y, x + 12, y + 8)))
+    _joints(tile, spans=spans, depth=0.34, width=1.75)
+
+
 def _box(tile, x, y, width, height, depth, bevel=1.55, chamfer=0.0):
     # A signed distance to the faces, with optional diagonal corners.
     u = np.abs(tile.wrapped_offset(tile.u, x, tile.width))
@@ -212,6 +225,10 @@ def _feature_band(feature, minimum):
 def _stone_shapes(tile, pixels, depth, ridge_height, minimum):
     red, green, blue = pixels[:, :, :3].astype(np.float32).transpose(2, 0, 1) / 255.0
     tone = 0.25 * red + 0.55 * green + 0.20 * blue
+    _granular_shapes(tile, tone, depth, ridge_height, minimum)
+
+
+def _granular_shapes(tile, tone, depth, ridge_height, minimum):
     fine = _periodic_blur(tone, 0.52)
     broad = _periodic_blur(tone, 1.32)
 
@@ -224,6 +241,30 @@ def _stone_shapes(tile, pixels, depth, ridge_height, minimum):
     if ridge_height:
         relief += ridge_height * features(-1)
     tile.values += _sample_to_tile(tile, _periodic_blur(relief, 0.78))
+
+
+def _brushed_plate(tile, pixels):
+    # The broad light stripe runs across the sheet. Retain only narrow
+    # channels that continue down the visible grain, independent of that stripe.
+    tone = pixels[:, :, 0].astype(np.float32) / 255.0
+    brushed = _blur_along(tone - _blur_along(tone, 3.0, (0, 1)), 2.3, (1, 0))
+    across = ((0, 1),)
+    cuts = _feature_band(_local_feature(brushed, (1, 2), across), 0.0035)
+    ridges = _feature_band(_local_feature(-brushed, (1, 2), across), 0.0035)
+    relief = 0.055 * ridges - 0.19 * cuts
+    tile.values += _sample_to_tile(tile, _blur_along(relief, 0.55, (0, 1)))
+
+
+def _dyed_floor(tile, pixels):
+    blue = pixels[:, :, 2].astype(np.float32) / 255.0
+    # Both logo colors are dye. Sample the original rough flooring from
+    # the other half of the repeat through those solid pixels and nearby.
+    dye = smooth_band(-blue, -0.59, -0.52)
+    exclusion = np.clip(_periodic_blur(dye, 1.25) * 2.0, 0.0, 1.0)
+    exclusion = np.maximum(exclusion, dye)
+    substrate = np.minimum(blue, 0.49)
+    substrate = substrate * (1.0 - exclusion) + np.roll(substrate, 32, axis=0) * exclusion
+    _granular_shapes(tile, substrate, 0.11, 0.075, 0.012)
 
 
 def _wood_shapes(tile, pixels, name):
@@ -259,6 +300,7 @@ JOINT_PROFILES = (
      lambda t: _joints(t, (40,), (8, 40), depth=0.44)),
     ("Paving block joints", "FLAT8", brick_floor),
     ("Large masonry block joints", "RROCK14", _large_blocks),
+    ("Staggered flagstone joints", "FLAT5", _flagstone),
     ("Concrete expansion joint", "FLAT18", lambda t: _joints(t, horizontal=(32,), depth=0.33)),
     ("Square tile grout", "FLAT20",
      lambda t: _joints(t, range(0, 64, 8), range(0, 64, 8), depth=0.27, width=1.35)),
@@ -302,10 +344,10 @@ JOINT_PROFILES = (
 
 NATURAL_PROFILES = (
     ("Irregular mortar and flagstone valleys",
-     "FLAT5 GRNROCK RROCK11 RROCK13",
+     "GRNROCK RROCK11 RROCK13",
      0.38, (2, 4), 0.09, False),
     ("Rock and aggregate relief",
-     "FLOOR6_1 FLOOR6_2 FLAT10 MFLR8_2 MFLR8_3 MFLR8_4 RROCK09 RROCK16 RROCK19",
+     "FLOOR6_1 FLOOR6_2 FLAT10 MFLR8_2 MFLR8_3 MFLR8_4 RROCK16 RROCK19",
      0.23, (2, 3), 0.15, False),
     ("Weathered marble valleys",
      "FLOOR7_2 DEM1_5 DEM1_6", 0.28, (2, 5), 0.05, False),
@@ -321,6 +363,9 @@ STONE_PROFILES = (
     ("Interlocking paver joints", "FLOOR4_6", 0.44, 0.0, 0.007),
     ("Cobblestone banks and mortar joints", "FLAT1_1 FLAT1_2 RROCK10 RROCK12 RROCK15",
      0.46, 0.15, 0.011),
+    ("Compacted gravel ridges and pits", "RROCK09", 0.23, 0.14, 0.008),
+    ("Fine pits in a coated surface", "CEIL5_1 CEIL5_2", 0.10, 0.065, 0.0025),
+    ("Low grass clumps and exposed soil", "GRASS1", 0.12, 0.14, 0.008),
     ("Aggregate pits and raised fragments", "FLAT5_7 FLAT5_8 RROCK17 RROCK18 FLAT5_5",
      0.30, 0.21, 0.011),
 )
@@ -334,9 +379,9 @@ NEUTRAL_PROFILES = (
     ("Animated molten crust without a stable authored height", "RROCK01 RROCK05 RROCK06 RROCK07 RROCK08 "
      "SLIME09 SLIME10 SLIME11 SLIME12"),
     ("Flat finish or fine stipple without identifiable relief",
-     "CEIL5_1 CEIL5_2 FLAT1 FLAT14 FLAT19 FLAT23 CRATOP1 CRATOP2 "
-     "RROCK03 RROCK20 GRASS1 GRASS2 FLOOR1_6 FLAT5_3 CEIL4_1"),
-    ("Decorative blue pattern without identifiable geometry", "FLOOR1_1 CEIL4_2 CEIL4_3"),
+     "FLAT1 FLAT14 FLAT19 CRATOP1 CRATOP2 "
+     "RROCK03 RROCK20 GRASS2 FLOOR1_6 FLAT5_3 CEIL4_1"),
+    ("Decorative blue pattern without identifiable geometry", "CEIL4_2 CEIL4_3"),
 )
 
 
@@ -373,6 +418,12 @@ def height_map(name, pixels):
     elif name in STONE_BY_NAME:
         label, depth, ridge_height, minimum = STONE_BY_NAME[name]
         _stone_shapes(tile, pixels, depth, ridge_height, minimum)
+    elif name == "FLAT23":
+        label = "Long, shallow brushed-steel grooves"
+        _brushed_plate(tile, pixels)
+    elif name == "FLOOR1_1":
+        label = "Grain in the dyed flooring below the UAC mark"
+        _dyed_floor(tile, pixels)
     elif name in WOOD_NAMES:
         label = "Directional worn grain and grooves"
         _wood_shapes(tile, pixels, name)

@@ -123,7 +123,14 @@ def switch_panel(features, context, backing=None):
     visible = blur(blur((~features.changed).astype(np.float32), 1), 1)
     if backing is None:
         backing = panels(features) * smoothstep(visible, 0.59, 0.97)
-    if features.changed.any():
+    mask = context.get("switch_mask")
+    if mask is not None and mask.any() and mask.mean() <= 0.55:
+        tile = HeightTile(backing.shape[1], backing.shape[0])
+        if mount_source_switch(tile, context):
+            device = tile.values.reshape(backing.shape[0], 2, backing.shape[1], 2).mean(axis=(1, 3))
+        else:
+            device = 0.22 * blur(blur(mask.astype(np.float32), 1), 1)
+    elif features.changed.any():
         y, x = np.where(features.changed)
         if (
             y.max() - y.min() > backing.shape[0] * 0.60
@@ -132,12 +139,11 @@ def switch_panel(features, context, backing=None):
             return backing
         mask = np.zeros_like(backing)
         mask[max(0, y.min() - 4):y.max() + 5, max(0, x.min() - 4):x.max() + 5] = 1
+        device = 0.22 * blur(blur(mask, 1), 1)
     else:
-        mask = context.get("switch_mask")
-        if mask is None or mask.mean() > 0.55:
-            return backing
-    # Raise the localized housing while excluding the moving coloured actuator.
-    return backing + 0.22 * blur(blur(mask.astype(np.float32), 1), 1)
+        return backing
+    # The housing occupies these texels. Wall joints end at its perimeter.
+    return np.where(mask > 0, device, backing)
 
 
 PANEL_JOINTS = {
@@ -212,6 +218,46 @@ def recess(tile, bounds, inset=4, rim=0.15, depth=0.23):
     tile.values -= (rim + depth) * plate(tile, interior, 2.7)
 
 
+SWITCH_FACES = {
+    # Patch-local indicator recesses and lever slots. Color changes between
+    # switch states share these same physical surfaces.
+    "SW1S": (32, (
+        ((5, 4, 17, 14), -0.10, 1.2), ((5, 18, 17, 28), -0.10, 1.2),
+        ((21, 7, 25, 26), -0.13, 1.2),
+    )),
+    "SW2S": (32, (
+        ((5, 4, 27, 10), -0.093, 1.2), ((12, 16, 21, 24), 0.072, 1.15),
+    )),
+    "SW4S": (24, (((7, 7, 18, 18), -0.13, 1.25),)),
+}
+
+
+def mount_switch(tile, x, y, style):
+    size, fittings = SWITCH_FACES[style]
+    face = 0.22 * plate(tile, (x, y, x + size, y + size), 2.1)
+    for (left, top, right, bottom), depth, bevel in fittings:
+        face += depth * plate(tile, (x + left, y + top, x + right, y + bottom), bevel)
+    owned = (tile.u >= x) & (tile.u < x + size) & (tile.v >= y) & (tile.v < y + size)
+    np.copyto(tile.values, face, where=owned)
+
+
+def mount_source_switch(tile, context):
+    patch = context.get("switch_patch")
+    mask = context.get("switch_mask")
+    if patch is None or mask is None:
+        return False
+    x, y, name = patch
+    style = name[:-1]
+    if style not in SWITCH_FACES or name[-1] not in "01":
+        return False
+    size, _ = SWITCH_FACES[style]
+    if (x < 0 or y < 0 or x + size > tile.width or y + size > tile.height
+            or np.count_nonzero(mask) != size * size or not np.all(mask[y:y + size, x:x + size])):
+        return False
+    mount_switch(tile, x, y, style)
+    return True
+
+
 def bronze_courses(tile, name):
     cuts = {
         "BRONZE1": (0, 32, 56, 80, 104),
@@ -268,6 +314,75 @@ def pipe_wall(tile, name):
         for x, y in ((8, 72), (6, 88), (77, 59), (43, 90),
                      (95, 84), (178, 65), (194, 98), (239, 88)):
             tile.values -= 0.26 * tile.mound(x, y, 4.0, 4.5)
+
+
+def hardware_runs(tile, runs):
+    ridges = np.zeros_like(tile.values)
+    for points, depth, width in runs:
+        np.maximum(ridges, depth * tile.contour(points, 0.25, width), out=ridges)
+    tile.values += ridges
+
+
+def exit_door(tile):
+    tile.joints(vertical=(0, 64, 112), horizontal=(0, 64), depth=0.20, width=2.0)
+    cable = ((14, 17), (9, 22), (5, 32), (5, 44), (9, 51), (17, 56))
+    runs = [
+        (cable, 0.20, 3.7),
+        (tuple((64 - x, y) for x, y in cable), 0.20, 3.7),
+        (((15, 4), (15, 16), (22, 22), (40, 22), (49, 16), (49, 4)), 0.16, 2.8),
+    ]
+    runs.extend((((x, 0), (x, 72)), 0.17, radius) for x, radius in ((69, 2.5), (82, 4), (91, 4), (106, 2.5)))
+    hardware_runs(tile, runs)
+    recess(tile, (20, 30, 45, 52), inset=2.8, rim=0.11, depth=0.12)
+    for x in (76, 88):
+        for y in (31, 39):
+            recess(tile, (x, y, x + 11, y + 8), inset=1.3, rim=0.09, depth=0.13)
+    recess(tile, (114, 1, 128, 71), inset=2.3, rim=0.16, depth=0.06)
+
+
+def tech_wall(tile, name):
+    if name == "TEKWALL6":
+        tile.joints(horizontal=(0, 32, 105), depth=0.25, width=2.4)
+        for x in range(0, 256, 16):
+            tile.values += 0.20 * plate(tile, (x + 4, 3, x + 14, 24), 3.0)
+            tile.values -= 0.13 * plate(tile, (x + 5, 25, x + 13, 31), 1.7)
+        tile.values -= 0.11 * plate(tile, (0, 33, 256, 104), 1.6)
+        rails = (7, 28, 36, 49, 68, 84, 113, 121, 150, 165, 201, 221, 229)
+        hardware_runs(tile, [(((x, 36), (x, 103)), 0.18, 2.6) for x in rails])
+        for bounds in ((14, 43, 28, 77), (91, 75, 106, 103), (128, 42, 148, 76),
+                       (169, 37, 194, 75), (238, 37, 255, 73)):
+            recess(tile, bounds, inset=2.4, rim=0.12, depth=0.13)
+        return
+
+    # Follow the larger conduit loops. The dense chips and streaks remain
+    # material detail over the equipment plate.
+    tile.joints(vertical=(0,), horizontal=(0,), depth=0.14, width=1.9)
+    for bounds in ((6, 77, 28, 114), (43, 15, 56, 58), (57, 61, 75, 94),
+                   (69, 5, 81, 44), (91, 57, 121, 86), (101, 16, 112, 49)):
+        recess(tile, bounds, inset=2.5, rim=0.10, depth=0.14)
+    hardware_runs(tile, (
+        (((23, 2), (23, 71), (19, 75), (2, 75)), 0.22, 2.9),
+        (((36, 0), (36, 77), (40, 85), (40, 122)), 0.16, 2.3),
+        (((53, 3), (46, 10), (42, 16), (42, 48), (49, 57)), 0.16, 2.5),
+        (((61, 0), (61, 49), (58, 55), (58, 121)), 0.22, 2.6),
+        (((83, 3), (83, 39), (80, 46), (75, 52)), 0.17, 2.4),
+        (((96, 2), (96, 38), (90, 46), (90, 81), (84, 91), (84, 125)), 0.20, 2.6),
+        (((120, 2), (117, 8), (117, 39), (126, 49), (126, 66), (116, 79)), 0.18, 2.6),
+        (((126, 91), (116, 102), (116, 126)), 0.18, 2.4),
+    ))
+
+
+def masked_hardware(tile, name):
+    if name == "MIDBARS3":
+        for y in (0, 64):
+            tile.values += 0.14 * plate(tile, (0, y, 64, y + 8), 2.5)
+        hardware_runs(tile, [(((x, 5), (x, 67)), 0.23, 3.1) for x in (8.5, 24.5, 40.5, 56.5)])
+    else:
+        tile.values += 0.13 * plate(tile, (0, 0, 64, 64), 3)
+        hardware_runs(tile, (
+            (((38, 13), (5, 46)), 0.19, 5.8),
+            (((57, 22), (25, 54)), 0.24, 6.2),
+        ))
 
 
 def formed_hardware(name, shape):
@@ -328,6 +443,59 @@ def formed_hardware(name, shape):
             for y in range(8, 128, 16):
                 tile.values -= 0.19 * plate(tile, (x - 4, y, x + 4, y + 3.5), 1.4)
         return tile.values, "straight reinforcement ribs and mounting slots"
+    if name == "EXITDOOR" and shape == (72, 128):
+        tile = HeightTile(w, h)
+        exit_door(tile)
+        return tile.values, "rounded exit-door cables and inset indicators"
+    if name == "EXITSIGN" and shape == (16, 64):
+        tile = HeightTile(w, h)
+        tile.values += 0.13 * plate(tile, (0.5, 0.5, 32, 15.5), 1.5)
+        tile.values -= 0.21 * plate(tile, (1.75, 1.75, 31.1, 14.25), 1.2)
+        for x in (33, 41, 49, 57):
+            tile.values -= 0.14 * plate(tile, (x, 2, x + 5.5, 14), 1.4)
+        return tile.values, "beveled exit-sign casing and flat lettering"
+    if name == "LITE5" and shape == (128, 16):
+        tile = HeightTile(w, h)
+        for y in range(0, h, 8):
+            tile.values += 0.11 * plate(tile, (0.5, y, 15.5, y + 8), 1.4)
+            tile.values -= 0.15 * plate(tile, (1.8, y + 0.7, 14.2, y + 7.2), 1.35)
+        return tile.values, "repeated lamp bezels and level lenses"
+    if (name, shape) in (("TEKWALL4", (128, 128)), ("TEKWALL6", (128, 256))):
+        tile = HeightTile(w, h)
+        tech_wall(tile, name)
+        return tile.values, "raised conduit and inset circuit housings"
+    if (name, shape) in (("MIDBARS3", (72, 64)), ("BRNSMAL1", (64, 64))):
+        tile = HeightTile(w, h)
+        masked_hardware(tile, name)
+        return tile.values, "beveled frame and raised bars"
+    if (name, shape) in (("BROWN96", (128, 128)), ("BROWNGRN", (128, 64))):
+        tile = HeightTile(w, h)
+        brown_panel(tile)
+        return tile.values, "folded brown wall faces and raised brackets"
+    if name == "BROWN1" and shape == (128, 128):
+        tile = HeightTile(w, h)
+        tile.joints(horizontal=(18, 74), spans=[
+            (x, top, x, bottom)
+            for x in range(0, w, 16)
+            for top, bottom in ((21, 70), (77, 126))
+        ], depth=0.26, width=2.4)
+        for y in (19, 75):
+            tile.values += 0.10 * plate(tile, (0, y, w, y + 6), 2.0)
+        return tile.values, "pressed wall panels and folded horizontal trim"
+    if name in ("SPACEW3", "COMPWERD", "SW1COMP", "SW2COMP") and shape == (128, 64):
+        tile = HeightTile(w, h)
+        equipment_recesses(tile, name)
+        return tile.values, "separate equipment plates, recessed housings and level display faces"
+    if name == "SPACEW4" and shape == (128, 64):
+        tile = HeightTile(w, h)
+        tile.joints(vertical=(0, 32), horizontal=(0, 32, 64, 96), depth=0.30, width=2.5)
+        for x in (0, 32):
+            for y in range(0, h, 32):
+                tile.values += 0.09 * plate(tile, (x + 1, y + 1, x + 31, y + 31), 2.3)
+                for side in (x + 4.5, x + 28.5):
+                    for bolt in (4.5, 11.5, 19.5, 27.5):
+                        tile.values -= 0.18 * tile.mound(side, y + bolt, 2.0, 2.3)
+        return tile.values, "beveled plate joins and recessed fasteners"
     return None
 
 
@@ -396,38 +564,73 @@ def brown_trim(tile):
         tile.values -= 0.20 * plate(tile, (x + 5, 23, x + 12, 31), 2.3)
 
 
+def brown_panel(tile):
+    tile.joints(spans=[(x, 35, x, 127) for x in range(0, tile.width, 16)],
+                depth=0.17, width=2.5)
+    brown_trim(tile)
+
+
 def equipment_recesses(tile, name):
-    columns = ((5, 28), (37, 60)) if name == "SPACEW3" else ((7, 57),)
-    windows = ((5, 22), (26, 43)) if name == "SPACEW3" else ((6, 57),)
+    tile.joints(vertical=(0,), horizontal=(0, 64), depth=0.22, width=2.0)
+    if name.startswith(("SW1", "SW2")):
+        tile.joints(spans=((32, 64, 32, 128),), depth=0.14, width=1.5)
+        recess(tile, (8, 6, 57, 57), inset=2.1, rim=0.11, depth=0.19)
+        mount_switch(tile, 16, 72, "SW2S")
+        return
+    columns = ((4, 27), (36, 59)) if name == "SPACEW3" else ((7, 57),)
+    windows = ((6, 23), (27, 44)) if name == "SPACEW3" else ((6, 57),)
     for y in (0, 64):
         for left, right in columns:
             for top, bottom in windows:
-                recess(tile, (left, y + top, right, y + bottom), inset=2, rim=0.12, depth=0.30)
-    tile.joints(horizontal=(0, 64), depth=0.22, width=2.0)
+                recess(tile, (left, y + top, right, y + bottom), inset=2.2, rim=0.12, depth=0.23)
+        if name == "SPACEW3":
+            for x in (9, 31, 52):
+                for slot in (56, 59, 62):
+                    tile.values -= 0.12 * plate(tile, (x - 3, y + slot, x + 3, y + slot + 1.6), 0.7)
+
+
+def cement9(tile):
+    # Alternating rows are staggered by one source texel and the cuts
+    # follow the dark joints between blocks, regardless of their paint.
+    rows = (0, 21, 42, 63, 84, 105, 128)
+    starts = (-0.5, 0.5) * 3
+    seams = [(x, top, x, bottom)
+             for start, top, bottom in zip(starts, rows, rows[1:])
+             for x in np.arange(start, start + 64, 8)]
+    tile.joints(horizontal=rows[:-1], spans=seams, depth=0.40, width=1.5)
+    for start, top, bottom in zip(starts, rows, rows[1:]):
+        for x in np.arange(start, start + 64, 8):
+            tile.values += 0.10 * plate(tile, (x + 0.8, top + 0.8, x + 7.3, bottom - 1), 2.0)
+
+
+def stone7(tile):
+    cracks = (
+        ((0, 29), (12, 24), (18, 18), (24, 20), (34, 18), (42, 15), (47, 20),
+         (43, 25), (45, 32), (52, 36), (60, 47), (63, 49)),
+        ((0, 49), (10, 46), (17, 40), (25, 43), (33, 45), (40, 42), (45, 34)),
+        ((22, 43), (28, 48), (31, 53), (39, 57), (48, 59), (53, 57), (63, 53)),
+        ((0, 63), (12, 68), (21, 70), (28, 75), (34, 80), (44, 74), (54, 77), (63, 74)),
+        ((3, 92), (9, 87), (20, 87), (29, 83), (38, 90), (45, 92), (56, 88), (63, 88)),
+        ((0, 111), (8, 106), (16, 102), (24, 99), (32, 102), (40, 101), (46, 105),
+         (49, 112), (54, 119), (63, 111)),
+        ((28, 128), (33, 119), (39, 112), (45, 108), (46, 103)),
+    )
+    for points in cracks:
+        np.minimum(tile.values, -0.35 * tile.contour(points, 0.2, 2.35), out=tile.values)
+    for x, y, width, height in ((47, 21, 4.5, 5), (45, 31, 3.8, 3.1), (24, 42, 5, 3),
+                                (27, 80, 8, 5), (43, 102, 4.6, 3.1), (53, 120, 3.3, 3)):
+        np.minimum(tile.values, -0.46 * tile.mound(x, y, width, height), out=tile.values)
 
 
 def reviewed_panel(name, shape):
     height, width = shape
-    if (name, shape) in (("BROWN96", (128, 128)), ("BROWNGRN", (128, 64))):
+    if name in ("CEMENT9", "STONE7") and shape == (128, 64):
         tile = HeightTile(width, height)
-        brown_trim(tile)
-        return tile.values, "source-aligned brown wall brackets and upper channels"
-    if name == "BROWN1" and shape == (128, 128):
-        tile = HeightTile(width, height)
-        tile.joints(horizontal=(18, 74), depth=0.30, width=2.7)
-        return tile.values, "source-aligned brown wall horizontal trim"
-    if name in ("SPACEW3", "COMPWERD") and shape == (128, 64):
-        tile = HeightTile(width, height)
-        equipment_recesses(tile, name)
-        return tile.values, "beveled equipment housings and recessed faceplates"
-    if name == "SPACEW4" and shape == (128, 64):
-        tile = HeightTile(width, height)
-        tile.joints(vertical=(0, 32), horizontal=(0, 32, 64, 96), depth=0.35, width=2.3)
-        for x in (4.5, 29.5, 36.5, 61.5):
-            for y in range(0, 128, 32):
-                for bolt in (4.5, 11.5, 19.5, 27.5):
-                    tile.values -= 0.17 * tile.mound(x, y + bolt, 1.7, 2.1)
-        return tile.values, "matching plate joins and recessed fasteners"
+        if name == "CEMENT9":
+            cement9(tile)
+            return tile.values, "staggered cement block faces and recessed mortar"
+        stone7(tile)
+        return tile.values, "traced fractures and deep pits in the exposed stone"
     if name in ("BLAKWAL1", "BLAKWAL2") and shape == (128, 64):
         tile = HeightTile(width, height)
         # Both have the same frame; BLAKWAL2 is the brighter frame variant.
@@ -446,10 +649,14 @@ def reviewed_panel(name, shape):
             tile.values += 0.22 * plate(tile, (0.6, y, 7.4, y + 16), 0.9)
             tile.values -= 0.38 * plate(tile, (2, y + 3, 6, y + 14), 1.0)
         return tile.values, "recessed key indicator lenses in repeatable metal frames"
-    if (name, shape) in (("STEP2", (16, 32)), ("STEP3", (16, 32)), ("STEPTOP", (16, 128))):
+    if (name, shape) in (("STEP2", (16, 32)), ("STEP3", (16, 32)),
+                          ("STEP6", (16, 32)), ("STEPTOP", (16, 128))):
         tile = HeightTile(width, height)
-        joins = {"STEP2": (3,), "STEP3": (2, 10), "STEPTOP": (4, 14)}
+        joins = {"STEP2": (3,), "STEP3": (2, 10), "STEP6": (8,), "STEPTOP": (4, 14)}
         tile.joints(horizontal=joins[name], depth=0.25, width=2.1)
+        if name in ("STEP2", "STEP6"):
+            y = 5 if name == "STEP2" else 2
+            tile.values += 0.14 * plate(tile, (0, y, width, y + 4), 1.5)
         return tile.values, "source-aligned step nose and riser bevel"
     return None
 
@@ -518,12 +725,14 @@ def height_map(row, family, context):
         return None, "animated liquid, flame or flesh imagery"
     if np.any(pixels[:, :, 3] != 255):
         return None, "masked wall silhouette"
-    if name.startswith(("EXITSIGN", "ZZWOLF3", "ZZWOLF4", "ZZWOLF6", "ZZWOLF7")):
+    if name.startswith(("ZZWOLF3", "ZZWOLF4", "ZZWOLF6", "ZZWOLF7")):
         return None, "printed sign or mural"
     formed = formed_hardware(name, pixels.shape[:2])
     if formed is not None:
         height, label = formed
         return encode(height), label
+    if name == "EXITSIGN":
+        return None, "printed sign without a registered casing"
     authored = authored_detail(name, pixels.shape[:2]) or authored_panel(name, pixels.shape[:2])
     if authored is not None:
         return authored
@@ -535,14 +744,16 @@ def height_map(row, family, context):
         return encode(height), label
     context = context or {}
     features = WallFeatures(pixels, context.get("paired_pixels"))
-    if name in ("SW1BRCOM", "SW2BRCOM", "SW1BRNGN", "SW2BRNGN") and shape in ((128, 64), (128, 128)):
+    if name in ("SW1BRCOM", "SW2BRCOM", "SW1BRN1", "SW2BRN1", "SW1BRNGN", "SW2BRNGN") and shape in ((128, 64), (128, 128)):
         tile = HeightTile(shape[1], shape[0])
-        brown_trim(tile)
+        brown_panel(tile)
+        if mount_source_switch(tile, context):
+            return encode(tile.values), "independent switch face on the original brown wall trim"
         backing = tile.values.reshape(shape[0], 2, shape[1], 2).mean(axis=(1, 3))
         height, label = switch_panel(features, context, backing), "switch housing on the original brown wall trim"
     elif name == "BROVINE2" and context.get("vine_mask") is not None:
         tile = HeightTile(shape[1], shape[0])
-        brown_trim(tile)
+        brown_panel(tile)
         mask = context["vine_mask"]
         vines = 0.30 * smoothstep(blur(mask, 1), 0.06, 0.88)
         backing = tile.values.reshape(shape[0], 2, shape[1], 2).mean(axis=(1, 3))

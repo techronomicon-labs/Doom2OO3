@@ -150,6 +150,29 @@ class ShowcaseTests(unittest.TestCase):
         self.assertLess(first[31, 40], first[39, 40])
         self.assertGreater(first[77, 28], first[77, 50])
 
+    def test_switch_plate_replaces_the_wall_seam_in_both_states(self):
+        first = np.full((128, 128, 4), (110, 100, 95, 255), dtype=np.uint8)
+        second = first.copy()
+        first[77:85, 54:64, :3] = (180, 40, 20)
+        second[77:85, 54:64, :3] = (80, 10, 10)
+        mask = np.zeros(first.shape[:2], dtype=np.float32)
+        mask[72:104, 48:80] = 1.0
+        fields, normals = [], []
+        for name, art, other, patch in (
+            ("SW1BRCOM", first, second, "SW1S0"), ("SW2BRCOM", second, first, "SW1S1"),
+        ):
+            context = {"paired_pixels": other, "switch_mask": mask, "switch_patch": (48, 72, patch)}
+            fields.append(wall_height_map({"name": name, "pixels": art}, "painted panels", context)[0])
+            normals.append(np.asarray(build_channels(art, name, "wall", "painted panels", context)[0]["normal"]))
+
+        np.testing.assert_array_equal(fields[0], fields[1])
+        np.testing.assert_array_equal(normals[0], normals[1])
+        # The brown wall still has a join at U=64 above the switch.
+        self.assertLess(fields[0][120, 128], fields[0][120, 120])
+        # The steel face crosses the same U=64 line without inheriting it.
+        self.assertEqual(np.ptp(fields[0][176, 120:137]), 0)
+        np.testing.assert_array_equal(normals[0][352, 241:269, :2], np.full((28, 2), 128))
+
     def test_painted_door_marks_do_not_warp_the_metal_normal(self):
         door = np.full((96, 128, 4), (100, 100, 100, 255), dtype=np.uint8)
         decorated = door.copy()

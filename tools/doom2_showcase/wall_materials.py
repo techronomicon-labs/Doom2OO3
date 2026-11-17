@@ -49,19 +49,22 @@ def patch_mask(row, defs, decoder, matches):
 
 
 def context(row, rows, defs, decoder):
-    ctx = {}
+    ctx = {"pattern_changed": row.get("pattern_changed", False)}
     name = row["name"]
     if row["kind"] == "wall" and name == "BROVINE2":
         mask = patch_mask(row, defs, decoder, lambda patch: patch == "W106_1")
         if mask is not None:
             ctx["vine_mask"] = mask
     if row["kind"] == "wall" and name.startswith(("SW1", "SW2")):
-        mask = patch_mask(
-            row, defs, decoder,
-            lambda patch: patch.startswith("SW") or patch in ("WALL42_1", "WALL42_5", "WALL42_6"),
-        )
+        def is_switch_patch(patch):
+            return patch.startswith("SW") or patch in ("WALL42_1", "WALL42_5", "WALL42_6")
+
+        mask = patch_mask(row, defs, decoder, is_switch_patch)
         if mask is not None:
             ctx["switch_mask"] = mask
+            devices = [(x, y, patch) for x, y, patch in defs[name][2] if is_switch_patch(patch)]
+            if len(devices) == 1:
+                ctx["switch_patch"] = devices[0]
         if any(
             pname in ("SW2_7", "SW2_8", "WALL42_1", "WALL42_5", "WALL42_6")
             for x, y, pname in defs[name][2]

@@ -17,6 +17,32 @@ STEEL_HARDWARE = frozenset((
     "EXITDOOR", "SUPPORT2", "ZELDOOR",
 ))
 
+# Finish, face roughness, sheltered roughness gain, polished ridge reduction,
+# base metallic and additional metallic on exposed neutral metal.
+ENTRYWAY_FLAT_FINISH = {
+    "CEIL5_1": ("matte coated ceiling", 0.79, 0.08, 0.035, 0.02, 0.0),
+    "CEIL5_2": ("oxidized surface with exposed metal grains", 0.72, 0.11, 0.07, 0.04, 0.30),
+    "FLAT23": ("brushed satin steel", 0.52, 0.08, 0.055, 0.47, 0.0),
+    "FLOOR1_1": ("dry dyed flooring", 0.82, 0.06, 0.05, 0.0, 0.0),
+    "GRASS1": ("matte grass and soil", 0.90, 0.045, 0.04, 0.0, 0.0),
+    "FLAT5": ("worn stone with rough recessed mortar", 0.73, 0.14, 0.05, 0.0, 0.0),
+    "RROCK09": ("dry compacted gravel", 0.81, 0.09, 0.08, 0.0, 0.0),
+    "FLAT4": ("satin metal lattice", 0.54, 0.09, 0.06, 0.41, 0.10),
+    "FLOOR0_1": ("worn floor plates with dark seams", 0.64, 0.09, 0.06, 0.08, 0.14),
+    "FLOOR4_1": ("oxidized cast metal vent", 0.58, 0.12, 0.055, 0.17, 0.19),
+}
+ENTRYWAY_MASONRY = frozenset(("ASHWALL3", "BROWNHUG", "CEMENT9", "STONE7", "STEP6"))
+ENTRYWAY_BROWN_PANELS = frozenset(("BROWN1", "BROWN96", "BROWNGRN"))
+ENTRYWAY_FRAMED_PANELS = frozenset((
+    "MODWALL2", "MODWALL3", "SPACEW3", "SPACEW4", "COMPSPAN", "COMPWERD",
+    "TEKWALL4", "TEKWALL6", "EXITDOOR", "LITE5", "EXITSIGN", "STEP2",
+    "BRNSMAL1", "MIDBARS3",
+))
+ENTRYWAY_SWITCHES = frozenset((
+    "SW1COMP", "SW2COMP", "SW1BRCOM", "SW2BRCOM",
+    "SW1BRN1", "SW2BRN1", "SW1BRNGN", "SW2BRNGN",
+))
+
 
 def _smooth(a, lo, hi):
     x = np.clip((a - lo) / (hi - lo), 0, 1)
@@ -95,7 +121,45 @@ def _normal_bytes(normal):
     return np.uint8(np.rint(np.clip(normal * 127 + 128, 0, 255)))
 
 
-def _hardware_finish(name, kind, pixels, normal, lum, neutral, metal):
+def _entryway_wall_finish(name, pixels, family, context, normal, lum, neutral, metal, rough):
+    from relief_wall_profiles import formed_hardware, height_map
+
+    formed = formed_hardware(name, pixels.shape[:2])
+    if formed is None:
+        encoded, _ = height_map({"name": name, "pixels": pixels}, family, context)
+        if encoded is None:
+            return None
+        field = (encoded.astype(np.float32) - 128) / 255
+    else:
+        field, _ = formed
+
+    size = normal.shape[1], normal.shape[0]
+    surface = _formed_normal(field, pixels, size)
+    if name in ENTRYWAY_MASONRY:
+        # Retain a little mineral grain over the registered joints and fractures.
+        tangent = (surface.astype(np.float32) - 128) / 127
+        tangent[:, :, :2] += 0.18 * (normal[:, :, :2].astype(np.float32) - 128) / 127
+        surface = _normal_bytes(tangent)
+        return surface, np.zeros_like(lum), 0.89 - 0.13 * lum, "dry mineral face and recessed joints"
+    if name in ENTRYWAY_BROWN_PANELS:
+        rows = (np.arange(size[1], dtype=np.float32)[:, None] + 0.5) * pixels.shape[0] / size[1]
+        band = 18 if name == "BROWN1" else 32
+        trim = 1 - _smooth(rows, band - 3, band + 2)
+        return (surface, trim * (0.08 + 0.26 * neutral),
+                0.87 - 0.08 * lum - 0.22 * trim, "weathered panels with separate folded trim")
+    if name in ENTRYWAY_SWITCHES:
+        return surface, 0.77 * metal, np.maximum(rough, 0.49), "switch housing and dry painted backing"
+    if name in ("BRNSMAL1", "MIDBARS3"):
+        return surface, 0.22 + 0.24 * neutral, 0.62 - 0.13 * lum, "oxidized steel rails and bevels"
+
+    steel = neutral * _smooth(lum, 0.035, 0.25)
+    if name in ("LITE5", "EXITDOOR"):
+        steel *= 1 - _smooth(lum, 0.56, 0.83)
+    return (surface, 0.53 * steel, 0.82 - 0.24 * steel - 0.07 * lum,
+            "satin frames and matte equipment faces")
+
+
+def _hardware_finish(name, kind, pixels, normal, lum, neutral, metal, context):
     from relief_wall_profiles import formed_hardware
 
     size = normal.shape[1], normal.shape[0]
@@ -108,6 +172,20 @@ def _hardware_finish(name, kind, pixels, normal, lum, neutral, metal):
         field = (plastic[0].astype(np.float32) - 128.0) / 255.0
         return (_formed_normal(field, pixels, size), np.zeros_like(lum),
                 0.75 + 0.05 * (1 - lum), "matte plastic ceiling and molded covers")
+    if kind == "flat" and name in ENTRYWAY_FLAT_FINISH and not context.get("pattern_changed"):
+        from relief_flat_profiles import height_map
+
+        encoded = height_map(name, pixels)
+        if encoded is None or encoded[0] is None:
+            return None
+        field = (encoded[0].astype(np.float32) - 128.0) / 255.0
+        profile, face, sheltered, polished, alloy, exposed = ENTRYWAY_FLAT_FINISH[name]
+        depth = _mask(field + 0.5, size) - 0.5
+        valleys = _smooth(-depth, 0.01, 0.10)
+        crests = _smooth(depth, 0.012, 0.11)
+        rough = face + sheltered * valleys - polished * crests
+        metal = alloy + exposed * neutral
+        return _formed_normal(field, pixels, size), metal, rough, profile
     if kind != "wall":
         return None
     if name in PAINTED_HARDWARE:
@@ -298,11 +376,18 @@ def build_channels(pixels, name, kind, original_family, context=None):
         metal[:] = 0
     normal = np.asarray(maps["normal"]).copy()
     ao = np.asarray(maps["ao"]).copy()
-    finish = _hardware_finish(name, kind, pixels, normal, lum, neutral, metal)
+    finish = None
+    if kind == "wall" and not context.get("pattern_changed") and (
+        name in ENTRYWAY_MASONRY or name in ENTRYWAY_BROWN_PANELS or
+        name in ENTRYWAY_FRAMED_PANELS or name in ENTRYWAY_SWITCHES
+    ):
+        finish = _entryway_wall_finish(name, pixels, family, context, normal, lum, neutral, metal, rough)
+    if finish is None:
+        finish = _hardware_finish(name, kind, pixels, normal, lum, neutral, metal, context)
     if finish is not None:
         normal, metal, rough, profile = finish
         ao = np.uint8(np.rint(0.33 * ao + 0.67 * 255.0))
-        correction = "Calibrated surface finish retains diffuse response and localizes highlights to shallow seams"
+        correction = "Calibrated surface finish retains diffuse response and follows the authored relief"
     metal = np.clip(metal, 0, 0.97)
     rough = np.clip(rough, 0.20, 0.96)
     metal[~visible] = 0
