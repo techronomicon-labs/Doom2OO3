@@ -6,6 +6,7 @@
 
 class VSMatrix;
 struct IntRect;
+struct HWShadowPuppetMesh;
 
 class VkShadowPuppetStencil
 {
@@ -16,7 +17,7 @@ public:
 
 	// The camera matrix produces Vulkan clip coordinates. Scene depth already
 	// contains the opaque receiver prepass. Returns the sampled visibility slot.
-	int Render(const TArray<FVector3>& triangles, const TArray<FVector3>& edges, FVector3 light,
+	int Render(const HWShadowPuppetMesh& mesh, FVector3 light,
 		const VSMatrix& cameraProjection, const IntRect& viewport);
 
 private:

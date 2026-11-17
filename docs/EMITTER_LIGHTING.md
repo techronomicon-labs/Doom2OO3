@@ -1,6 +1,6 @@
 # Emitter lighting evaluation
 
-Start in Doom II Entryway and press **B** to compare emitter lighting with the legacy renderer. **F1** opens the emitter settings and comparison rooms. **L** toggles the flashlight, **O** opens its beam settings, **R** compares world relief, and **V** compares sprite relief.
+Start in Doom II Entryway and press **B** to compare emitter lighting with the legacy renderer. **F1** opens the emitter settings and comparison rooms. **L** toggles the flashlight, **J** cycles flashlight shadows through Off, Stencil and Depth, and **O** opens beam and shadow settings. **R** compares world relief and **V** compares sprite relief.
 
 **Legacy ambient fill** controls room brightness from the original sector lighting, lightmaps, diffuse probe lighting, and map sunlight. **PBR ambient reflections** controls how strongly PBR materials reflect ambient light, including reflections from light probes where present. Both sliders range from 0 to 1 and default to 0.35 in emitter mode. Direct highlights from the flashlight and authored emitters respond to their own light settings.
 

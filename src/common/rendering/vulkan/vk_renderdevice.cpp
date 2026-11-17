@@ -300,10 +300,10 @@ bool VulkanRenderDevice::SupportsShadowPuppetStencil()
 	return mShadowPuppetStencil->Supported();
 }
 
-int VulkanRenderDevice::RenderShadowPuppetStencil(const TArray<FVector3>& triangles, const TArray<FVector3>& edges, FVector3 origin,
+int VulkanRenderDevice::RenderShadowPuppetStencil(const HWShadowPuppetMesh& mesh, FVector3 origin,
 	const VSMatrix& cameraProjection, const IntRect& viewport)
 {
-	return mShadowPuppetStencil->Render(triangles, edges, origin, cameraProjection, viewport);
+	return mShadowPuppetStencil->Render(mesh, origin, cameraProjection, viewport);
 }
 
 int VulkanRenderDevice::RenderShadowPuppetDepth(const TArray<FVector3>& triangles, const VSMatrix& lightProjection)

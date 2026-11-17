@@ -8,6 +8,7 @@
 #include "vk_lighttilepolicy.h"
 
 struct FRenderViewpoint;
+struct HWShadowPuppetMesh;
 class VkSamplerManager;
 class VkBufferManager;
 class VkTextureManager;
@@ -86,7 +87,7 @@ public:
 	void ImageTransitionScene(bool unknown) override;
 	void SetActiveRenderTarget() override;
 	bool SupportsShadowPuppetStencil();
-	int RenderShadowPuppetStencil(const TArray<FVector3>& triangles, const TArray<FVector3>& edges, FVector3 origin,
+	int RenderShadowPuppetStencil(const HWShadowPuppetMesh& mesh, FVector3 origin,
 		const VSMatrix& cameraProjection, const IntRect& viewport);
 	int RenderShadowPuppetDepth(const TArray<FVector3>& triangles, const VSMatrix& lightProjection);
 

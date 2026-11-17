@@ -1,8 +1,9 @@
 #pragma once
 
 #include "matrix.h"
-#include "tarray.h"
+#include "hw_shadowpuppetmesh.h"
 #include <array>
+#include <unordered_set>
 
 class AActor;
 struct FDynamicLight;
@@ -28,13 +29,11 @@ struct HWShadowPuppetScene
 	HWShadowPuppetLightSet Flashlight;
 	FVector3 Origin;
 	VSMatrix LightProjection = VSMatrix::identity();
-	// Opaque sprite caps face the light. Edge endpoint pairs follow their winding.
-	TArray<FVector3> Triangles;
-	TArray<FVector3> Edges;
-	TArray<const AActor*> Casters;
+	HWShadowPuppetMesh Mesh;
+	std::unordered_set<const AActor*> Casters;
 };
 
-bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene);
+bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene, bool stencil);
 VSMatrix ShadowPuppetVulkanProjection(const VSMatrix& projection, const VSMatrix& view);
 
 extern thread_local HWShadowPuppetLightSet HWShadowPuppetFlashlight;

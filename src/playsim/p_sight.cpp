@@ -949,13 +949,26 @@ done:
 }
 
 // Renderer-only visibility from the optical origin to any height of the submitted sprite.
-// The caller has excluded linked portals, fake sectors, and 3D floors for the whole level.
+// The caller has excluded linked portals and 3D floors. Boom height transfers
+// can hide a sprite across a fake floor or ceiling in either endpoint sector.
 bool P_CheckSightFromRenderPoint(const DVector3& origin, AActor* target, const DVector3& feet)
 {
 	auto* level = target->Level;
 	auto* startSector = level->PointInRenderSubsector(origin)->sector;
 	auto* endSector = level->PointInRenderSubsector(feet)->sector;
 	if (!level->CheckReject(startSector, endSector)) return false;
+	for (const auto* control : { startSector->GetHeightSec(), endSector->GetHeightSec() })
+	{
+		if (!control) continue;
+		const auto separates = [&](const secplane_t& plane) {
+			const double sourceZ = origin.Z - plane.ZatPoint(origin);
+			const double feetZ = feet.Z - plane.ZatPoint(feet);
+			return (sourceZ < 0 && feetZ >= 0) || (sourceZ > 0 && feetZ + target->Height <= 0);
+		};
+		if (separates(control->floorplane) ||
+			(!(control->MoreFlags & SECMF_FAKEFLOORONLY) && separates(control->ceilingplane)))
+			return false;
+	}
 
 	validcount++;
 	portals.Clear();

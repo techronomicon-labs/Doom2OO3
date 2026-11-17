@@ -29,8 +29,8 @@ thread_local HWShadowPuppetLightSet HWShadowPuppetFlashlight;
 
 namespace
 {
-	constexpr unsigned MaxCasters = 4;
-	constexpr unsigned MaxMaskPieces = 4096;
+	// Stock Spider Mastermind death frames reach 5,867 merged caps and edges.
+	constexpr unsigned MaxMaskPieces = 8192;
 
 	struct PixelRect
 	{
@@ -47,6 +47,8 @@ namespace
 		int Width = 0, Height = 0, Cutoff = -1;
 		std::vector<PixelRect> Rectangles;
 		std::vector<PixelEdge> Edges;
+
+		size_t Bytes() const { return Rectangles.capacity() * sizeof(PixelRect) + Edges.capacity() * sizeof(PixelEdge); }
 	};
 
 	// Pixel coordinates are patch edges, with +Y down. Caps and contours
@@ -130,14 +132,23 @@ namespace
 	{
 		static thread_local std::map<FTexture*, SpriteMask> masks;
 		static thread_local uint64_t generation = 0;
+		static thread_local size_t retainedBytes = 0;
 		const auto now = RenderVisualTime::RuntimeClock().Snapshot().Generation;
-		if (now != generation || (masks.size() >= 128 && masks.find(&texture) == masks.end()))
+		// Budget actual contour storage: a room of small animated sprites can
+		// reuse far more frames than one with large, intricate replacements.
+		if (now != generation || ((retainedBytes >= 16 * 1024 * 1024 || masks.size() >= 2048) && !masks.count(&texture)))
 		{
 			masks.clear();
+			retainedBytes = 0;
 			generation = now;
 		}
 		auto& mask = masks[&texture];
-		if (mask.Cutoff != cutoff) mask = ReadMask(texture, cutoff);
+		if (mask.Cutoff != cutoff)
+		{
+			retainedBytes -= mask.Bytes();
+			mask = ReadMask(texture, cutoff);
+			retainedBytes += mask.Bytes();
+		}
 		return mask;
 	}
 
@@ -148,6 +159,16 @@ namespace
 		FVector3 TopLeft, Across, Down; // complete untrimmed source image
 	};
 
+	bool IsFlashlightBlocker(const AActor& actor)
+	{
+		if (actor.player || actor.flags & (MF_MISSILE | MF_SPECIAL) || actor.IsKindOf(NAME_Inventory))
+			return false;
+		// Use the effective flags after DeHackEd replacements and state actions.
+		// A dying actor still blocks while solid. A visible Spectre or Lost Soul
+		// contributes its sprite silhouette regardless of its display blend.
+		return (actor.flags & MF_SOLID) || (actor.health > 0 && (actor.flags3 & MF3_ISMONSTER));
+	}
+
 	bool ResolveLightSprite(HWDrawInfo& di, HWSprite& sprite, const FVector3& light, LightSprite& card)
 	{
 		auto& actor = *sprite.actor;
@@ -155,7 +176,8 @@ namespace
 		const bool forcedTilt = (actor.renderflags & RF_FORCEXYBILLBOARD) && sprite.RenderSurface.xyBillboard;
 		const bool cameraOffset = (actor.renderflags2 & RF2_BILLBOARDFACECAMERA) && sprite.RenderSurface.facesCamera &&
 			(sprite.offx != 0 || sprite.offy != 0);
-		if ((actor.renderflags & RF_ROLLSPRITE) || (actor.renderflags2 & RF2_ISOMETRICSPRITES) || forcedTilt || cameraOffset)
+		if ((actor.renderflags & (RF_SPRITETYPEMASK | RF_ROLLSPRITE)) != RF_FACESPRITE ||
+			(actor.renderflags2 & RF2_ISOMETRICSPRITES) || forcedTilt || cameraOffset)
 		{
 			// These modes rotate, translate or deform the artwork out of the
 			// upright frame. Use their submitted transform and its matching UVs.
@@ -236,7 +258,7 @@ namespace
 		return true;
 	}
 
-	void AddSpriteMask(const LightSprite& card, const FVector3& light, HWShadowPuppetScene& scene)
+	void AddSpriteMask(const LightSprite& card, const FVector3& light, HWShadowPuppetScene& scene, bool stencil)
 	{
 		const float threshold = std::clamp(float(gl_mask_sprite_threshold), 0.f, 1.f);
 		const int cutoff = std::max(1, int(std::ceil(255.f * threshold)));
@@ -249,22 +271,30 @@ namespace
 		const bool reverse = facing < 0;
 		const auto position = [&](int x, int y) { return origin + dx * float(x) + dy * float(y); };
 
-		scene.Triangles.Grow(unsigned(mask.Rectangles.size()) * 6);
+		auto& mesh = scene.Mesh;
+		mesh.Triangles.Grow(unsigned(mask.Rectangles.size()) * 6);
 		for (const auto& r : mask.Rectangles)
 		{
 			const auto a = position(r.Left, r.Top), b = position(r.Right, r.Top);
 			const auto c = position(r.Right, r.Bottom), d = position(r.Left, r.Bottom);
-			scene.Triangles.Push(a); scene.Triangles.Push(reverse ? d : b); scene.Triangles.Push(c);
-			scene.Triangles.Push(a); scene.Triangles.Push(c); scene.Triangles.Push(reverse ? b : d);
+			mesh.Triangles.Push(a); mesh.Triangles.Push(reverse ? d : b); mesh.Triangles.Push(c);
+			mesh.Triangles.Push(a); mesh.Triangles.Push(c); mesh.Triangles.Push(reverse ? b : d);
 		}
-		scene.Edges.Grow(unsigned(mask.Edges.size()) * 2);
-		for (const auto& edge : mask.Edges)
+		if (stencil)
 		{
-			const auto from = position(edge.FromX, edge.FromY), to = position(edge.ToX, edge.ToY);
-			scene.Edges.Push(reverse ? to : from);
-			scene.Edges.Push(reverse ? from : to);
+			mesh.Edges.Grow(unsigned(mask.Edges.size()) * 2);
+			for (const auto& edge : mask.Edges)
+			{
+				const auto from = position(edge.FromX, edge.FromY), to = position(edge.ToX, edge.ToY);
+				mesh.Edges.Push(reverse ? to : from);
+				mesh.Edges.Push(reverse ? from : to);
+			}
+			// Each closed card contributes at most one to the final winding
+			// count per sample. Resolve before an 8-bit count can wrap to zero.
+			if (scene.Casters.size() % 255 == 0) mesh.StencilBatches.Push(HWShadowPuppetMesh::BatchEnd{});
+			mesh.StencilBatches.Last() = { mesh.Triangles.Size(), mesh.Edges.Size() };
 		}
-		scene.Casters.Push(card.Actor);
+		scene.Casters.insert(card.Actor);
 	}
 
 	FVector3 RenderPosition(const DVector3& point)
@@ -296,7 +326,7 @@ VSMatrix ShadowPuppetVulkanProjection(const VSMatrix& projection, const VSMatrix
 	return clip;
 }
 
-bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene)
+bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene, bool stencil)
 {
 	const auto& view = di.Viewpoint;
 	if (!view.camera || !view.sector || !view.camera->player || view.camera != view.camera->player->mo)
@@ -305,13 +335,6 @@ bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene)
 	// A sprite from another portal group does not belong in the root geometry pass.
 	if (view.sector->PortalGroup != 0 || level.linePortals.Size() != 0)
 		return false;
-	for (auto& sector : level.sectors)
-	{
-		if (sector.PortalIsLinked(sector_t::floor) || sector.PortalIsLinked(sector_t::ceiling) ||
-			sector.e->XFloor.ffloors.Size() != 0 || sector.GetHeightSec())
-			return false;
-	}
-
 	// The add-on models a noncircular beam with several cones. All rays
 	// originate at the same point, so all lobes share one visibility pass.
 	auto& lights = scene.Flashlight;
@@ -333,6 +356,12 @@ bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene)
 		radius = std::max(radius, candidate->GetRadius());
 	}
 	if (!lights.Count) return false;
+	for (auto& sector : level.sectors)
+	{
+		if (sector.PortalIsLinked(sector_t::floor) || sector.PortalIsLinked(sector_t::ceiling) ||
+			sector.e->XFloor.ffloors.Size() != 0)
+			return false;
+	}
 	const auto* beam = lights.Beams[0];
 	double halfAngle = beam->pSpotOuterAngle->Degrees();
 	if (lights.Count > 1)
@@ -352,50 +381,35 @@ bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene)
 
 	const FVector3 origin = RenderPosition(HWLightPosition(beam));
 	const auto* presented = HWPresentedFlashlight(beam);
-	struct Caster { LightSprite Card; float Distance; };
-	std::array<Caster, MaxCasters> casters {};
-	unsigned count = 0;
-	const FName imp("DoomImp");
 	// The submitted sprite is authoritative. A cosmetic floor shadow has
-	// index -1 and must never itself block the flashlight.
-	for (auto* sprite : di.drawlists[GLDL_TRANSLUCENT].sprites)
+	// index -1. Opaque wall sprites share the models list with actual models.
+	for (auto list : {GLDL_TRANSLUCENT, GLDL_MODELS})
 	{
-		auto* actor = sprite->actor;
-		if (!actor || actor->health <= 0 || !actor->IsKindOf(imp) || sprite->index == -1 ||
-			sprite->modelframe || !sprite->texture || !sprite->texture->GetTexture() ||
-			sprite->OverrideShader != -1 || sprite->trans < 1.f ||
-			(actor->RenderStyle != LegacyRenderStyles[STYLE_Normal] && actor->RenderStyle != LegacyRenderStyles[STYLE_Translucent]) ||
-			(actor->renderflags & RF_SPRITETYPEMASK) != RF_FACESPRITE ||
-			sprite->RenderSurface.throughPortalMode || !actor->Sector || actor->Sector->PortalGroup != 0)
-			continue;
-		LightSprite card;
-		if (!ResolveLightSprite(di, *sprite, origin, card)) continue;
-		const FVector3 span = card.Across + card.Down;
-		const float extent = span.Length() * 0.5f;
-		const FVector3 relative = card.TopLeft + span * 0.5f - origin;
-		const float distance = relative.Length();
-		if ((count == MaxCasters && distance >= casters.back().Distance) ||
-			std::none_of(cones.begin(), cones.begin() + lights.Count,
-				[&](const FlashlightCone& cone) { return cone.Reaches(relative, distance, extent); }))
-			continue;
-		const bool visible = presented
-			? P_CheckSightFromRenderPoint(presented->Position, actor, {sprite->x, sprite->y, sprite->z})
-			: P_CheckSight(beam->target.Get(), actor, SF_IGNOREVISIBILITY);
-		if (!visible) continue;
-		if (std::any_of(casters.begin(), casters.begin() + count,
-			[&](const Caster& caster) { return caster.Card.Actor == actor; })) continue;
-		unsigned slot = std::min(count, MaxCasters - 1);
-		while (slot > 0 && casters[slot - 1].Distance > distance)
+		for (auto* sprite : di.drawlists[list].sprites)
 		{
-			casters[slot] = casters[slot - 1];
-			--slot;
+			auto* actor = sprite->actor;
+			if (!actor || sprite->index == -1 || !IsFlashlightBlocker(*actor) ||
+				sprite->modelframe || !sprite->texture || !sprite->texture->GetTexture() ||
+				sprite->RenderSurface.throughPortalMode || !actor->Sector || actor->Sector->PortalGroup != 0 ||
+				scene.Casters.count(actor))
+				continue;
+			LightSprite card;
+			if (!ResolveLightSprite(di, *sprite, origin, card)) continue;
+			const FVector3 span = card.Across + card.Down;
+			const float extent = span.Length() * 0.5f;
+			const FVector3 relative = card.TopLeft + span * 0.5f - origin;
+			const float distance = relative.Length();
+			if (std::none_of(cones.begin(), cones.begin() + lights.Count,
+				[&](const FlashlightCone& cone) { return cone.Reaches(relative, distance, extent); }))
+				continue;
+			const bool visible = presented
+				? P_CheckSightFromRenderPoint(presented->Position, actor, {sprite->x, sprite->y, sprite->z})
+				: P_CheckSight(beam->target.Get(), actor, SF_IGNOREVISIBILITY);
+			if (!visible) continue;
+			AddSpriteMask(card, origin, scene, stencil);
 		}
-		casters[slot] = { card, distance };
-		count = std::min(count + 1, MaxCasters);
 	}
-	for (unsigned i = 0; i < count; ++i)
-		AddSpriteMask(casters[i].Card, origin, scene);
-	if (!scene.Triangles.Size())
+	if (!scene.Mesh.Triangles.Size())
 		return false;
 	const FVector3 aim = origin + forward;
 	const FVector3 up = std::abs(forward.Y) < 0.98f ? FVector3(0, 1, 0) : FVector3(0, 0, 1);

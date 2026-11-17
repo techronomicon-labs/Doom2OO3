@@ -6,7 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
-FLASHLIGHT_FILES = ("ZSCRIPT", "CVARINFO", "MAPINFO", "KEYCONF", "MENUDEF")
+FLASHLIGHT_FILES = ("ZSCRIPT", "CVARINFO", "DEFCVARS", "MAPINFO", "KEYCONF", "MENUDEF")
 HEROES = [
     "DOOR3",
     "SW1METAL",

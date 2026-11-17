@@ -1,6 +1,8 @@
-# Shadow puppet feasibility
+# Flashlight shadows in Doom II and DBP50
 
-The prototype compares two ways for a Doom II Imp to block the player's flashlight. For each animated Imp in the main view, Doom selects the current frame's directional artwork and mirror as seen from the flashlight. The silhouette stands upright at the actor's interpolated position, using the selected patch's offsets, scale and floor clipping. Rays through its opaque texels cast onto real map surfaces. The two views can see different sides of the same Imp when the flashlight is close or off to one side. Modded actors that explicitly require a rolled, isometric, tilted or offset camera-facing sprite use their authored presentation geometry.
+Press **L** to turn on the flashlight and **J** to cycle **Off → Stencil → Depth** during play. **O** opens flashlight settings, including **Flashlight shadows** and **Depth edge softness**. A fresh campaign profile starts in Depth. Each game's profile remembers the selected mode and softness. You can rebind these keys under **Customize Controls → Local Flashlight**.
+
+Enemies and solid scenery cast from their current sprite frame. Doom selects the directional artwork and mirror as seen from the flashlight, then projects its opaque texels onto map geometry. The silhouette follows animation, scale, patch offsets and floor clipping. DBP50 uses its own replacements and effective actor flags. An exploding barrel stops blocking when it loses solidity. Flying enemies and ceiling-hung decorations cast from their actual heights. Pickups, projectiles and non-solid scenery let the beam through.
 
 | Backend | Integration in the immediate Vulkan renderer | Main risks |
 | --- | --- | --- |
@@ -9,7 +11,7 @@ The prototype compares two ways for a Doom II Imp to block the player's flashlig
 
 `VkRenderBuffers` owns scene depth/stencil. The stencil pass must preserve scene depth and return the attachment in the layout expected by the immediate scene. Each backend owns its visibility image and uses Vulkan's existing command retirement and bindless descriptor mechanisms. A frame with no effective result uses the ordinary flashlight path. Depth only needs the spotlight projection. Stencil resolves at the camera viewport and can increase cost with screen resolution.
 
-`hw_dynlightdata.cpp` marks the spotlights belonging to the player's flashlight. The normal, specular, and PBR fragment shaders evaluate visibility once per receiving fragment and apply it to each marked spotlight's direct attenuation. Ambient, probes, and unrelated lights follow the same shader paths in every mode. Portal views and unsupported render paths use the ordinary flashlight. The first comparison uses ordinary opaque walls, floors, and steps with one flashlight and no interleaved portal or fake-floor receivers.
+`hw_dynlightdata.cpp` marks the spotlights belonging to the player's flashlight. The normal, specular, and PBR fragment shaders evaluate visibility once per receiving fragment and apply it to each marked spotlight's direct attenuation. Ambient, probes, and unrelated lights follow the same shader paths in every mode.
 
 ## Play the comparison room
 
@@ -19,9 +21,9 @@ For a hard/soft comparison, choose **F1 → Preview soft Depth**. This selects D
 
 The flashlight mount tilts with mouselook. **F1 → Flashlight settings → Position and aim** adjusts it relative to your view. With both aim offsets at zero the beam points parallel to the crosshair. An offset mount still produces parallax on nearby surfaces. Positive vertical aim angles tilt the beam above the crosshair.
 
-The comparison launcher selects true-colour immediate Vulkan rendering, requests 4× MSAA, and disables SSAO and the optional legacy sprite-floor shadows. In normal play an Imp that successfully casts a flashlight shadow also skips its duplicate legacy floor shadow for that view. Opaque walls and flats receive projected shadows. Masked materials, sprites, viewmodels, special vision, and portal views use their ordinary lighting. Adjusting horizontal and vertical spread produces one, three, or five spotlights at the flashlight mount. Both shadow modes cover the full beam, including the outer lobes. Multiplayer and maps with 3D floors or linked portals fall back. Stencil needs depth clamp and a visibility attachment matching the scene's actual sample count.
+The comparison launcher selects true-colour immediate Vulkan rendering, requests 4× MSAA, and disables SSAO and the optional legacy sprite-floor shadows. In normal play a sprite that casts a flashlight shadow skips its duplicate legacy floor shadow for that view. Opaque walls and flats receive projected shadows. Masked surfaces, sprites, viewmodels, special vision and portal views use their ordinary lighting. Both methods cover the full beam, including the outer lobes of an elliptical spotlight. Multiplayer and maps with 3D floors or linked portals use the ordinary flashlight. Stencil needs depth clamp and a visibility attachment matching the scene's actual sample count.
 
-The comparison covers up to four living Imps submitted in the main view, with line of sight from the flashlight. The stock artwork supplies eight horizontal views. Directly above or below the sprite, its upright extent presents no area to the light. Depth uses a 1024 × 1024 image (4 MiB D32 or 2 MiB D16) and a 0.30-unit contact bias. **Depth edge softness** ranges from 0 to 2 and defaults to 1. Positive values simulate a flashlight with a finite emitting area. Blocker and receiver depth determine how wide its penumbra appears. Stencil resolves hard-edge coverage with MSAA.
+The renderer considers sprites submitted in the main view that intersect the beam and have line of sight from the flashlight. Directly above or below an upright sprite, its edge presents no area to the light. Depth uses a 1024 × 1024 image (4 MiB D32 or 2 MiB D16) and a 0.30-unit contact bias. **Depth edge softness** ranges from 0 to 2 and defaults to 1. Positive values simulate a flashlight with a finite emitting area. Blocker and receiver depth determine the width of the penumbra. Stencil resolves hard edges with MSAA.
 
 To reproduce the room with a Windows runtime built from this branch, generate current relief, sprite, and flashlight add-ons, then add the demonstration map.
 
@@ -46,3 +48,10 @@ py tools/doom2_showcase/capture_shadow_puppets.py --pack build/issue-2-shadow-pu
 ```
 
 Use `--msaa 0` for the single-sample comparison and `--depth-softness 0` to isolate the unfiltered Depth edge at the same pose.
+
+To check the campaign builds, pass their playtest directories to the native capture tool. It compares Off, Stencil and Depth on both original MAP01s and in controlled scenes containing enemies, bosses, solid decorations and pickups. Add `--case overlap` for the 256-caster stencil regression.
+
+```powershell
+py tools/doom2_showcase/capture_campaign_shadows.py --doom2 build/issue-5-campaign-playtest `
+  --dbp50 build/issue-5-dbp50-complete-playtest --out build/campaign-shadow-check
+```

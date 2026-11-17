@@ -39,6 +39,7 @@
 #include "hw_drawstructs.h"
 #include "hw_drawcontext.h"
 #include "hw_walldispatcher.h"
+#include "hw_flatdispatcher.h"
 #include "hw_visibleset.h"
 #include "hw_fakeflat.h"
 #include "po_man.h"
@@ -59,6 +60,7 @@
 #include "swrenderer/r_swcolormaps.h"
 #include "hwrenderer/diagnostics/hw_pfviewdiagnostics.h"
 #include "hwrenderer/diagnostics/hw_sdvkdiagnostics.h"
+#include "hwrenderer/diagnostics/hw_sdvkdiagnosticcore.h"
 
 EXTERN_CVAR(Float, r_visibility)
 EXTERN_CVAR(Int, lm_background_updates);
@@ -821,18 +823,17 @@ void HWDrawInfo::UpdateLightmaps()
 	VisibleTiles.Result.Clear();
 }
 
-static void RemoveLegacySpriteShadows(HWDrawList& list, const TArray<const AActor*>& casters)
+static void RemoveLegacySpriteShadows(HWDrawList& list, const std::unordered_set<const AActor*>& casters)
 {
 	// The translucent list hasn't been sorted yet. Remove only the duplicate
 	// floor billboards for actors projected successfully in this view.
-	for (unsigned i = list.Size(); i > 0; --i)
-	{
-		const auto& item = list.drawitems[i - 1];
-		if (item.rendertype != DrawType_SPRITE) continue;
+	if (list.Size() == 0) return;
+	auto end = std::remove_if(list.drawitems.begin(), list.drawitems.end(), [&](const HWDrawItem& item) {
+		if (item.rendertype != DrawType_SPRITE) return false;
 		const auto* sprite = list.sprites[item.index];
-		if (sprite->index == -1 && casters.Contains(sprite->actor))
-			list.drawitems.Delete(i - 1);
-	}
+		return sprite->index == -1 && casters.count(sprite->actor) != 0;
+	});
+	list.drawitems.Resize(unsigned(end - list.drawitems.begin()));
 }
 
 void HWDrawInfo::RenderScene(FRenderState &state)
@@ -878,9 +879,7 @@ void HWDrawInfo::RenderScene(FRenderState &state)
 	{
 		auto* device = static_cast<VulkanRenderDevice*>(screen);
 		HWShadowPuppetScene puppet;
-		const auto& flats = drawlists[GLDL_PLAINFLATS].flats;
-		const bool simpleFlats = std::none_of(flats.begin(), flats.end(), [](const HWFlat* flat) { return flat->hacktype != 0; });
-		if (simpleFlats && (puppetMode != 1 || device->SupportsShadowPuppetStencil()) && BuildShadowPuppetScene(*this, puppet))
+		if ((puppetMode != 1 || device->SupportsShadowPuppetStencil()) && BuildShadowPuppetScene(*this, puppet, puppetMode == 1))
 		{
 			int visibility = 0;
 			if (puppetMode == 1)
@@ -889,15 +888,23 @@ void HWDrawInfo::RenderScene(FRenderState &state)
 				state.SetColorMask(false);
 				state.EnableTexture(false);
 				drawlists[GLDL_PLAINWALLS].DrawWalls(this, state, false);
-				drawlists[GLDL_PLAINFLATS].DrawFlats(this, state, false);
+				// A flood fill for a missing wall texture owns its own stencil and
+				// has no receiver depth. Leave it to the regular colour pass.
+				HWFlatDispatcher dispatcher(this);
+				const auto& flats = drawlists[GLDL_PLAINFLATS];
+				for (const auto& item : flats.drawitems)
+				{
+					auto* flat = flats.flats[item.index];
+					if (!(flat->hacktype & SSRF_FLOODHACK)) flat->DrawFlat(&dispatcher, state, false);
+				}
 				state.EnableTexture(gl_texture);
 				state.SetColorMask(true);
 				const auto clip = ShadowPuppetVulkanProjection(VPUniforms.mProjectionMatrix, VPUniforms.mViewMatrix);
-				visibility = device->RenderShadowPuppetStencil(puppet.Triangles, puppet.Edges, puppet.Origin, clip, screen->mSceneViewport);
+				visibility = device->RenderShadowPuppetStencil(puppet.Mesh, puppet.Origin, clip, screen->mSceneViewport);
 			}
 			else
 			{
-				visibility = device->RenderShadowPuppetDepth(puppet.Triangles, puppet.LightProjection);
+				visibility = device->RenderShadowPuppetDepth(puppet.Mesh.Triangles, puppet.LightProjection);
 			}
 			if (visibility > 0)
 			{
@@ -910,6 +917,9 @@ void HWDrawInfo::RenderScene(FRenderState &state)
 				HWShadowPuppetFlashlight = puppet.Flashlight;
 				state.SetShadowPuppetReceiver(true);
 				gl_shadow_puppets_active = puppetMode;
+				if (SdvkDiagnostics::StateEnabled())
+					SdvkDiagnostics::Emit("flashlight-shadow", SdvkObservation::Object()
+						.Int("mode", puppetMode).Int("casters", puppet.Casters.size()).Json());
 			}
 		}
 	}

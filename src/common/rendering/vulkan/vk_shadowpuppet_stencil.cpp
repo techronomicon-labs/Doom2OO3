@@ -1,5 +1,6 @@
 #include "vk_shadowpuppet_stencil.h"
 #include "vk_shadowpuppet_vertices.h"
+#include "hw_shadowpuppetmesh.h"
 
 #include "intrect.h"
 #include "matrix.h"
@@ -62,12 +63,17 @@ void AddTriangle(TArray<FVector4>& output, FVector4 a, FVector4 b, FVector4 c)
 	output.Push(c);
 }
 
-void BuildVolume(TArray<FVector4>& output, const TArray<FVector3>& triangles, const TArray<FVector3>& edges, FVector3 light)
+unsigned VolumeVertexCount(HWShadowPuppetMesh::BatchEnd end)
 {
-	output.Grow(2 * triangles.Size() + 3 * edges.Size());
-	for (unsigned i = 0; i < triangles.Size(); i += 3)
+	return 2 * end.Triangles + 3 * end.Edges;
+}
+
+void AppendVolume(TArray<FVector4>& output, const HWShadowPuppetMesh& mesh, FVector3 light,
+	HWShadowPuppetMesh::BatchEnd from, HWShadowPuppetMesh::BatchEnd end)
+{
+	for (unsigned i = from.Triangles; i < end.Triangles; i += 3)
 	{
-		auto a = triangles[i], b = triangles[i + 1], c = triangles[i + 2];
+		auto a = mesh.Triangles[i], b = mesh.Triangles[i + 1], c = mesh.Triangles[i + 2];
 		// The opaque sprite pixels form the near cap. The opposite-winding
 		// cap at infinity keeps the z-fail count valid when the view intersects it.
 		AddTriangle(output, Homogeneous(a, 1), Homogeneous(b, 1), Homogeneous(c, 1));
@@ -76,9 +82,9 @@ void BuildVolume(TArray<FVector4>& output, const TArray<FVector3>& triangles, co
 
 	// Extrude only the actual alpha boundaries, including holes. Internal
 	// strip seams never enter the volume, even when two adjacent runs differ.
-	for (unsigned i = 0; i < edges.Size(); i += 2)
+	for (unsigned i = from.Edges; i < end.Edges; i += 2)
 	{
-		auto a = edges[i], b = edges[i + 1];
+		auto a = mesh.Edges[i], b = mesh.Edges[i + 1];
 		AddTriangle(output, Homogeneous(a, 1), Homogeneous(a - light, 0), Homogeneous(b - light, 0));
 		AddTriangle(output, Homogeneous(a, 1), Homogeneous(b - light, 0), Homogeneous(b, 1));
 	}
@@ -183,7 +189,7 @@ void VkShadowPuppetStencil::CreatePipelines()
 		.RasterizationSamples(Samples)
 		.Cull(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
 		.DepthStencilEnable(false, false, true)
-		.Stencil(VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP, VK_COMPARE_OP_NOT_EQUAL, 0xff, 0, 0)
+		.Stencil(VK_STENCIL_OP_KEEP, VK_STENCIL_OP_ZERO, VK_STENCIL_OP_KEEP, VK_COMPARE_OP_NOT_EQUAL, 0xff, 0xff, 0)
 		.AddColorBlendAttachment(ColorBlendAttachmentBuilder().ColorWriteMask(VK_COLOR_COMPONENT_R_BIT).Create())
 		.Layout(Layout.get())
 		.RenderPass(Pass.get())
@@ -215,10 +221,10 @@ void VkShadowPuppetStencil::ResizeVisibility(int width, int height)
 	}
 }
 
-int VkShadowPuppetStencil::Render(const TArray<FVector3>& triangles, const TArray<FVector3>& edges, FVector3 light,
+int VkShadowPuppetStencil::Render(const HWShadowPuppetMesh& mesh, FVector3 light,
 	const VSMatrix& cameraProjection, const IntRect& viewport)
 {
-	if (!Supported() || triangles.Size() == 0 || triangles.Size() % 3 != 0 || edges.Size() == 0 || edges.Size() % 2 != 0) return 0;
+	if (!Supported() || mesh.StencilBatches.Size() == 0) return 0;
 	auto buffers = Fb->GetBuffers();
 	auto& sceneDepth = buffers->SceneDepthStencil;
 	const int width = buffers->GetWidth(), height = buffers->GetHeight();
@@ -227,7 +233,13 @@ int VkShadowPuppetStencil::Render(const TArray<FVector3>& triangles, const TArra
 	if (x0 >= x1 || y0 >= y1 || sceneDepth.Layout != VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) return 0;
 
 	TArray<FVector4> volume;
-	BuildVolume(volume, triangles, edges, light);
+	volume.Grow(VolumeVertexCount(mesh.StencilBatches.Last()));
+	HWShadowPuppetMesh::BatchEnd from{};
+	for (const auto end : mesh.StencilBatches)
+	{
+		AppendVolume(volume, mesh, light, from, end);
+		from = end;
+	}
 	const auto samples = buffers->GetSceneSamples();
 	const bool newPass = !Pass || Samples != samples;
 	if (newPass || !Visibility.Image || Visibility.Image->width != width || Visibility.Image->height != height)
@@ -285,10 +297,18 @@ int VkShadowPuppetStencil::Render(const TArray<FVector3>& triangles, const TArra
 	float projection[16];
 	for (int i = 0; i < 16; ++i) projection[i] = static_cast<float>(cameraProjection.get()[i]);
 	draw->pushConstants(Layout.get(), VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(projection), projection);
-	draw->bindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, Volume.get());
-	draw->draw(volume.Size(), 1, 0, 0);
-	draw->bindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, Resolve.get());
-	draw->draw(3, 1, 0, 0);
+	unsigned first = 0;
+	for (const auto end : mesh.StencilBatches)
+	{
+		const unsigned next = VolumeVertexCount(end);
+		draw->bindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, Volume.get());
+		draw->draw(next - first, 1, first, 0);
+		// Blacken newly blocked samples and return their winding count to zero.
+		// Earlier batches' visibility stays in the same color attachment.
+		draw->bindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, Resolve.get());
+		draw->draw(3, 1, 0, 0);
+		first = next;
+	}
 	draw->endRenderPass();
 
 	VkImageTransition().AddImage(&Visibility, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, false).Execute(draw);

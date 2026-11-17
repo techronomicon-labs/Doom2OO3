@@ -151,17 +151,10 @@ class SDVKShadowLabHandler : EventHandler
 '''
 
 
-MENUDEF = '''OptionValue ShadowLabModes
-{
-    0, "Off"
-    1, "Stencil"
-    2, "Depth"
-}
-
-OptionMenu DoomIIShadowPuppetsMenu
+MENUDEF = '''OptionMenu DoomIIShadowPuppetsMenu
 {
     Title "Shadow Puppets"
-    Option "Shadow mode", "gl_shadow_puppets", "ShadowLabModes"
+    Option "Shadow mode", "gl_shadow_puppets", "SDVKFlashlightShadowModes"
     Slider "Depth edge softness", "gl_shadow_puppet_softness", 0.0, 2.0, 0.25, 2
     Command "Preview soft Depth", "gl_shadow_puppet_softness 1; gl_shadow_puppets 2", 0, 1
     Submenu "Flashlight settings", "SDVKFlashlightOptions"
@@ -178,7 +171,8 @@ map {MAP_NAME} "Shadow Puppet Comparison" {{ next = "{MAP_NAME}" nointermission 
     path.parent.mkdir(parents=True, exist_ok=True)
     with ZipFile(path, "w") as archive:
         for name, value in {f"maps/{MAP_NAME}.wad": wad(MAP_NAME, room_geometry().text()),
-                            "MAPINFO": mapinfo, "ZSCRIPT": ZSCRIPT, "MENUDEF": MENUDEF}.items():
+                            "MAPINFO": mapinfo, "ZSCRIPT": ZSCRIPT, "MENUDEF": MENUDEF,
+                            "DEFCVARS": "version 225\nset gl_shadow_puppets 0\n"}.items():
             archive.writestr(ZipInfo(name), value, compress_type=ZIP_DEFLATED)
 
 

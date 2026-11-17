@@ -34,7 +34,6 @@ $iwad = (Get-Item -LiteralPath $Doom2).FullName
 $root = (Get-Item -LiteralPath $Packages).FullName
 $gameFiles = @()
 $map = 'MAP01'
-$uber = 'true'
 $weapon = 'true'
 $width = '1280'
 $spritePreview = $Game -eq 'DoomII' -and $SpriteRelief -and !$ReliefStock -and !$EmitterLighting -and !$ShadowPuppets
@@ -45,19 +44,14 @@ if ($ShadowPuppets -and $Game -ne 'DoomII') { throw 'The shadow puppet evaluatio
 if ($ReliefStock -and !$Relief -and !$SpriteRelief) { throw '-ReliefStock requires -Relief or -SpriteRelief.' }
 if ($Relief -or $SpriteRelief) {
     if ($Game -notin 'DoomII', 'DBP50') { throw 'Relief requires -Game DoomII or -Game DBP50.' }
-    $uber = 'false'
     if ($preview -or $spritePreview) {
         $map = if ($spritePreview) { 'RSP001' } else { 'RPV001' }
         $weapon = 'false'
         $width = '960'
     }
 }
-if ($EmitterLighting) {
-    $uber = 'false'
-}
 if ($ShadowPuppets) {
     $map = 'SHPDEMO'
-    $uber = 'false'
 }
 
 switch ($Game) {
@@ -67,7 +61,6 @@ switch ($Game) {
     }
     'Gallery' {
         $map = 'SGSHOW'
-        $uber = 'false'
         $weapon = 'false'
     }
 }
@@ -106,7 +99,7 @@ $argv = @('-iwad', $iwad, '-noautoload', '-noautoexec', '-file') + $gameFiles + 
     '+vid_rendermode', '4', '+gl_viewmodel_lighting', '2',
     '+gl_spritelight', '2', '+gl_lights', 'true', '+gl_light_sprites', 'true',
     '+gl_light_particles', 'true', '+gl_lightprobe', 'true', '+gl_customshader', 'true',
-    '+gl_ubershaders', $uber, '+r_drawplayersprites', $weapon, '+gl_levelmesh', 'false',
+    '+gl_ubershaders', 'false', '+r_drawplayersprites', $weapon, '+gl_levelmesh', 'false',
     '+gl_light_shadows', '0', '+vk_rayquery', 'false', '+cl_capfps', 'true', '+gl_precache', 'true',
     '+map', $map
 )
@@ -125,9 +118,9 @@ if ($EmitterLighting) {
 }
 if ($ShadowPuppets) {
     $argv += @('+r_actorspriteshadow', '0', '+gl_ssao', '0', '+gl_multisample', '4', '+crosshair', '2',
-              '+bind', 'J', 'shadow_puppets_cycle', '+bind', 'F1', 'openmenu DoomIIShadowPuppetsMenu')
+              '+bind', 'F1', 'openmenu DoomIIShadowPuppetsMenu')
     if (!(Test-Path -LiteralPath $config)) {
-        $argv += @('+gl_shadow_puppets', '0', '+sdvk_fl_offset_z', '12')
+        $argv += @('+sdvk_fl_offset_z', '12')
     }
 }
 if ($Relief) {

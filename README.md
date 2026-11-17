@@ -34,7 +34,7 @@ py tools/doom2_showcase/build.py --doom2 ".\assets\wads\doom2.wad" --out ".\buil
 
 Add `--dbp50 ".\assets\wads\DBP50.wad"` to build the DBP50 add-ons, or `--gallery` to build the material gallery. Use a fresh `--out` directory for each build. The generator checks the WAD hashes against the versions it supports.
 
-Press **L** for the flashlight and **O** for its options in the supported add-on configuration. See [building notes](docs/BUILDING.md) for dependencies and Linux compilation.
+Press **L** for the flashlight, **J** to cycle Off, Stencil and Depth shadows, and **O** for flashlight settings. Enemies and solid decorations cast in both campaigns. [Flashlight shadow controls](docs/SHADOW_PUPPETS.md) · [Build instructions](docs/BUILDING.md)
 
 See the [Stage A relief evaluation](docs/RELIEF.md) for the opt-in Doom II and DBP50 material packs, Windows playtest controls and matched Vulkan captures.
 
