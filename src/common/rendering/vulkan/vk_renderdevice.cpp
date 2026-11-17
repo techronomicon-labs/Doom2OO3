@@ -42,6 +42,8 @@
 #include "hw_meshbuilder.h"
 
 #include "vk_renderdevice.h"
+#include "vk_shadowpuppet_depth.h"
+#include "vk_shadowpuppet_stencil.h"
 #include "vulkan/vk_renderstate.h"
 #include "vulkan/vk_postprocess.h"
 #include "vulkan/vk_levelmesh.h"
@@ -274,6 +276,8 @@ VulkanRenderDevice::~VulkanRenderDevice()
 
 	delete mSkyData;
 	delete mShadowMap;
+	mShadowPuppetDepth.reset();
+	mShadowPuppetStencil.reset();
 
 	if (mDescriptorSetManager)
 		mDescriptorSetManager->Deinit();
@@ -287,6 +291,27 @@ VulkanRenderDevice::~VulkanRenderDevice()
 		mShaderManager->Deinit();
 	if (mCommands)
 		mCommands->DeleteFrameObjects();
+}
+
+bool VulkanRenderDevice::SupportsShadowPuppetStencil()
+{
+	if (!mShadowPuppetStencil)
+		mShadowPuppetStencil = std::make_unique<VkShadowPuppetStencil>(this);
+	return mShadowPuppetStencil->Supported();
+}
+
+int VulkanRenderDevice::RenderShadowPuppetStencil(const TArray<FVector3>& triangles, FVector3 origin,
+	const VSMatrix& cameraProjection, const IntRect& viewport)
+{
+	return mShadowPuppetStencil->Render(triangles, origin, cameraProjection, viewport);
+}
+
+int VulkanRenderDevice::RenderShadowPuppetDepth(const TArray<FVector3>& triangles, const VSMatrix& lightProjection)
+{
+	if (!mShadowPuppetDepth)
+		mShadowPuppetDepth = std::make_unique<VkShadowPuppetDepth>(this);
+	mRenderState->EndRenderPass();
+	return mShadowPuppetDepth->Render(triangles, lightProjection);
 }
 
 bool VulkanRenderDevice::SupportsRenderTargetFormat(VkFormat format)

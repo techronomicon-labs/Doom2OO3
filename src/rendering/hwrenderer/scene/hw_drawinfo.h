@@ -187,6 +187,7 @@ struct HWDrawInfo
 
 	FLevelLocals *Level;
 	HWDrawInfo * outer = nullptr;
+	bool ShadowPuppetsEligible = false;
 	int FullbrightFlags;
 	std::atomic<int> spriteindex;
 	HWPortal *mClipPortal;

@@ -63,6 +63,7 @@ EXTERN_CVAR(Bool, gl_bandedswlight)
 EXTERN_CVAR(Bool, gl_levelmesh)
 EXTERN_CVAR(Bool, lm_dynlights);
 EXTERN_CVAR(Bool, gl_ubershaders);
+EXTERN_CVAR(Int, gl_shadow_puppets_active);
 
 CVAR(Bool, gl_raytrace, false, 0/*CVAR_ARCHIVE | CVAR_GLOBALCONFIG*/)
 CVAR(Bool, gl_lightprobe, true, 0/*CVAR_ARCHIVE | CVAR_GLOBALCONFIG*/)
@@ -252,6 +253,10 @@ sector_t* RenderViewpoint(FRenderViewpoint& mainvp, AActor* camera, IntRect* bou
 		di->Set3DViewport(RenderState);
 		di->SetViewArea();
 		auto cm = di->SetFullbrightFlags(mainview ? vp.camera->player : nullptr);
+		di->ShadowPuppetsEligible = contextType == HWRenderContextType::MainView && eyeCount == 1 &&
+			!specialVision && !di->isFullbrightScene() && screen->IsVulkan() && V_IsTrueColor() &&
+			gl_lights && !gl_levelmesh && !gl_raytrace && !gl_ubershaders && !lm_dynlights &&
+			RenderState.GetPassType() == NORMAL_PASS && !netgame;
 		if (emitterLighting && !di->isFullbrightScene())
 		{
 			di->VPUniforms.mPalLightLevels |= HWViewpointUniforms::EmitterLighting;
@@ -460,6 +465,7 @@ static void ObserveLightProbeBuilder(const LightProbeBuilderStepResult& result)
 
 sector_t* RenderView(player_t* player)
 {
+	gl_shadow_puppets_active = 0;
 	SdvkDiagnostics::BeginFrame();
 	Coronas.Clear();
 	auto RenderState = screen->RenderState();

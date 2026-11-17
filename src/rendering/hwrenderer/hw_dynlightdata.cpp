@@ -30,6 +30,7 @@
 #include "hw_dynlightdata.h"
 #include "hw_lightcompat.h"
 #include "hw_shadowselection.h"
+#include "hw_shadowpuppet.h"
 #include"hw_cvars.h"
 #include "v_video.h"
 #include "hwrenderer/scene/hw_drawstructs.h"
@@ -191,6 +192,7 @@ void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, bool f
 	if (light->IsSpot())
 	{
 		info.flags |= LIGHTINFO_SPOT;
+		if (light == HWShadowPuppetFlashlight) info.flags |= LIGHTINFO_SHADOW_PUPPET;
 		if ((gl_world_relief || gl_sprite_lighting_relief || gl_emitter_lighting) && light->IsLocalFlashlight()) info.flags |= LIGHTINFO_FLASHLIGHT;
 
 		info.spotInnerAngle = (float)light->pSpotInnerAngle->Cos();

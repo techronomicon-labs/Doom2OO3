@@ -28,6 +28,7 @@ vec2 lightAttenuation(DynLightInfo light, vec3 normal, vec3 viewdir, float gloss
 		{
 			attenuation *= shadowAttenuation(light.pos.xyz, light.shadowIndex, light.softShadowRadius, light.flags);
 		}
+		attenuation *= ShadowPuppetVisibility(light, pixelpos.xyz, ivec2(gl_FragCoord.xy));
 	}
 
 	if (attenuation <= 0.0)

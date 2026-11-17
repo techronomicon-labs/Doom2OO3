@@ -169,6 +169,7 @@ class SDVKLocalFlashlightHandler : EventHandler
                 }
                 let beam = Beams[slot];
                 if (beam == null) continue;
+                beam.master = pawn;
                 double halfCount = (count-1) / 2.0;
                 double offset = count == 1 ? 0 : (k-halfCount)*difference/halfCount;
                 Vector3 axis = horizontal > vertical ? right : up;

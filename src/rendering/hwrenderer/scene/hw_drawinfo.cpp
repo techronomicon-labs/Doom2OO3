@@ -36,6 +36,7 @@
 #include "hw_portal.h"
 #include "hw_renderstate.h"
 #include "hw_drawinfo.h"
+#include "hw_drawstructs.h"
 #include "hw_drawcontext.h"
 #include "hw_walldispatcher.h"
 #include "hw_visibleset.h"
@@ -52,6 +53,8 @@
 #include "actorinlines.h"
 #include "hw_vertexbuilder.h"
 #include "hw_lighting.h"
+#include "hwrenderer/hw_shadowpuppet.h"
+#include "vulkan/vk_renderdevice.h"
 #include "d_main.h"
 #include "swrenderer/r_swcolormaps.h"
 #include "hwrenderer/diagnostics/hw_pfviewdiagnostics.h"
@@ -64,6 +67,8 @@ EXTERN_CVAR(Bool, gl_portals)
 EXTERN_CVAR(Bool, gl_render_things);
 EXTERN_CVAR(Bool, gl_render_walls);
 EXTERN_CVAR(Bool, gl_render_flats);
+EXTERN_CVAR(Int, gl_shadow_puppets);
+EXTERN_CVAR(Int, gl_shadow_puppets_active);
 
 CVAR(Bool, lm_always_update, false, 0)
 
@@ -145,6 +150,9 @@ void HWDrawInfo::StartScene(FRenderViewpoint &parentvp, HWViewpointUniforms *uni
 		VPUniforms.SunColor = level.SunColor;
 		VPUniforms.SunIntensity = level.SunIntensity;
 	}
+	ShadowPuppetsEligible = false;
+	VPUniforms.ShadowPuppetMode = 0;
+	VPUniforms.ShadowPuppetTexture = 0;
 	mClipper->SetViewpoint(Viewpoint);
 	vClipper->SetViewpoint(Viewpoint);
 	rClipper->SetViewpoint(Viewpoint);
@@ -852,6 +860,44 @@ void HWDrawInfo::RenderScene(FRenderState &state)
 
 	state.EnableTexture(gl_texture);
 	state.EnableBrightmap(true);
+	const int puppetMode = gl_shadow_puppets;
+	if (ShadowPuppetsEligible && !outer && (puppetMode == 1 || puppetMode == 2))
+	{
+		auto* device = static_cast<VulkanRenderDevice*>(screen);
+		HWShadowPuppetScene puppet;
+		const auto& flats = drawlists[GLDL_PLAINFLATS].flats;
+		const bool simpleFlats = std::none_of(flats.begin(), flats.end(), [](const HWFlat* flat) { return flat->hacktype != 0; });
+		if (simpleFlats && (puppetMode != 1 || device->SupportsShadowPuppetStencil()) && BuildShadowPuppetScene(vp, puppet))
+		{
+			int visibility = 0;
+			if (puppetMode == 1)
+			{
+				// Replay the receiver geometry into the same depth attachment as the main scene.
+				state.SetColorMask(false);
+				state.EnableTexture(false);
+				drawlists[GLDL_PLAINWALLS].DrawWalls(this, state, false);
+				drawlists[GLDL_PLAINFLATS].DrawFlats(this, state, false);
+				state.EnableTexture(gl_texture);
+				state.SetColorMask(true);
+				const auto clip = ShadowPuppetVulkanProjection(VPUniforms.mProjectionMatrix, VPUniforms.mViewMatrix);
+				visibility = device->RenderShadowPuppetStencil(puppet.Triangles, puppet.Origin, clip, screen->mSceneViewport);
+			}
+			else
+			{
+				visibility = device->RenderShadowPuppetDepth(puppet.Triangles, puppet.LightProjection);
+			}
+			if (visibility > 0)
+			{
+				VPUniforms.ShadowPuppetTexture = visibility;
+				VPUniforms.ShadowPuppetMode = puppetMode;
+				VPUniforms.ShadowPuppetProjection = puppet.LightProjection;
+				vpIndex = state.SetViewpoint(VPUniforms);
+				HWShadowPuppetFlashlight = puppet.Flashlight;
+				state.SetShadowPuppetReceiver(true);
+				gl_shadow_puppets_active = puppetMode;
+			}
+		}
+	}
 
 	// To do: replace this with classic light lists
 	/*
@@ -875,6 +921,8 @@ void HWDrawInfo::RenderScene(FRenderState &state)
 	RenderFlat.Unclock();
 
 	drawlists[GLDL_PLAINFLATS].DrawFlats(this, state, false);
+	state.SetShadowPuppetReceiver(false);
+	HWShadowPuppetFlashlight = nullptr;
 
 	// Part 2: masked geometry. This is set up so that only pixels with alpha>gl_mask_threshold will show
 	state.AlphaFunc(Alpha_GEqual, gl_mask_threshold);

@@ -50,7 +50,10 @@ struct HWViewpointUniforms
 	FVector3 mCameraNormal;
 	float StageBIntensity = 0.0f;
 	float StageBAmbientSpecular = 0.0f;
-	float Padding[3] = {};
+	int ShadowPuppetTexture = 0;
+	int ShadowPuppetMode = 0;
+	int Padding = 0;
+	VSMatrix ShadowPuppetProjection = VSMatrix::identity();
 
 	void CalcDependencies()
 	{
@@ -61,7 +64,8 @@ struct HWViewpointUniforms
 static_assert(offsetof(HWViewpointUniforms, StageBAmbient) == 268);
 static_assert(offsetof(HWViewpointUniforms, StageBIntensity) == 300);
 static_assert(offsetof(HWViewpointUniforms, StageBAmbientSpecular) == 304);
-static_assert(sizeof(HWViewpointUniforms) == 320);
+static_assert(offsetof(HWViewpointUniforms, ShadowPuppetProjection) == 320);
+static_assert(sizeof(HWViewpointUniforms) == 384);
 
 
 

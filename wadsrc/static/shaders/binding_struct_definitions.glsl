@@ -121,7 +121,7 @@ struct SurfaceUniforms
 	int uHeightTextureIndex;
 	int uStageBWorld;
 	float uPBRReliefDepth;
-	int uMaterialSemanticPad2;
+	int uShadowPuppetReceiver;
 	vec4 uSpriteTangent;
 	vec4 uSpriteNormal;
 	vec4 uSpriteReliefParams;
@@ -157,6 +157,7 @@ struct Fogball
 #define LIGHTINFO_FLASHLIGHT 32
 #define LIGHTINFO_STAGE_B_EMITTER 64
 #define LIGHTINFO_STAGE_B_DIRECTIONAL 128
+#define LIGHTINFO_SHADOW_PUPPET 256
 
 struct DynLightInfo
 {
