@@ -34,9 +34,11 @@ SILHOUETTE_POSES = {
     "silhouette-mirror": ("G", 315, "TROOG2G8", True),
     "outer-lobe": ("G", 270, "TROOG1", False),
     "landing-raised": ("G", 263, "TROOG2G8", True),
+    "penumbra": ("G", 263, "TROOG2G8", True),
 }
+SLOPED_CASES = ("landing-raised", "penumbra")
 VIEWS.update({name: ((-16, -94, 90, 0), 2, True) for name in SILHOUETTE_POSES})
-VIEWS["landing-raised"] = ((-36, -37, 62, 12), 2, True)
+VIEWS.update({name: ((-36, -37, 62, 12), 2, True) for name in SLOPED_CASES})
 DEFAULT_CASES = ("spawn", "spawn-three", "stationary", "moving", "no-flashlight", *SILHOUETTE_POSES)
 ADDONS = ("DoomII-NormalPBR.pk3", "DoomII-SpritePBR.pk3", "Local-Flashlight.pk3", PACK_NAME)
 
@@ -94,12 +96,12 @@ class ShadowPuppetCaptureImp : DoomImp
                         "SAMPLE_TIC": tic, "FLASHLIGHT": beam_action, "CAPTURE_ACTOR": replace_actors}.items():
         script = script.replace(name, str(value))
     with ZipFile(path, "w") as archive:
-        if case in ("landing-raised", "outer-lobe"):
-            room = reference_room(case == "landing-raised")
+        if case in SLOPED_CASES or case == "outer-lobe":
+            room = reference_room(case in SLOPED_CASES)
             if case == "outer-lobe":
                 # Keep the blue point light on the same receiving surfaces as the outermost beam.
                 fill = next(thing for thing in room.rows["thing"] if thing["type"] == FILL_LIGHT)
-                fill.update(x=12, y=150, arg0=28, arg1=96, arg2=240)
+                fill.update(x=12, y=120, height=44, arg0=28, arg1=96, arg2=240, arg3=120)
             archive.writestr(ZipInfo(f"maps/{MAP_NAME}.wad"), wad(MAP_NAME, room.text()),
                              compress_type=ZIP_DEFLATED)
         archive.writestr(ZipInfo("MAPINFO"), 'GameInfo { AddEventHandlers = "ShadowPuppetCaptureView" }\n',
@@ -107,13 +109,22 @@ class ShadowPuppetCaptureImp : DoomImp
         archive.writestr(ZipInfo("ZSCRIPT"), script, compress_type=ZIP_DEFLATED)
 
 
-def capture(args, case, mode, fixture, exe, iwad, addons, ambient_only=False):
+def capture(args, case, mode, fixture, exe, iwad, addons, ambient_only=False, hard_reference=False):
     pose, tic, flashlight = VIEWS[case]
     flashlight = flashlight and not ambient_only
-    folder = args.out / case / ("ambient" if ambient_only else MODES[mode].lower())
+    softness = 0.0 if hard_reference else args.depth_softness
+    label = "ambient" if ambient_only else MODES[mode].lower()
+    if hard_reference:
+        label = "depth-hard"
+    folder = args.out / case / label
     folder.mkdir(parents=True)
     ini = folder / "clean.ini"
-    ini.write_text("[GlobalSettings]\nvk_rayquery=false\nvid_fullscreen=false\n", encoding="ascii")
+    settings = "[GlobalSettings]\nvk_rayquery=false\nvid_fullscreen=false\n"
+    # The console argument parser treats a leading minus as a new switch.
+    pitch_override = {"spawn-three": -15.75, "penumbra": -20}.get(case)
+    if pitch_override is not None:
+        settings += f"\n[Doom.Player.Mod]\nsdvk_fl_aim_pitch={pitch_override}\n"
+    ini.write_text(settings, encoding="ascii")
     prefix = folder / "frame"
     width, height = map(str, args.size)
     samples = args.samples if args.timing else 1
@@ -128,7 +139,7 @@ def capture(args, case, mode, fixture, exe, iwad, addons, ambient_only=False):
             "+gl_spritelight", "2", "+gl_light_sprites", "true", "+r_actorspriteshadow", "0",
             "+gl_bloom", "false", "+gl_emitter_lighting", "false", "+gl_world_relief", "true",
             "+gl_sprite_lighting_relief", "true", "+gl_shadow_puppets", str(mode),
-            "+gl_shadow_puppet_softness", str(args.depth_softness),
+            "+gl_shadow_puppet_softness", str(softness),
             "+gl_precache", "true", "+r_drawplayersprites", "false", "+screenblocks", "12", "+fov", "90",
             "+crosshair", "0", "+con_notifylines", "0", "+show_messages", "false", "+use_mouse", "false",
             "+cl_capfps", str(not args.timing).lower(), "+vid_vsync", "false", "+vid_maxfps", "0",
@@ -136,19 +147,23 @@ def capture(args, case, mode, fixture, exe, iwad, addons, ambient_only=False):
     log = folder / "engine.log"
     if case in SILHOUETTE_POSES:
         argv += ["+sdvk_fl_offset_y", "16", "+sdvk_fl_range", "720", "+sdvk_fl_horizontal", "84",
-                 "+sdvk_fl_vertical", "28" if case == "outer-lobe" else "84",
-                 "+gl_spriteclip", "0", "+sdvk_fl_offset_x", "16",
-                 "+sdvk_fl_offset_z", "12" if case == "landing-raised" else "-12"]
+                 "+sdvk_fl_vertical", "28" if case == "outer-lobe" else "84", "+gl_spriteclip", "0",
+                 "+sdvk_fl_offset_x", "16"]
+        if case in SLOPED_CASES:
+            argv += ["+sdvk_fl_offset_z", "12"]
     if case == "outer-lobe":
         argv += ["+sdvk_fl_aim_yaw", "28", "+sdvk_fl_aim_pitch", "0"]
     elif case == "spawn-three":
         argv += ["+sdvk_fl_horizontal", "60.725", "+sdvk_fl_vertical", "63.35", "+sdvk_fl_offset_x", "16",
-                 "+sdvk_fl_offset_y", "0", "+sdvk_fl_offset_z", "16", "+sdvk_fl_aim_pitch", "-15.75",
+                 "+sdvk_fl_offset_y", "0", "+sdvk_fl_offset_z", "16",
                  "+sdvk_fl_range", "306"]
     with log.open("wb") as stream:
         subprocess.run(argv, cwd=exe.parent, stdout=stream, stderr=subprocess.STDOUT, timeout=60, check=True)
     messages = log.read_text(encoding="utf-8", errors="replace")
     require("Unknown command" not in messages, f"Unsupported setting in {log}")
+    if pitch_override is not None:
+        saved = re.search(r"(?m)^sdvk_fl_aim_pitch=(.+)$", ini.read_text(encoding="utf-8"))
+        require(saved and isclose(float(saved[1]), pitch_override), f"Wrong flashlight pitch in {folder}")
     walker = re.findall(r"PUPPET_CAPTURE walker (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) yaw (-?[\d.]+)", messages)
     require(len(walker) == 1, f"Missing or repeated moving Imp witness in {log}")
     walker_pose = [float(value) for value in walker[0]]
@@ -174,7 +189,7 @@ def capture(args, case, mode, fixture, exe, iwad, addons, ambient_only=False):
         and (frame["width"], frame["height"]) == tuple(args.size)
         and frame["settings"]["gl_multisample"] == args.msaa
         and frame["shadow_puppets"]["requested"] == mode and frame["shadow_puppets"]["active"] == active
-        and isclose(frame["shadow_puppets"]["depth_softness"], args.depth_softness, abs_tol=1e-6)
+        and isclose(frame["shadow_puppets"]["depth_softness"], softness, abs_tol=1e-6)
         and (args.timing or frame["relief_flashlight_lights"] == light_count) for frame in frames),
         f"Wrong receiver, beam, or shadow mode in {folder}")
     report = {"argv": argv, "build": build, "camera": camera, "walker_pose": walker_pose,
@@ -188,18 +203,20 @@ def capture(args, case, mode, fixture, exe, iwad, addons, ambient_only=False):
                 f"Unexpected submitted actor or texture for {case}: {sources}, {walker_pose}")
         report["source_sprite"] = texture
         report["source_mirrored"] = mirror
-        report["sloped_receiver"] = case == "landing-raised"
+        report["sloped_receiver"] = case in SLOPED_CASES
+        report["light_angles"] = [yaw, pitch - (pitch_override if pitch_override is not None else 4)]
         if case == "outer-lobe":
             # The emitter half-angle is 14 degrees and the central lobe points 28 degrees right.
             report["lobe_yaws"] = [yaw - angle for angle in (0, 14, 28, 42, 56)]
-        report["light_sprite"] = "TROOG1" if case == "landing-raised" else texture
-        report["light_sprite_mirrored"] = False if case == "landing-raised" else mirror
+            report["light_angles"] = [yaw - 28, pitch]
+        report["light_sprite"] = "TROOG1" if case in SLOPED_CASES else texture
+        report["light_sprite_mirrored"] = False if case in SLOPED_CASES else mirror
         if flashlight:
             sources = [row["data"]["light"] for row in raw["records"] if row["kind"] == "light-query"
                        and row["data"].get("light", {}).get("spot")]
             heading = radians(yaw)
             expected = (x + 16 * (cos(heading) + sin(heading)), y + 16 * (sin(heading) - cos(heading)),
-                        camera["position"][2] + (12 if case == "landing-raised" else -12))
+                        camera["position"][2] + (12 if case in SLOPED_CASES else -12))
             require(sources and all(all(isclose(a, b, abs_tol=1e-4) for a, b in zip(light["position"], expected))
                                     for light in sources),
                     f"Unexpected flashlight position in {folder}")
@@ -313,7 +330,11 @@ def main():
                 write_view(ambient_fixture, case, ambient_only=True)
                 ambient, control = capture(args, case, 0, ambient_fixture, exe, iwad, addons, ambient_only=True)
                 report["cases"][case]["ambient"] = control
-                metrics, witnesses[case] = verify_projection(iwad, captures, ambient, args.out / case)
+                hard = None
+                if case == "penumbra" and args.depth_softness > 0:
+                    hard, hard_state = capture(args, case, 2, fixture, exe, iwad, addons, hard_reference=True)
+                    report["cases"][case]["hard_depth"] = hard_state
+                metrics, witnesses[case] = verify_projection(iwad, captures, ambient, args.out / case, hard)
                 report["cases"][case]["sprite_projection"] = metrics
             print(f"{case} passed", flush=True)
         if "silhouette-a" in witnesses and "silhouette-g" in witnesses:

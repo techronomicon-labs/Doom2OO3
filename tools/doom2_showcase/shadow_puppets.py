@@ -125,11 +125,26 @@ class SDVKShadowLabHandler : EventHandler
         let active = CVar.FindCVar('gl_shadow_puppets_active');
         int requested = option == null ? 0 : option.GetInt();
         String mode = requested == 1 ? "Stencil" : requested == 2 ? "Depth" : "Off";
+        String settings = "F1 Settings";
         if (requested != 0 && (active == null || active.GetInt() != requested))
             mode = mode .. "  (lighting fallback)";
+        else if (requested == 1)
+            mode = "Stencil  (hard edge)";
+        else if (requested == 2)
+        {
+            let optionSoftness = CVar.FindCVar('gl_shadow_puppet_softness');
+            double softness = optionSoftness == null ? 0 : optionSoftness.GetFloat();
+            if (softness > 0)
+                mode = String.Format("Depth  (softness %.2f)", softness);
+            else
+            {
+                mode = "Depth  (hard edge)";
+                settings = "F1 Adjust softness";
+            }
+        }
         Screen.DrawText(SmallFont, Font.CR_WHITE, 8, 8, "Shadow puppets  |  " .. mode,
             DTA_VirtualWidth, 480, DTA_VirtualHeight, 360, DTA_Shadow, true);
-        Screen.DrawText(SmallFont, Font.CR_WHITE, 8, 20, "J Compare  F1 Settings  L Flashlight",
+        Screen.DrawText(SmallFont, Font.CR_WHITE, 8, 20, "J Compare  " .. settings .. "  L Flashlight",
             DTA_VirtualWidth, 480, DTA_VirtualHeight, 360, DTA_Shadow, true);
     }
 }
@@ -148,6 +163,7 @@ OptionMenu DoomIIShadowPuppetsMenu
     Title "Shadow Puppets"
     Option "Shadow mode", "gl_shadow_puppets", "ShadowLabModes"
     Slider "Depth edge softness", "gl_shadow_puppet_softness", 0.0, 2.0, 0.25, 2
+    Command "Preview soft Depth", "gl_shadow_puppet_softness 1; gl_shadow_puppets 2", 0, 1
     Submenu "Flashlight settings", "SDVKFlashlightOptions"
     Command "Restart comparison room", "map SHPDEMO"
 }

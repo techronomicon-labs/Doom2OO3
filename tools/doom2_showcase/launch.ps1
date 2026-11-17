@@ -24,7 +24,8 @@ param(
 
     [switch]$ShadowPuppets,
 
-    [switch]$DesktopShortcut
+    [switch]$DesktopShortcut,
+    [string]$ProfileDirectory = $Packages
 )
 
 $ErrorActionPreference = 'Stop'
@@ -96,8 +97,9 @@ foreach ($file in $gameFiles) {
 }
 
 $profile = if ($ShadowPuppets) { 'DoomII-Shadow-Puppets' } elseif ($EmitterLighting) { 'DoomII-Emitter-Lighting' } elseif ($spritePreview) { 'DoomII-Sprite-Relief-Preview' } elseif ($preview) { 'DoomII-Relief-Preview' } elseif ($Relief -or $SpriteRelief) { "$Game-Relief" } else { $Game }
-$config = Join-Path $root "$profile.ini"
-$save = Join-Path $root "$profile-saves"
+$profileRoot = (Get-Item -LiteralPath $ProfileDirectory).FullName
+$config = Join-Path $profileRoot "$profile.ini"
+$save = Join-Path $profileRoot "$profile-saves"
 New-Item -ItemType Directory -Force -Path $save | Out-Null
 $argv = @('-iwad', $iwad, '-noautoload', '-noautoexec', '-file') + $gameFiles + @(
     '-config', $config, '-savedir', $save, '-window', '-width', $width, '-height', '720',

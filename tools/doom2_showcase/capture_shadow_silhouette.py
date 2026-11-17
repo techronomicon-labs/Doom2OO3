@@ -116,7 +116,68 @@ def lobe_regions(receiver, lamp, yaws):
             "overlap": np.sum(inside, axis=0) >= 2}
 
 
-def verify_projection(iwad, captures, ambient, folder):
+def aperture_coverage(lamp, angles, radius, receiver, actor, patch, forward):
+    """Trace the original artwork from a uniform disk at the flashlight mount."""
+    yaw, pitch = np.deg2rad(angles)
+    right = np.array([np.sin(yaw), -np.cos(yaw), 0.0])
+    up = np.array([np.sin(pitch) * np.cos(yaw), np.sin(pitch) * np.sin(yaw), np.cos(pitch)])
+    coverage = np.zeros(receiver[0].shape, dtype=float)
+    samples = 32
+    for i in range(samples):
+        theta = i * np.pi * (3 - np.sqrt(5))
+        offset = np.sqrt((i + .5) / samples) * radius * (np.cos(theta) * right + np.sin(theta) * up)
+        coverage += sprite_hit(lamp + offset, receiver, actor, patch, forward)
+    return coverage / samples
+
+
+def verify_penumbra(baseline, fill, hard, stencil, soft, usable, expected, coverage, receiver, actor, lamp,
+                    forward, softness):
+    """Measure partial lighting against native full-light and ambient-only controls."""
+    direct = np.max(baseline - fill, axis=2)
+
+    def blocked_fraction(image):
+        return np.max(baseline - np.asarray(image, dtype=np.int16), axis=2) / np.maximum(direct, 1)
+
+    point = blocked_fraction(hard)
+    stencil = blocked_fraction(stencil)
+    filtered = blocked_fraction(soft)
+    # Measure only pixels for which both independent hard backends agree with the source alpha.
+    solid = (point >= .9) & (stencil >= .9) & expected
+    lit = (point <= .1) & (stencil <= .1) & ~expected
+    valid = usable & (direct >= 24) & (solid | lit)
+    # Confirm the zero-radius capture agrees with the hard stencil on unambiguous outline samples.
+    edge = filter_mask(expected, ImageFilter.MaxFilter(3)) & ~filter_mask(expected, ImageFilter.MinFilter(3))
+    hard_area = usable & (direct >= 24) & ~edge & (((stencil >= .9) & expected) | ((stencil <= .1) & ~expected))
+    hard_matches = int(np.sum(hard_area & (solid | lit)))
+    hard_total = int(np.sum(hard_area))
+    require(hard_total >= 100 and hard_matches >= .99 * hard_total, "Zero-softness Depth lost the hard silhouette")
+    dx, dy, dz = (coord - origin for coord, origin in zip(receiver, lamp))
+    axial = dx * forward[0] + dy * forward[1]
+    caster_depth = np.dot(np.asarray(actor[:2]) - lamp[:2], forward)
+    t = np.divide(caster_depth, axial, out=np.zeros_like(axial), where=axial > 1e-6)
+    gap = (1.0 - t) * np.sqrt(dx * dx + dy * dy + dz * dz)
+    valid &= (t > 0) & (t <= 1)
+    # Sample the detached silhouette on both sides of its hard outline. Each witness
+    # sees a mixture of transparent and opaque texels from points on the real aperture.
+    mixed = valid & (gap >= 35) & (coverage >= .16) & (coverage <= .84)
+    partial = (filtered > .08) & (filtered < .92)
+    result = {"hard_depth": {"witnesses": hard_total, "matches": hard_matches}}
+    for label, side in (("shadow_side", solid), ("light_side", lit)):
+        region = mixed & side
+        total, actual = int(np.sum(region)), int(np.sum(region & partial))
+        if softness >= 1:
+            require(total >= 32 and actual >= .60 * total,
+                    f"Depth penumbra on {label} produced partial light at {actual}/{total} area-light witnesses")
+        result[label] = {"witnesses": total, "partially_lit": actual}
+    # At the feet, keep the same one-pixel screen-space border that covers a hard AA edge.
+    contact = valid & (gap < 5) & solid & (coverage == 1) & ~edge
+    total, dark = int(np.sum(contact)), int(np.sum(contact & (filtered >= .92)))
+    require(total >= 32 and dark >= .98 * total, f"Depth blurred contact at the feet ({dark}/{total} fully dark)")
+    result["contact"] = {"witnesses": total, "fully_dark": dark}
+    return result
+
+
+def verify_projection(iwad, captures, ambient, folder, hard=None):
     off, state = captures[0]
     wad = Wad(iwad)
     texture = state["source_sprite"]
@@ -136,6 +197,9 @@ def verify_projection(iwad, captures, ambient, folder):
     light_forward = np.asarray(actor[:2], dtype=float) - lamp[:2]
     light_forward /= np.linalg.norm(light_forward)
     expected = sprite_hit(lamp, receiver, actor, light_patch, light_forward)
+    softness = captures[2][1]["scene"]["depth_softness"]
+    coverage = (aperture_coverage(np.asarray(lamp), state["light_angles"], 3.0 * softness, receiver, actor,
+                                  light_patch, light_forward) if softness > 0 else expected)
     actor_mask = sprite_hit(eye, receiver, actor, visible_patch, camera_forward)
     # Keep an explicit transition band for camera rasterization, MSAA and light-space filtering.
     covered = filter_mask(expected, ImageFilter.MinFilter(5))
@@ -164,6 +228,11 @@ def verify_projection(iwad, captures, ambient, folder):
     result = {}
     witness = {"covered": usable & covered, "clear": usable & clear}
     for mode, (shadow, _) in zip(("stencil", "depth"), captures[1:]):
+        mode_covered, mode_clear = covered, clear
+        if mode == "depth" and softness > 0:
+            # For thresholded shape tests omit ambiguous rays near half visibility.
+            mode_covered = covered & (coverage >= .625)
+            mode_clear = clear & (coverage <= .25)
         delta = baseline - np.asarray(shadow, dtype=np.int16)
         blocked = np.max(delta, axis=2) >= direct * 0.5
         witness[mode] = blocked
@@ -176,8 +245,12 @@ def verify_projection(iwad, captures, ambient, folder):
             fill_matches = np.max(np.abs(shadow_pixels - fill), axis=2) <= 2
             lit_matches = np.max(np.abs(delta), axis=2) <= 2
             for name, region in lobes.items():
-                opaque = usable & covered & region
-                transparent = usable & clear & region
+                opaque = usable & mode_covered & region
+                transparent = usable & mode_clear & region
+                if mode == "depth" and softness > 0:
+                    # Exact RGB comparisons need fully covered and fully clear aperture rays.
+                    opaque &= filter_mask(coverage == 1, ImageFilter.MinFilter(3))
+                    transparent &= ~filter_mask(coverage > 0, ImageFilter.MaxFilter(3))
                 blue = opaque & (fill[:, :, 2] > fill[:, :, 0] + 8)
                 counts = {}
                 for label, mask, matches in (("opaque", opaque, fill_matches), ("blue_fill", blue, fill_matches),
@@ -188,17 +261,20 @@ def verify_projection(iwad, captures, ambient, folder):
                     counts[label] = {"samples": total, "matched": correct}
                 measured[name] = counts
         if sloped:
-            total = int(np.sum(different))
-            correct = int(np.sum((blocked == expected) & different))
+            distinctive = different & (mode_covered | mode_clear)
+            total = int(np.sum(distinctive))
+            correct = int(np.sum((blocked == expected) & distinctive))
+            require(total >= 150, "Insufficient interior samples to test light perspective")
             require(correct >= .95 * total,
                     f"{mode} matched the raised light's perspective on {correct}/{total} distinguishing pixels")
-            blocked_seam = int(np.sum(blocked & seam))
-            require(blocked_seam == np.sum(seam), f"{mode} broke the shadow at a tread/riser seam")
+            interior_seam = seam & mode_covered
+            blocked_seam = int(np.sum(blocked & interior_seam))
+            require(blocked_seam >= 4 and blocked_seam == np.sum(interior_seam), f"{mode} broke the shadow at a tread/riser seam")
             measured["perspective"] = {"distinguishing_pixels": total,
                                        "light_view_matches": correct, "blocked_stair_edge_pixels": blocked_seam}
         for kind in (("floor", "slope", "riser", "wall") if sloped else ("floor", "riser", "wall")):
             test = usable & (surface == kind)
-            inside, outside = test & covered, test & clear
+            inside, outside = test & mode_covered, test & mode_clear
             hits, misses = int(np.sum(blocked & inside)), int(np.sum(~blocked & inside))
             false_hits = int(np.sum(blocked & outside))
             measured[kind] = {"opaque_samples": hits + misses, "missed": misses,
@@ -208,6 +284,9 @@ def verify_projection(iwad, captures, ambient, folder):
             require(false_hits <= 0.10 * hits,
                     f"{mode} {kind} blocked rays through transparent {light_texture} texels: {measured[kind]}")
         result[mode] = measured
+    if hard is not None:
+        result["penumbra"] = verify_penumbra(baseline, fill, hard, captures[1][0], captures[2][0], usable,
+                                             expected, coverage, receiver, actor, lamp, light_forward, softness)
     return result, witness
 
 
