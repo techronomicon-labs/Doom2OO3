@@ -1,6 +1,7 @@
 addkeysection "Local Flashlight" "SDVKLocalFlashlight"
 addmenukey "Toggle flashlight" "netevent SDVKFlashlightToggle"
-addmenukey "Cycle flashlight shadows" "shadow_puppets_cycle"
+addmenukey "Cycle flashlight sprite shadows" "shadow_puppets_cycle"
+addmenukey "Toggle flashlight map shadows" "toggle gl_flashlight_map_shadows"
 addmenukey "Flashlight options" "openmenu SDVKFlashlightOptions"
 defaultbind L "netevent SDVKFlashlightToggle"
 defaultbind J "shadow_puppets_cycle"

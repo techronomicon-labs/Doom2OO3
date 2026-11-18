@@ -42,20 +42,25 @@ float cachedPuppetVisibility = -1.0;
 
 float ShadowPuppetVisibility(DynLightInfo light, vec3 position, ivec2 pixel)
 {
-	if ((light.flags & LIGHTINFO_SHADOW_PUPPET) == 0 || uShadowPuppetTexture <= 0 ||
+	if ((light.flags & LIGHTINFO_SHADOW_PUPPET) == 0 ||
 		data[uDataIndex].uShadowPuppetReceiver == 0)
 		return 1.0;
 	if (cachedPuppetVisibility >= 0.0) return cachedPuppetVisibility;
+	float mapVisibility = 1.0;
+	if (uFlashlightMapTexture > 0)
+		mapVisibility = FlashlightMapVisibility(light, position, uFlashlightMapTexture);
+	cachedPuppetVisibility = mapVisibility;
+	if (mapVisibility == 0.0 || uShadowPuppetTexture <= 0) return mapVisibility;
 	int image = uShadowPuppetTexture;
 	if (uShadowPuppetMode == 1)
 	{
 		ivec2 size = textureSize(textures[nonuniformEXT(image)], 0);
-		if (any(lessThan(pixel, ivec2(0))) || any(greaterThanEqual(pixel, size))) return 1.0;
-		cachedPuppetVisibility = texelFetch(textures[nonuniformEXT(image)], pixel, 0).r;
+		if (any(lessThan(pixel, ivec2(0))) || any(greaterThanEqual(pixel, size))) return mapVisibility;
+		cachedPuppetVisibility *= texelFetch(textures[nonuniformEXT(image)], pixel, 0).r;
 	}
 	else
 	{
-		cachedPuppetVisibility = ShadowPuppetDepthVisibility(light, position, image);
+		cachedPuppetVisibility *= ShadowPuppetDepthVisibility(light, position, image);
 	}
 	return cachedPuppetVisibility;
 }

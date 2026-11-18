@@ -334,6 +334,7 @@ CVAR(Bool, lm_models, true, CVAR_NOSAVE); // CVar-gated for debugging convenienc
 /////////////////////////////////////////////////////////////////////////////
 
 DoomLevelMesh::DoomLevelMesh(FLevelLocals& doomMap)
+	: FirstMapTriangle(Mesh.IndexCount / 3)
 {
 	SetLimits(doomMap);
 
@@ -1855,6 +1856,7 @@ void DoomLevelMesh::CreateWallSurface(side_t* side, HWWallDispatcher& disp, Mesh
 		info.ControlSector = wallpart.LevelMeshInfo.ControlSector;
 		info.LightmapPlane = -1;
 		info.RuntimeBakeOnly = false;
+		info.OpaqueMapCaster = drawType == LevelMeshDrawType::Opaque;
 		info.TypeIndex = side->Index();
 		info.Side = side;
 
@@ -2077,6 +2079,9 @@ void DoomLevelMesh::CreateFlatSurface(HWFlatDispatcher& disp, MeshBuilder& state
 
 		DoomSurfaceInfo info;
 		info.Type = flatpart.ceiling ? ST_CEILING : ST_FLOOR;
+		// The mesh builder also puts masked 3D-floor faces in its opaque list.
+		info.OpaqueMapCaster = drawType == LevelMeshDrawType::Opaque && flatpart.texture &&
+			(!(flatpart.renderflags & SSRF_RENDER3DPLANES) || !flatpart.texture->isMasked());
 		info.ControlSector = flatpart.controlsector ? flatpart.controlsector->model : nullptr;
 		info.LightmapPlane = flatpart.lightmapPlane;
 
@@ -2287,6 +2292,30 @@ BBox DoomLevelMesh::GetBoundsFromSurface(const LevelMeshSurface& surface) const
 		bounds.max.Z = std::max(bounds.max.Z, v.Z);
 	}
 	return bounds;
+}
+
+void DoomLevelMesh::CollectFlashlightCasters(const VSMatrix& lightProjection, const sector_t& source, TArray<FVector3>& triangles) const
+{
+	if (!Collision) return;
+	// The flashlight matrix consumes render (x,z,y); the CPU tree uses Doom (x,y,z).
+	const auto* matrix = lightProjection.get();
+	const auto row = [&](int i) { return FVector4(matrix[i], matrix[8 + i], matrix[4 + i], matrix[12 + i]); };
+	const FVector4 x = row(0), y = row(1), z = row(2), w = row(3);
+	// Vulkan clips to -w..w in X/Y and 0..w in Z.
+	const std::array<FVector4, 6> planes{w + x, w - x, w + y, w - y, z, w - z};
+	const int group = sectorGroup[source.Index()];
+	Collision->VisitTrianglesInFrustum(planes, [&](int triangle)
+	{
+		if (triangle < FirstMapTriangle) return;
+		const int surface = Mesh.SurfaceIndexes[triangle];
+		if (!DoomSurfaceInfos[surface].OpaqueMapCaster || Mesh.Surfaces[surface].SectorGroup != group)
+			return;
+		for (int i = 0; i < 3; ++i)
+		{
+			const auto& vertex = Mesh.Vertices[Mesh.Indexes[triangle * 3 + i]];
+			triangles.Push(FVector3(vertex.x, vertex.z, vertex.y));
+		}
+	});
 }
 
 void DoomLevelMesh::GetVisibleSurfaces(LightmapTile* tile, TArray<int>& outSurfaces)

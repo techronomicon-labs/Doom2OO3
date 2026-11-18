@@ -65,6 +65,38 @@ CPUAccelStruct::~CPUAccelStruct()
 {
 }
 
+void CPUAccelStruct::VisitTrianglesInFrustum(const std::array<FVector4, 6>& planes, const std::function<void(int)>& visit) const
+{
+	// The level mesh partitions live geometry into a small fixed set of BLASes.
+	// Walk the CPU trees in both Vulkan modes, including hardware ray query.
+	for (int instance = 0; instance < InstanceCount; ++instance)
+	{
+		const auto& blas = DynamicBLAS[instance];
+		if (!blas) continue;
+		const auto& nodes = blas->GetNodes();
+		const auto walk = [&](const auto& self, int index) -> void
+		{
+			const auto& node = nodes[index];
+			for (const auto& p : planes)
+			{
+				const auto& box = node.aabb;
+				const float support = p.X * (p.X >= 0 ? box.max.X : box.min.X)
+					+ p.Y * (p.Y >= 0 ? box.max.Y : box.min.Y)
+					+ p.Z * (p.Z >= 0 ? box.max.Z : box.min.Z) + p.W;
+				if (support < 0.f) return;
+			}
+			if (node.IsLeaf())
+				visit((instance * IndexesPerBLAS + node.element_index) / 3);
+			else
+			{
+				self(self, node.left);
+				self(self, node.right);
+			}
+		};
+		walk(walk, blas->GetRoot());
+	}
+}
+
 TraceHit CPUAccelStruct::FindFirstHit(const FVector3& rayStart, const FVector3& rayEnd)
 {
 	RayBBox ray(rayStart, rayEnd);

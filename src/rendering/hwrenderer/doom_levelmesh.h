@@ -38,6 +38,7 @@ struct DoomSurfaceInfo
 	sector_t* ControlSector = nullptr;
 	int LightmapPlane = -1;
 	bool RuntimeBakeOnly = false;
+	bool OpaqueMapCaster = false;
 
 	int LightListSection = 0;
 
@@ -163,6 +164,7 @@ public:
 	}
 
 	void BeginFrame(FLevelLocals& doomMap);
+	void CollectFlashlightCasters(const VSMatrix& lightProjection, const sector_t& source, TArray<FVector3>& triangles) const;
 	bool TraceSky(const FVector3& start, FVector3 direction, float dist);
 	void DumpMesh(const FString& objFilename, const FString& mtlFilename) const;
 
@@ -213,6 +215,8 @@ public:
 	Stats LastFrameStats, CurFrameStats;
 
 private:
+	// LevelMesh seeds the Vulkan buffers with placeholder triangles that have no Doom surface.
+	const int FirstMapTriangle;
 	int ResolveDecalLightmapTile(const HWDecalCreateInfo& decal) const;
 	void SetLimits(FLevelLocals& doomMap);
 

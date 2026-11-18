@@ -2,6 +2,7 @@
 #include "a_dynlight.h"
 #include "bitmap.h"
 #include "c_cvars.h"
+#include "doom_levelmesh.h"
 #include "g_levellocals.h"
 #include "hw_cvars.h"
 #include "hw_flashlight.h"
@@ -326,7 +327,7 @@ VSMatrix ShadowPuppetVulkanProjection(const VSMatrix& projection, const VSMatrix
 	return clip;
 }
 
-bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene, bool stencil)
+bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene, bool sprites, bool stencil, bool mapGeometry)
 {
 	const auto& view = di.Viewpoint;
 	if (!view.camera || !view.sector || !view.camera->player || view.camera != view.camera->player->mo)
@@ -358,9 +359,10 @@ bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene, bool ste
 	if (!lights.Count) return false;
 	for (auto& sector : level.sectors)
 	{
-		if (sector.PortalIsLinked(sector_t::floor) || sector.PortalIsLinked(sector_t::ceiling) ||
-			sector.e->XFloor.ffloors.Size() != 0)
+		if (sector.PortalIsLinked(sector_t::floor) || sector.PortalIsLinked(sector_t::ceiling))
 			return false;
+		if (sector.e->XFloor.ffloors.Size() != 0)
+			sprites = false;
 	}
 	const auto* beam = lights.Beams[0];
 	double halfAngle = beam->pSpotOuterAngle->Degrees();
@@ -380,6 +382,18 @@ bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene, bool ste
 		return false;
 
 	const FVector3 origin = RenderPosition(HWLightPosition(beam));
+	const FVector3 aim = origin + forward;
+	const FVector3 up = std::abs(forward.Y) < 0.98f ? FVector3(0, 1, 0) : FVector3(0, 0, 1);
+	VSMatrix lightView = VSMatrix::identity(), projection = VSMatrix::identity();
+	lightView.lookAt(origin.X, origin.Y, origin.Z, aim.X, aim.Y, aim.Z, up.X, up.Y, up.Z);
+	projection.perspective(float(2.0 * halfAngle), 1.f, 1.f, radius + 32.f);
+	scene.LightProjection = ShadowPuppetVulkanProjection(projection, lightView);
+	scene.Origin = origin;
+	if (mapGeometry && level.levelMesh)
+		level.levelMesh->CollectFlashlightCasters(scene.LightProjection, *beam->Sector, scene.Mesh.MapTriangles);
+	if (!sprites)
+		return scene.Mesh.MapTriangles.Size() != 0;
+
 	const auto* presented = HWPresentedFlashlight(beam);
 	// The submitted sprite is authoritative. A cosmetic floor shadow has
 	// index -1. Opaque wall sprites share the models list with actual models.
@@ -409,14 +423,5 @@ bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene, bool ste
 			AddSpriteMask(card, origin, scene, stencil);
 		}
 	}
-	if (!scene.Mesh.Triangles.Size())
-		return false;
-	const FVector3 aim = origin + forward;
-	const FVector3 up = std::abs(forward.Y) < 0.98f ? FVector3(0, 1, 0) : FVector3(0, 0, 1);
-	VSMatrix lightView = VSMatrix::identity(), projection = VSMatrix::identity();
-	lightView.lookAt(origin.X, origin.Y, origin.Z, aim.X, aim.Y, aim.Z, up.X, up.Y, up.Z);
-	projection.perspective(float(2.0 * halfAngle), 1.f, 1.f, radius + 32.f);
-	scene.LightProjection = ShadowPuppetVulkanProjection(projection, lightView);
-	scene.Origin = origin;
-	return true;
+	return scene.Mesh.Triangles.Size() != 0 || scene.Mesh.MapTriangles.Size() != 0;
 }

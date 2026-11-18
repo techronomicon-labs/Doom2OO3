@@ -71,6 +71,7 @@ EXTERN_CVAR(Bool, gl_render_walls);
 EXTERN_CVAR(Bool, gl_render_flats);
 EXTERN_CVAR(Int, gl_shadow_puppets);
 EXTERN_CVAR(Int, gl_shadow_puppets_active);
+EXTERN_CVAR(Bool, gl_flashlight_map_shadows);
 
 CVAR(Bool, lm_always_update, false, 0)
 
@@ -155,6 +156,7 @@ void HWDrawInfo::StartScene(FRenderViewpoint &parentvp, HWViewpointUniforms *uni
 	ShadowPuppetsEligible = false;
 	VPUniforms.ShadowPuppetMode = 0;
 	VPUniforms.ShadowPuppetTexture = 0;
+	VPUniforms.FlashlightMapTexture = 0;
 	mClipper->SetViewpoint(Viewpoint);
 	vClipper->SetViewpoint(Viewpoint);
 	rClipper->SetViewpoint(Viewpoint);
@@ -875,14 +877,18 @@ void HWDrawInfo::RenderScene(FRenderState &state)
 	state.EnableTexture(gl_texture);
 	state.EnableBrightmap(true);
 	const int puppetMode = gl_shadow_puppets;
-	if (ShadowPuppetsEligible && !outer && (puppetMode == 1 || puppetMode == 2))
+	if (ShadowPuppetsEligible && !outer && (puppetMode != 0 || gl_flashlight_map_shadows))
 	{
 		auto* device = static_cast<VulkanRenderDevice*>(screen);
 		HWShadowPuppetScene puppet;
-		if ((puppetMode != 1 || device->SupportsShadowPuppetStencil()) && BuildShadowPuppetScene(*this, puppet, puppetMode == 1))
+		const bool stencil = puppetMode == 1 && device->SupportsShadowPuppetStencil();
+		if (BuildShadowPuppetScene(*this, puppet, stencil || puppetMode == 2, stencil, gl_flashlight_map_shadows))
 		{
+			if (puppet.Mesh.MapTriangles.Size())
+				VPUniforms.FlashlightMapTexture = device->RenderFlashlightDepth(FlashlightDepthCasters::MapGeometry,
+					puppet.Mesh.MapTriangles, puppet.LightProjection);
 			int visibility = 0;
-			if (puppetMode == 1)
+			if (stencil && puppet.Mesh.Triangles.Size())
 			{
 				// Replay the receiver geometry into the same depth attachment as the main scene.
 				state.SetColorMask(false);
@@ -902,9 +908,10 @@ void HWDrawInfo::RenderScene(FRenderState &state)
 				const auto clip = ShadowPuppetVulkanProjection(VPUniforms.mProjectionMatrix, VPUniforms.mViewMatrix);
 				visibility = device->RenderShadowPuppetStencil(puppet.Mesh, puppet.Origin, clip, screen->mSceneViewport);
 			}
-			else
+			else if (puppetMode == 2 && puppet.Mesh.Triangles.Size())
 			{
-				visibility = device->RenderShadowPuppetDepth(puppet.Mesh.Triangles, puppet.LightProjection);
+				visibility = device->RenderFlashlightDepth(FlashlightDepthCasters::Sprites,
+					puppet.Mesh.Triangles, puppet.LightProjection);
 			}
 			if (visibility > 0)
 			{
@@ -912,14 +919,20 @@ void HWDrawInfo::RenderScene(FRenderState &state)
 				VPUniforms.ShadowPuppetTexture = visibility;
 				VPUniforms.ShadowPuppetMode = puppetMode;
 				VPUniforms.ShadowPuppetSoftness = gl_shadow_puppet_softness;
-				VPUniforms.ShadowPuppetProjection = puppet.LightProjection;
-				vpIndex = state.SetViewpoint(VPUniforms);
-				HWShadowPuppetFlashlight = puppet.Flashlight;
-				state.SetShadowPuppetReceiver(true);
 				gl_shadow_puppets_active = puppetMode;
 				if (SdvkDiagnostics::StateEnabled())
 					SdvkDiagnostics::Emit("flashlight-shadow", SdvkObservation::Object()
 						.Int("mode", puppetMode).Int("casters", puppet.Casters.size()).Json());
+			}
+			if (visibility > 0 || VPUniforms.FlashlightMapTexture > 0)
+			{
+				VPUniforms.ShadowPuppetProjection = puppet.LightProjection;
+				vpIndex = state.SetViewpoint(VPUniforms);
+				HWShadowPuppetFlashlight = puppet.Flashlight;
+				state.SetShadowPuppetReceiver(true);
+				if (VPUniforms.FlashlightMapTexture > 0 && SdvkDiagnostics::StateEnabled())
+					SdvkDiagnostics::Emit("flashlight-map-shadow", SdvkObservation::Object()
+						.Int("triangles", puppet.Mesh.MapTriangles.Size() / 3).Json());
 			}
 		}
 	}

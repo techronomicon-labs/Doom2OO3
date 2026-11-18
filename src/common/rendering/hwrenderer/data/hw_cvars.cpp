@@ -58,6 +58,7 @@ CVAR(Bool, gl_world_relief, false, 0)
 CVAR(Bool, gl_emitter_lighting, false, 0)
 
 EXTERN_CVAR(Int, gl_shadow_puppets)
+CVAR(Bool, gl_flashlight_map_shadows, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 CUSTOM_CVAR(Float, gl_shadow_puppet_softness, 1.f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
@@ -71,7 +72,7 @@ CCMD(shadow_puppets_cycle)
 	const int next = mode == 0 ? 1 : mode == 1 ? 2 : 0;
 	gl_shadow_puppets = next;
 	static const char* const names[] = { "Off", "Stencil", "Depth" };
-	Printf("Flashlight shadows: %s\n", names[next]);
+	Printf("Flashlight sprite shadows: %s\n", names[next]);
 }
 
 CUSTOM_CVAR(Float, gl_emitter_ambient, 0.35f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)

@@ -30,6 +30,7 @@ class VkPipelineKey;
 class VkRenderPassSetup;
 class VkShaderCache;
 class VkShadowPuppetDepth;
+enum class FlashlightDepthCasters { Sprites, MapGeometry };
 class VkShadowPuppetStencil;
 
 class VulkanRenderDevice : public SystemBaseFrameBuffer
@@ -89,7 +90,7 @@ public:
 	bool SupportsShadowPuppetStencil();
 	int RenderShadowPuppetStencil(const HWShadowPuppetMesh& mesh, FVector3 origin,
 		const VSMatrix& cameraProjection, const IntRect& viewport);
-	int RenderShadowPuppetDepth(const TArray<FVector3>& triangles, const VSMatrix& lightProjection);
+	int RenderFlashlightDepth(FlashlightDepthCasters casters, const TArray<FVector3>& triangles, const VSMatrix& lightProjection);
 
 	IHardwareTexture *CreateHardwareTexture(int numchannels) override;
 	FMaterial* CreateMaterial(FGameTexture* tex, int scaleflags) override;
@@ -158,6 +159,7 @@ private:
 	std::unique_ptr<VkLightprober> mLightprober;
 	std::unique_ptr<VkRenderState> mRenderState;
 	std::unique_ptr<VkShadowPuppetDepth> mShadowPuppetDepth;
+	std::unique_ptr<VkShadowPuppetDepth> mFlashlightMapDepth;
 	std::unique_ptr<VkShadowPuppetStencil> mShadowPuppetStencil;
 
 	VkRenderBuffers *mActiveRenderBuffers = nullptr;
