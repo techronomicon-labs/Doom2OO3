@@ -2,6 +2,30 @@
 
 A stripped-down, **playable** Vulkan Doom II remaster foundation. The visual target is the imagined ultimate 2003 remaster: original crisp Doom art, evocative normal/PBR materials, powerful local lights, a configurable flashlight, and convincing dynamically lit shadows.
 
+## Doom II in-game comparisons
+
+These captures preview the changes in [PR #6 for materials and lighting](https://github.com/techronomicon-labs/Doom2OO3/pull/6) and [PR #7 for flashlight shadows](https://github.com/techronomicon-labs/Doom2OO3/pull/7).
+
+### Entryway (MAP01)
+
+| A · Stock assets and sector lighting | B · PBR relief, emitters and flashlight |
+| --- | --- |
+| ![Stock Entryway with two guards on the steps](docs/screenshots/doom2-entryway-stock.png) | ![The same steps with raised metal seams, local lighting and flashlight shadows](docs/screenshots/doom2-entryway-enhanced.png) |
+
+### Entryway corridor (MAP01)
+
+| A · Sector lighting | B · Emitters with 38% ambient fill |
+| --- | --- |
+| ![Entryway corridor under sector lighting](docs/screenshots/doom2-corridor-sector-lighting.png) | ![The yellow wall bars light the surrounding panels and floor](docs/screenshots/doom2-corridor-emitter-lighting.png) |
+
+### The Factory (MAP12)
+
+| A · Flashlight shadows off | B · Depth flashlight shadows |
+| --- | --- |
+| ![A flashlight illuminates the brick wall behind an Imp](docs/screenshots/doom2-factory-shadows-off.png) | ![The Imp blocks the same beam and casts a silhouette on the brick wall and floor](docs/screenshots/doom2-factory-depth-shadows.png) |
+
+Each pair uses the same camera and framing in the Vulkan build. The corridor keeps PBR materials enabled in both shots, and the Factory keeps the same flashlight and ambient settings.
+
 **Exact foundation:** [ShadeDoomVK PR #195 merged commit](https://github.com/techrote/ShadeDoomVK/commit/2cc70f33295881f73c7460364c6fa8e4e546efb3). Production engine/shaders, renderer crash/correctness/performance fixes, bundled assets and the #190 material/flashlight generator are preserved from that commit. The later legacy issue programme and its multi-hour verification infrastructure are intentionally *not* part of this checkout. The Git history remains available for targeted recovery.
 
 This is a clean implementation starting point, **not** a claim that dynamic actor shadows were finished in #195. The engine executable is still named `vkdoom`, and internal `ShadeDoomVK` build-identity strings are retained rather than risk breaking a proven runtime.
