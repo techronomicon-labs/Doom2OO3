@@ -83,11 +83,14 @@ def capture(pack, game, map_name, fixture_path, folder, mode):
     else:
         files.append(base / "DoomII-Emitter-Lighting.pk3")
     prefix = folder / "view"
+    cache = folder / "cache"
+    cache.mkdir()
     ini = folder / "test.ini"
     ini.write_text("[GlobalSettings]\nvk_rayquery=false\nvid_fullscreen=false\n")
     argv = [exe, "-iwad", pack / "doom2.wad", "-file", *files, fixture_path, "-config", ini, "-savedir", folder,
             "-stdout", "-nostartup", "-noautoload", "-noautoexec", "-nosound", "-nojoy", "-rngseed", "2002",
-            "-window", "-width", "640", "-height", "480", "-sdvkobserve", prefix, "-sdvkobservemode", "state",
+            "-window", "-width", "640", "-height", "480", "-sdvkobserve", prefix, "-sdvkobservecache", cache,
+            "-sdvkobservemode", "state",
             "-sdvkobservewarmup", "30", "-sdvkobserveframes", "1", "-sdvkobservequit",
             "+vid_setsize", "640", "480",
             "+gl_levelmesh", "false", "+gl_ubershaders", "false", "+gl_raytrace", "false",
