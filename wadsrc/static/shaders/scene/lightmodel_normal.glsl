@@ -90,7 +90,7 @@
 	vec3 ProcessMaterialLight(Material material, vec3 color, float sunlightAttenuation)
 	{
 		bool stageB = STAGE_B_WORLD_LIGHTING;
-		vec4 dynlight = stageB ? vec4(0.0) : uDynLightColor;
+		vec4 dynlight = uDynLightColor;
 		vec3 normal = material.Normal;
 		bool fullbrightRelief = uWorldReliefParams.w >= 5.0;
 

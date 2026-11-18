@@ -42,7 +42,7 @@ vec2 lightAttenuation(DynLightInfo light, vec3 normal, vec3 viewdir, float gloss
 vec3 ProcessMaterialLight(Material material, vec3 color, float sunlightAttenuation)
 {
 	bool stageB = STAGE_B_WORLD_LIGHTING;
-	vec4 dynlight = stageB ? vec4(0.0) : uDynLightColor;
+	vec4 dynlight = uDynLightColor;
 	vec4 specular = vec4(0.0, 0.0, 0.0, 1.0);
 
 	vec3 normal = material.Normal;

@@ -313,10 +313,10 @@ void HWDrawInfo::GetDynSpriteLight(AActor *self, sun_trace_cache_t * traceCache,
 							lb *= alpha;
 						}
 
-						// Get GLDEFS intensity
-						lr *= light->GetLightDefIntensity();
-						lg *= light->GetLightDefIntensity();
-						lb *= light->GetLightDefIntensity();
+						const double intensity = light->GetLightDefIntensity() * light->GetProjectileLightScale();
+						lr *= intensity;
+						lg *= intensity;
+						lb *= intensity;
 
 						if (light->IsSubtractive())
 						{
@@ -377,7 +377,8 @@ void HWDrawInfo::GetDynSpriteLightList(AActor *self, double x, double y, double 
 
 	if (!flashlightOnly && ((level.lightmaps && gl_spritelight > 0) || ActorTraceStaticLight::TraceSunVisibility(x, y, z, traceCache, (self ? staticLight.ActorMoved : traceCache ? traceCache->Pos != DVector3(x, y, z) : false))))
 	{
-		AddSunLightToList(modellightdata, x, y, z, Level->SunDirection, Level->SunColor * Level->SunIntensity, gl_spritelight > 0);
+		const float ambient = emitterReceiver && UsesEmitterLighting() ? VPUniforms.StageBAmbient : 1.f;
+		AddSunLightToList(modellightdata, x, y, z, Level->SunDirection, Level->SunColor * (Level->SunIntensity * ambient), gl_spritelight > 0);
 	}
 
 	// PF-016: both candidate sources feed exactly the same filter/portal/trace

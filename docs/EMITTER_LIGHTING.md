@@ -6,9 +6,11 @@ Start in Doom II Entryway and press **B** to compare emitter lighting with the l
 
 For an emitter-only comparison, enable emitter lighting with **B**, set both ambient sliders to zero in **F1**, and keep **Emitter intensity** at 1. Press **B** again to compare the same view with legacy lighting. Use **L** to include or remove the flashlight in either view.
 
-**Emitter intensity** controls authored room and sky lighting. Set it and both ambient sliders to zero for a flashlight-only view with visible self-emitting materials. Flashlight power, spread, and range have independent controls.
+**Emitter intensity** controls authored room and sky lighting. Setting it and both ambient sliders to zero leaves direct dynamic lights and self-emitting materials visible. Flashlight power, spread, and range have independent controls.
 
 The flashlight starts 16 map units forward and 12 below eye level, with a 4° upward aim. Open **Position and aim** in **Flashlight settings** to change or reset the mount.
+
+Open **Options → Projectile lighting** in Doom II or DBP50 to adjust light output from projectiles in flight and on impact. Plasma, rockets, and the BFG each have separate sliders. Other projectiles and bullet impacts have their own controls. **100%** is the authored intensity, **0%** removes the emitted light, and **1200%** is the maximum. The settings save to the active launcher profile.
 
 ## Edit a material
 
@@ -29,13 +31,13 @@ The stock Doom II campaign and three comparison rooms support emitter lighting. 
 
 ## Lighting and coverage
 
-Opaque walls and floors and ordinary per-pixel-lit actor sprites receive point and directional emitters. Retained ambient fill also picks up subtle slope contrast on PBR walls and floors with relief. At zero fill that contribution is zero. Brightmaps and glow materials keep a separate self-emission term. The world path filters legacy dynamic lamps in emitter mode. The local flashlight contributes independently. Sky pixels, additive and translucent effects, custom shaders, fullbright sprites, and viewmodels use their existing shading paths.
+Opaque walls and floors and ordinary per-pixel-lit actor sprites receive point and directional emitters. Retained ambient fill also picks up subtle slope contrast on PBR walls and floors with relief. At zero fill that contribution is zero. Brightmaps and glow materials keep a separate self-emission term. Direct dynamic lights from the flashlight, projectiles, impact flashes, and decorations work in both modes. Sky pixels, additive and translucent effects, custom shaders, fullbright sprites, and viewmodels use their existing shading paths.
 
 Point sources use a configurable radius and falloff. A directional source provides a constant light direction inside its authored sector, with a soft range edge. Both use the engine's existing shadow map from the authored anchor. The directional approximation is suitable for bounded courtyards and openings. Large sky regions and height-dependent occlusion need separate authoring. Each source is scoped to its own sector, so adjacent closed rooms receive no contribution. The renderer uses at most 48 nearest emitter shadow rows per view and 12 authored emitters per receiver.
 
 The local authoring pack defines `SDVKStageBPointEmitter` and `SDVKStageBDirectionalEmitter`. Each authored emitter record specifies its receiver sector, position and floor-relative height, RGB, radius, intensity, and falloff. Directional emitters also specify yaw and pitch. In Entryway's green corridors, the yellow `TEKGREN5` wall strips emit warm-white light from their original texture coordinates. The `GRNLITE1` ceiling circles are matte plastic. Entryway also uses the `FLAT2` overhead fixtures, a small exit sign source, and consistent outdoor light. The bronze recess behind the player start receives the chosen ambient fill and the player's flashlight.
 
-Campaign layouts use visible lamp and flame surfaces, lamp and torch decorations, and open sky. Underhalls' overhead fluorescent fixtures and open courtyard provide local lighting, while dark parts of the sewer rely on ambient fill and the flashlight. Open **Underhalls** from **F1** to jump straight there. The material pack binds the normal, roughness, and relief maps to textures so each surface keeps its finish wherever the same texture appears. Switch plates use their own relief, shared by both switch states.
+Campaign layouts add emitters at visible lamp and flame surfaces and open sky. Lamp and torch decorations use the lights attached to their original sprite frames. Underhalls' overhead fluorescent fixtures and open courtyard provide local lighting, while dark parts of the sewer rely on ambient fill and the flashlight. Open **Underhalls** from **F1** to jump straight there. The material pack binds the normal, roughness, and relief maps to textures so each surface keeps its finish wherever the same texture appears. Switch plates use their own relief, shared by both switch states.
 
 ## Reproduce the native comparisons
 

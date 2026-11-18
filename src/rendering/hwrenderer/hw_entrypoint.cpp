@@ -125,30 +125,38 @@ HWShadowSelectionKey MakeShadowSelectionKey(FDynamicLight* light, const DVector3
 void CollectLights(FLevelLocals* Level, const DVector3& viewPosition, bool emitterLighting)
 {
 	ShadowMap* sm = screen->mShadowMap;
-	std::vector<HWShadowSelectionCandidate<FDynamicLight*>> candidates;
+	std::vector<HWShadowSelectionCandidate<FDynamicLight*>> emitters, dynamicLights;
+	const auto eligible = [emitterLighting, dynamicShadows = gl_light_shadows > 0](const FDynamicLight* light, bool emitter) {
+		return light->IsActive() && (emitter ? emitterLighting : dynamicShadows && light->shadowmapped);
+	};
 
 	for (auto light = Level->lights; light; light = light->next)
 	{
 		ShadowMap::LightsProcessed++;
 		light->mShadowmapIndex = NoShadowMapIndex;
-		const bool eligible = emitterLighting ? light->IsStageBEmitter() : light->shadowmapped && !light->IsStageBEmitter();
-		if (eligible && light->IsActive())
-			candidates.push_back({ light, MakeShadowSelectionKey(light, viewPosition) });
+		const bool emitter = light->IsStageBEmitter();
+		if (eligible(light, emitter))
+			(emitter ? emitters : dynamicLights).push_back({ light, MakeShadowSelectionKey(light, viewPosition) });
 	}
 
-	ShadowMap::LightsCandidates = static_cast<int>(candidates.size());
-	HWSelectShadowCandidates(candidates, emitterLighting ? EmitterShadowCapacity : HWShadowMapLightCapacity);
-	ShadowMap::LightsShadowmapped = static_cast<int>(candidates.size());
+	ShadowMap::LightsCandidates = static_cast<int>(emitters.size() + dynamicLights.size());
+	HWSelectShadowCandidates(emitters, EmitterShadowCapacity);
+	HWSelectShadowCandidates(dynamicLights, HWShadowMapLightCapacity - emitters.size());
+	ShadowMap::LightsShadowmapped = static_cast<int>(emitters.size() + dynamicLights.size());
 	ShadowMap::LightsDropped = ShadowMap::LightsCandidates - ShadowMap::LightsShadowmapped;
 
 	int lightindex = 0;
-	for (const auto& candidate : candidates)
-	{
-		auto light = candidate.Value;
-		light->mShadowmapIndex = lightindex;
-		sm->SetLight(lightindex, (float)light->X(), (float)light->Y(), (float)light->Z(), light->GetRadius());
-		lightindex++;
-	}
+	const auto assignRows = [sm, &lightindex](const auto& candidates) {
+		for (const auto& candidate : candidates)
+		{
+			auto light = candidate.Value;
+			light->mShadowmapIndex = lightindex;
+			sm->SetLight(lightindex, (float)light->X(), (float)light->Y(), (float)light->Z(), light->GetRadius());
+			lightindex++;
+		}
+	};
+	assignRows(emitters);
+	assignRows(dynamicLights);
 
 	for (; lightindex < static_cast<int>(HWShadowMapLightCapacity); lightindex++)
 		sm->SetLight(lightindex, 0, 0, 0, 0);
@@ -157,9 +165,9 @@ void CollectLights(FLevelLocals* Level, const DVector3& viewPosition, bool emitt
 	{
 		for (auto light = Level->lights; light; light = light->next)
 		{
-			const bool eligible = light->IsActive() && (emitterLighting ? light->IsStageBEmitter() : light->shadowmapped && !light->IsStageBEmitter());
-			const bool selected = eligible && light->mShadowmapIndex != NoShadowMapIndex;
-			SdvkDiagnostics::ShadowDecision(Level, light, selected ? "selected" : eligible ? "capacity-rejected" : "not-eligible",
+			const bool candidate = eligible(light, light->IsStageBEmitter());
+			const bool selected = candidate && light->mShadowmapIndex != NoShadowMapIndex;
+			SdvkDiagnostics::ShadowDecision(Level, light, selected ? "selected" : candidate ? "capacity-rejected" : "not-eligible",
 				selected ? light->mShadowmapIndex : -1);
 		}
 	}

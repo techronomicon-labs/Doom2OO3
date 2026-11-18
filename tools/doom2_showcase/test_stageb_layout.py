@@ -34,6 +34,8 @@ class StageBLayoutTests(unittest.TestCase):
             self.assertIn(f'level.MapName == "{name}" && level.GetChecksum() == "{checksum}"', script)
         self.assertEqual(script.count("level.EnableStageBLayout();"), len(campaign))
         self.assertIn("if (!CheckedCampaignLayout) LoadCampaignLayout();", script)
+        self.assertNotIn("AddThingEmitters", script)
+        self.assertEqual(script.count("if (replaceSavedEmitters) ClearSavedCampaignEmitters();"), len(campaign))
 
         fixtures = campaign["MAP02"][1]
         geometry = MapGeometry(maps["MAP02"][1])

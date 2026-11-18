@@ -94,38 +94,6 @@ class PlaneEmitter:
                 f"{self.radius // 2}, {rgb}, {self.intensity}, {ceiling});")
 
 
-@dataclass(frozen=True)
-class ThingFixture:
-    actor: str
-    height: int
-    radius: int
-    color: tuple[int, int, int]
-    intensity: int
-
-    def call(self):
-        rgb = ", ".join(map(str, self.color))
-        return f'AddThingEmitters("{self.actor}", {self.height}, {self.radius // 2}, {rgb}, {self.intensity});'
-
-
-# Stock DoomEdNums. Static decorations only, so the light can stay at its
-# checked map position for the lifetime of the room.
-THING_FIXTURES = {
-    29: ThingFixture("HeadCandles", 37, 104, FIRELIGHT, 39),
-    34: ThingFixture("Candlestick", 14, 84, FIRELIGHT, 35),
-    35: ThingFixture("Candelabra", 49, 138, FIRELIGHT, 49),
-    44: ThingFixture("BlueTorch", 60, 182, BLUE_LENS, 66),
-    45: ThingFixture("GreenTorch", 60, 182, (135, 238, 115), 66),
-    46: ThingFixture("RedTorch", 60, 182, FIRELIGHT, 68),
-    55: ThingFixture("ShortBlueTorch", 35, 142, BLUE_LENS, 57),
-    56: ThingFixture("ShortGreenTorch", 35, 142, (135, 238, 115), 57),
-    57: ThingFixture("ShortRedTorch", 35, 142, FIRELIGHT, 59),
-    70: ThingFixture("BurningBarrel", 32, 164, FIRELIGHT, 62),
-    85: ThingFixture("TechLamp", 72, 176, FLUORESCENT, 70),
-    86: ThingFixture("TechLamp2", 44, 146, FLUORESCENT, 64),
-    2028: ThingFixture("Column", 44, 130, FLUORESCENT, 56),
-}
-
-
 def lump_name(value):
     return value.rstrip(b"\0").decode("ascii").upper()
 
@@ -423,7 +391,6 @@ def infer_layout(wad):
                         spill_counts[spill.sector] += 1
         # The renderer packs at most twelve Stage B lights per receiver.
         emitters = [emitter for sector, emitters in sources.items() for emitter in (emitters + spills[sector])[:10]]
-        thing_types = {kind for _, _, _, kind, _ in iter_unpack("<hhhhh", lumps["THINGS"])}
-        emitters.extend(fixture for kind, fixture in THING_FIXTURES.items() if kind in thing_types)
+        # Decorations already supply their own lights through the runtime's GLDEFS.
         layouts[name] = (checksum, emitters)
     return layouts
