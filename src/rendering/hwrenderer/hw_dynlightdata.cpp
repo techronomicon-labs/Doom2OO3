@@ -217,8 +217,7 @@ void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, bool f
 	if (light->target && (light->target->renderflags2 & RF2_LIGHTMULTALPHA))
 		cs *= (float)light->target->Alpha;
 
-	// Multiply intensity from GLDEFS
-	cs *= (float)light->GetLightDefIntensity();
+	cs *= (float)light->GetLightDefIntensity() * light->GetProjectileLightScale();
 	if (emitter)
 	{
 		const int intensity = light->GetSecondaryIntensity();

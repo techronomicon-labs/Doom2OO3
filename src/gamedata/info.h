@@ -162,6 +162,7 @@ public:
 	{
 		return NextState;
 	}
+	bool IsInSequence(const FState* start) const;
 	inline void SetFrame(uint8_t frame)
 	{
 		Frame = frame - 'A';

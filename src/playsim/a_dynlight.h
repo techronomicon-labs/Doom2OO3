@@ -243,6 +243,7 @@ struct FDynamicLight
 	int GetIntensity() const { return pArgs[LIGHT_INTENSITY]; }
 	int GetSecondaryIntensity() const { return pArgs[LIGHT_SECONDARY_INTENSITY]; }
 	double GetLightDefIntensity() const { return lightDefIntensity; }
+	float GetProjectileLightScale() const;
 
 	bool IsSubtractive() const { return !!((*pLightFlags) & LF_SUBTRACTIVE); }
 	bool IsAdditive() const { return !!((*pLightFlags) & LF_ADDITIVE); }
@@ -261,7 +262,7 @@ struct FDynamicLight
 	void Deactivate() { m_active = false; }
 	void Activate();
 
-	void SetActor(AActor *ac, bool isowned) { target = ac; owned = isowned; }
+	void SetActor(AActor *ac, bool isowned);
 	double X() const { return Pos.X; }
 	double Y() const { return Pos.Y; }
 	double Z() const { return Pos.Z; }
@@ -273,6 +274,9 @@ struct FDynamicLight
 	void ReleaseLight();
 
 private:
+	enum class ProjectileLight : uint8_t { None, Plasma, Rocket, BFG, Other, BulletImpact };
+	ProjectileLight projectileLight;
+
 	double DistToSeg(const DVector3 &pos, vertex_t *start, vertex_t *end);
 	void CollectWithinRadius(const DVector3 &pos, FSection *section, float radius);
 

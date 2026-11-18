@@ -187,7 +187,7 @@ vec3 ProcessMaterialLight(Material material, vec3 ambientLight, float sunlightAt
 	bool stageB = STAGE_B_WORLD_LIGHTING;
 	float ambientFill = stageB ? uStageBAmbient : 1.0;
 	float ambientSpecular = stageB ? uStageBAmbientSpecular : 1.0;
-	vec3 Lo = stageB ? vec3(0.0) : uDynLightColor.rgb;
+	vec3 Lo = uDynLightColor.rgb;
 	bool fullbrightRelief = uWorldReliefParams.w >= 5.0;
 
 	if (sunlightAttenuation > 0.0)

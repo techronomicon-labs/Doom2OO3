@@ -191,7 +191,9 @@ class SDVKStageBLayout : EventHandler
     int EntrywayLayoutRevision;
     bool TriedEntrywayLayoutUpgrade;
     bool CheckedCampaignLayout;
+    int CampaignLayoutRevision;
     const CurrentEntrywayLayout = 1;
+    const CurrentCampaignLayout = 1;
 
     SDVKStageBPointEmitter AddEmitter(int receiver, Vector2 position, double height, int size,
                     int red, int green, int blue, int intensity, double linearity, bool directional,
@@ -240,20 +242,16 @@ class SDVKStageBLayout : EventHandler
         AddEmitter(receiver, position, height, size, red, green, blue, intensity, 0.82, false, 0, 0);
     }
 
-    void AddThingEmitters(class<Actor> fixtureClass, int height, int size,
-                          int red, int green, int blue, int intensity)
+    void ClearSavedCampaignEmitters()
     {
-        let fixtures = ThinkerIterator.Create(fixtureClass);
-        Actor fixture;
-        while ((fixture = Actor(fixtures.Next())))
+        // Pre-upgrade campaign saves also contain duplicate lights at decorations.
+        // Rebuild this pack's derived layout from the checksum-qualified map below.
+        let iterator = ThinkerIterator.Create("SDVKStageBPointEmitter", Thinker.STAT_DLIGHT);
+        Actor light;
+        while ((light = Actor(iterator.Next())))
         {
-            let sector = fixture.CurSector;
-            if (sector == null) continue;
-            Vector2 position = fixture.Pos.XY;
-            double floor = sector.floorplane.ZatPoint(position);
-            int strength = int(intensity * (0.48 + 0.52 * clamp(sector.lightlevel, 0, 255) / 255.0) + 0.5);
-            AddEmitter(sector.Index(), position, fixture.Pos.Z - floor + height, size,
-                       red, green, blue, strength, 0.82, false, 0, 0);
+            if (light.GetClassName() == 'SDVKStageBPointEmitter' || light.GetClassName() == 'SDVKStageBDirectionalEmitter')
+                light.Destroy();
         }
     }
 
@@ -332,6 +330,7 @@ class SDVKStageBLayout : EventHandler
     {
         if (e.IsSaveGame || e.IsReopen) return;
         EntrywayLayoutRevision = 0;
+        CampaignLayoutRevision = CurrentCampaignLayout;
         TriedEntrywayLayoutUpgrade = false;
         RoomLabel = "";
 EMITTERS
@@ -341,17 +340,22 @@ EMITTERS
     override void WorldTick()
     {
         // A serialized EventHandler skips WorldLoaded when restoring a save.
-        if (!CheckedCampaignLayout) LoadCampaignLayout();
+        if (CampaignLayoutRevision < CurrentCampaignLayout)
+        {
+            CampaignLayoutRevision = CurrentCampaignLayout;
+            LoadCampaignLayout(CheckedCampaignLayout);
+        }
+        else if (!CheckedCampaignLayout) LoadCampaignLayout();
         if (EntrywayLayoutRevision >= CurrentEntrywayLayout || TriedEntrywayLayoutUpgrade ||
             RoomLabel != "Entryway") return;
         TriedEntrywayLayoutUpgrade = true;
         UpgradeEntrywayLayout();
     }
 
-    void LoadCampaignLayout()
+    void LoadCampaignLayout(bool replaceSavedEmitters = false)
     {
         CheckedCampaignLayout = true;
-        if (RoomLabel != "") return;
+        if (RoomLabel != "" && !replaceSavedEmitters) return;
 CAMPAIGN_CASES
     }
 CAMPAIGN_LAYOUTS
@@ -391,7 +395,8 @@ def actor_script(playable, campaign=None):
     layouts = []
     for map_name, (checksum, emitters) in (campaign or {}).items():
         cases.extend((f'        if (level.MapName == "{map_name}" && level.GetChecksum() == "{checksum}")',
-                      "        {", "            RoomLabel = level.LevelName;", "            level.EnableStageBLayout();",
+                      "        {", "            if (replaceSavedEmitters) ClearSavedCampaignEmitters();",
+                      "            RoomLabel = level.LevelName;", "            level.EnableStageBLayout();",
                       f"            Load{map_name}();", "            return;", "        }"))
         layouts.extend((f"    void Load{map_name}()", "    {"))
         layouts.extend(f"        {emitter.call()}" for emitter in emitters)
@@ -424,6 +429,7 @@ def build(path, playable=True, *, iwad=None):
                 '  Slider "Legacy ambient fill", "gl_emitter_ambient", 0.0, 1.0, 0.05, 2',
                 '  Slider "PBR ambient reflections", "gl_emitter_ambient_specular", 0.0, 1.0, 0.05, 2',
                 '  Slider "Emitter intensity", "gl_emitter_intensity", 0.0, 2.0, 0.05, 2',
+                '  Submenu "Projectile lighting", "DoomProjectileLighting"',
                 '  Submenu "Flashlight settings", "SDVKFlashlightOptions"',
                 '  Submenu "PBR materials", "PBRMaterialMenu"', '  StaticText " "']
         menu.extend(f'  Command "{label}", "map {name}"' for name, label in LABELS.items()

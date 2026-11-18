@@ -59,6 +59,7 @@
 #include "thingdef.h"
 #include "r_utility.h"
 #include "doomstat.h"
+#include "gi.h"
 #include "serializer.h"
 #include "g_levellocals.h"
 #include "a_dynlight.h"
@@ -66,6 +67,59 @@
 #include "memarena.h"
 
 EXTERN_CVAR(Bool, lm_dynlights);
+
+CVAR(Int, gl_plasma_flight_light, 100, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Int, gl_plasma_impact_light, 100, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Int, gl_rocket_flight_light, 100, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Int, gl_rocket_impact_light, 100, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Int, gl_bfg_flight_light, 100, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Int, gl_bfg_impact_light, 100, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Int, gl_other_projectile_flight_light, 100, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Int, gl_other_projectile_impact_light, 100, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Int, gl_bullet_impact_light, 100, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+
+void FDynamicLight::SetActor(AActor* actor, bool isowned)
+{
+	target = actor;
+	owned = isowned;
+	projectileLight = ProjectileLight::None;
+	if (!owned || !actor || gameinfo.gametype != GAME_Doom) return;
+
+	static const FName plasma("PlasmaBall"), rocket("Rocket"), bfg("BFGBall"),
+		bfgImpact("BFGExtra"), bulletImpact("BulletPuff");
+	if (actor->IsKindOf(plasma)) projectileLight = ProjectileLight::Plasma;
+	else if (actor->IsKindOf(rocket)) projectileLight = ProjectileLight::Rocket;
+	else if (actor->IsKindOf(bfg) || actor->IsKindOf(bfgImpact)) projectileLight = ProjectileLight::BFG;
+	else if (actor->IsKindOf(bulletImpact)) projectileLight = ProjectileLight::BulletImpact;
+	else if (actor->isMissile()) projectileLight = ProjectileLight::Other;
+}
+
+float FDynamicLight::GetProjectileLightScale() const
+{
+	if (projectileLight == ProjectileLight::None) return 1.f;
+	const auto* actor = target.Get();
+	if (!actor) return 1.f;
+
+	// The light can survive the transition into an impact state on the same actor.
+	bool inFlight = (actor->flags & MF_MISSILE) != 0;
+	if (inFlight && projectileLight == ProjectileLight::Rocket && actor->state)
+	{
+		// The Icon of Sin uses moving rocket explosion effects with MF_MISSILE still set.
+		static const FName brainExplode("BrainExplode");
+		inFlight = !actor->state->IsInSequence(actor->FindState(brainExplode));
+	}
+	int percent;
+	switch (projectileLight)
+	{
+	case ProjectileLight::Plasma: percent = inFlight ? gl_plasma_flight_light : gl_plasma_impact_light; break;
+	case ProjectileLight::Rocket: percent = inFlight ? gl_rocket_flight_light : gl_rocket_impact_light; break;
+	case ProjectileLight::BFG: percent = inFlight ? gl_bfg_flight_light : gl_bfg_impact_light; break;
+	case ProjectileLight::Other: percent = inFlight ? gl_other_projectile_flight_light : gl_other_projectile_impact_light; break;
+	case ProjectileLight::BulletImpact: percent = gl_bullet_impact_light; break;
+	default: return 1.f;
+	}
+	return std::clamp(percent, 0, 1200) / 100.f;
+}
 
 static FMemArena DynLightArena(sizeof(FDynamicLight) * 200);
 static TArray<FDynamicLight*> FreeList;

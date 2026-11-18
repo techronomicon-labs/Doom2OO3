@@ -454,19 +454,21 @@ void AActor::PostSerialize()
 //
 //==========================================================================
 
+bool FState::IsInSequence(const FState* start) const
+{
+	while (start)
+	{
+		if (this == start) return true;
+		const FState* next = start->GetNextState();
+		if (next != start + 1) break;
+		start = next;
+	}
+	return false;
+}
+
 static int InStateSequence(FState * newstate, FState * basestate)
 {
-	if (basestate == NULL) return false;
-
-	FState * thisstate = basestate;
-	do
-	{
-		if (newstate == thisstate) return true;
-		basestate = thisstate;
-		thisstate = thisstate->GetNextState();
-	}
-	while (thisstate == basestate+1);
-	return false;
+	return newstate && newstate->IsInSequence(basestate);
 }
 
 DEFINE_ACTION_FUNCTION_NATIVE(AActor, InStateSequence, InStateSequence)

@@ -23,10 +23,8 @@ float distanceAttenuation(float dist, float radius, float strength, float linear
 
 bool UsePackedLight(DynLightInfo light)
 {
-	if ((light.flags & LIGHTINFO_STAGE_B_EMITTER) != 0)
-		return STAGE_B_WORLD_LIGHTING && uStageBIntensity > 0.0;
-	return !STAGE_B_WORLD_LIGHTING ||
-		(light.flags & (LIGHTINFO_FLASHLIGHT | LIGHTINFO_SUN)) == LIGHTINFO_FLASHLIGHT;
+	return (light.flags & LIGHTINFO_STAGE_B_EMITTER) == 0 ||
+		(STAGE_B_WORLD_LIGHTING && uStageBIntensity > 0.0);
 }
 
 bool UseStructuralRelief(DynLightInfo light)
