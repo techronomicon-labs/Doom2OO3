@@ -214,8 +214,6 @@ public:
 	Stats LastFrameStats, CurFrameStats;
 
 private:
-	// LevelMesh seeds the Vulkan buffers with placeholder triangles that have no Doom surface.
-	const int FirstMapTriangle;
 	int ResolveDecalLightmapTile(const HWDecalCreateInfo& decal) const;
 	void SetLimits(FLevelLocals& doomMap);
 

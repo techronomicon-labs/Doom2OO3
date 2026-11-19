@@ -8,9 +8,7 @@ struct TraceResult
 
 bool IsOpaqueMapCaster(int primitiveIndex, int group)
 {
-	// LevelMesh::AddEmptyMesh reserves four dummy triangles before the first
-	// real map surface. Their surface indices carry no material or sector.
-	return primitiveIndex >= 4 && surfaces[surfaceIndices[primitiveIndex]].MapShadowGroup == group;
+	return surfaces[surfaceIndices[primitiveIndex]].MapShadowGroup == group;
 }
 
 #if defined(USE_RAYQUERY) || defined(SUPPORTS_RAYQUERY)

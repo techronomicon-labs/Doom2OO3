@@ -334,7 +334,6 @@ CVAR(Bool, lm_models, true, CVAR_NOSAVE); // CVar-gated for debugging convenienc
 /////////////////////////////////////////////////////////////////////////////
 
 DoomLevelMesh::DoomLevelMesh(FLevelLocals& doomMap)
-	: FirstMapTriangle(Mesh.IndexCount / 3)
 {
 	SetLimits(doomMap);
 
@@ -2306,7 +2305,6 @@ void DoomLevelMesh::CollectFlashlightCasters(const VSMatrix& lightProjection, co
 	const int group = sectorGroup[source.Index()];
 	Collision->VisitTrianglesInFrustum(planes, [&](int triangle)
 	{
-		if (triangle < FirstMapTriangle) return;
 		const int surface = Mesh.SurfaceIndexes[triangle];
 		if (!Mesh.Surfaces[surface].OpaqueMapCaster || Mesh.Surfaces[surface].SectorGroup != group)
 			return;

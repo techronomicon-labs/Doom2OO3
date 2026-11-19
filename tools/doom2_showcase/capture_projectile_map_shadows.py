@@ -10,6 +10,7 @@ from zipfile import ZipFile
 import numpy as np
 from PIL import Image
 
+from capture_flashlight_map_shadows import add_first_caster
 from capture_relief import require
 from capture_shadow_silhouette import camera_rays
 from gallery import Map, wad
@@ -79,10 +80,11 @@ class ProjectileMapWitness : EventHandler
             step = room.sector(26, "FLOOR5_4", 100)
             for row in room.rows["sector"]:
                 row.update(heightceiling=120, textureceiling="CEIL3_5")
+            # A low, narrow ledge leaves rays that cross both risers below the top.
+            add_first_caster(room, -20, -4, 20, 0, sector, step)
             corners = [(-128, -128), (-128, 128), (128, 128), (128, -128)]
             for start, end in zip(corners, corners[1:] + corners[:1]):
                 room.line(start, end, sector, texture="BRICK7")
-            room.rect(-20, -16, 20, 0, sector, step, "METAL2")
             room.thing(1, x, y, angle=yaw)
             archive.writestr("maps/PRJLEDGE.wad", wad("PRJLEDGE", room.text()))
         archive.writestr("MAPINFO", 'GameInfo { AddEventHandlers = "ProjectileMapWitness" }\n')
@@ -173,7 +175,7 @@ def receivers(case, camera, source, clear, fill):
         low, high = (-256, 960, 8), (-192, 1024, 264)
         region = (x > -308) & (x < -170) & (y > 918) & (y < 1140)
     else:
-        low, high = (-20, -16, 0), (20, 0, 26)
+        low, high = (-20, -4, 0), (20, 0, 26)
         region = (abs(x) < 16) & (y > 3) & (y < 76)
     region &= ~box_hit(eye, target, np.subtract(low, 1), np.add(high, 1))
     region &= (dz < 0) & (np.max(clear - fill, axis=2) >= 12)

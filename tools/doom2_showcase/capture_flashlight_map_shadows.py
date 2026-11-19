@@ -22,17 +22,25 @@ CASES = ("closed", "lifting", "opened", "lowering", "offscreen", "far-room")
 FAR_X, FAR_Y = 8192, -8192
 
 
+def add_first_caster(room, x0, y0, x1, y1, sector, inner=None):
+    # The two faces crossed by the test rays must own mesh triangles 0..3.
+    # This exposes a renderer that mistakes the first map faces for dummy geometry.
+    a, b, c, d = (x0, y0), (x1, y0), (x1, y1), (x0, y1)
+    for start, end in ((a, b), (c, d), (b, c), (d, a)):
+        room.line(start, end, sector, inner, "METAL2")
+
+
 def fixture(path, case, torch, animate=False):
     room = Map()
     sector = room.sector(0, "FLOOR5_4", 100)
     room.rows["sector"][sector].update(heightceiling=120, textureceiling="CEIL3_5")
+    if case == "offscreen":
+        # The pillar is outside the camera's 90-degree frustum. The offset beam sees it.
+        add_first_caster(room, 13, -76, 15, -72, sector)
     corners = [(-128, -128), (-128, 164), (128, 164), (128, -128)]
     for a, b in zip(corners, corners[1:] + corners[:1]):
         room.line(a, b, sector, texture="BRICK7")
-    if case == "offscreen":
-        # The pillar is outside the camera's 90-degree frustum. The offset beam sees it.
-        room.rect(13, -76, 15, -72, sector, None, "METAL2")
-    elif case != "far-room":
+    if case not in ("far-room", "offscreen"):
         door = room.sector(0, "FLOOR5_4", 100)
         room.rows["sector"][door].update(heightceiling=0, textureceiling="CEIL3_5", id=1)
         room.rect(-24, -28, 24, -20, sector, door, "BIGDOOR2")
