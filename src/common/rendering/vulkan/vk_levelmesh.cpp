@@ -1000,6 +1000,7 @@ void VkLevelMeshUploader::UploadSurfaces()
 			info.Normal = FVector3(surface->Plane.X, surface->Plane.Z, surface->Plane.Y);
 			info.PortalIndex = surface->PortalIndex;
 			info.Sky = surface->IsSky;
+			info.MapShadowGroup = surface->OpaqueMapCaster ? surface->SectorGroup : 0;
 			info.Alpha = surface->Alpha;
 			if (surface->Texture)
 			{

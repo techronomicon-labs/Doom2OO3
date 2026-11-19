@@ -38,7 +38,6 @@ struct DoomSurfaceInfo
 	sector_t* ControlSector = nullptr;
 	int LightmapPlane = -1;
 	bool RuntimeBakeOnly = false;
-	bool OpaqueMapCaster = false;
 
 	int LightListSection = 0;
 

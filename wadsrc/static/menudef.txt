@@ -1093,6 +1093,7 @@ OptionMenu "LightOptions" protected
 OptionMenu "DoomProjectileLighting"
 {
 	Title "Projectile lighting"
+	Option "Map geometry shadows", gl_projectile_map_shadows, "OnOff"
 	StaticText "Light output (%)", 1
 	Slider "Plasma flight", gl_plasma_flight_light, 0, 1200, 5, 0
 	Slider "Plasma impact", gl_plasma_impact_light, 0, 1200, 5, 0
@@ -1104,7 +1105,7 @@ OptionMenu "DoomProjectileLighting"
 	Slider "Other projectile impact", gl_other_projectile_impact_light, 0, 1200, 5, 0
 	Slider "Bullet impact", gl_bullet_impact_light, 0, 1200, 5, 0
 	StaticText " "
-	Command "Reset projectile lighting", "resetcvar gl_plasma_flight_light; resetcvar gl_plasma_impact_light; resetcvar gl_rocket_flight_light; resetcvar gl_rocket_impact_light; resetcvar gl_bfg_flight_light; resetcvar gl_bfg_impact_light; resetcvar gl_other_projectile_flight_light; resetcvar gl_other_projectile_impact_light; resetcvar gl_bullet_impact_light"
+	Command "Reset projectile lighting", "resetcvar gl_projectile_map_shadows; resetcvar gl_plasma_flight_light; resetcvar gl_plasma_impact_light; resetcvar gl_rocket_flight_light; resetcvar gl_rocket_impact_light; resetcvar gl_bfg_flight_light; resetcvar gl_bfg_impact_light; resetcvar gl_other_projectile_flight_light; resetcvar gl_other_projectile_impact_light; resetcvar gl_bullet_impact_light"
 }
 
 OptionMenu "SpriteOptions" protected

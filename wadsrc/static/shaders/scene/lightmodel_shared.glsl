@@ -33,15 +33,29 @@ bool UseStructuralRelief(DynLightInfo light)
 		(STAGE_B_WORLD_LIGHTING && (light.flags & LIGHTINFO_STAGE_B_EMITTER) != 0);
 }
 
-#ifndef SHADOW_PUPPET_VERTEX_STAGE
+#if !defined(SHADOW_PUPPET_VERTEX_STAGE) && !defined(SIMPLE)
 #include <shaders/scene/shadowpuppet_depth.glsl>
 
 // All tagged spots share one optical origin. Evaluate visibility once for
 // this fragment, while each lobe keeps its own falloff and colour.
 float cachedPuppetVisibility = -1.0;
 
-float ShadowPuppetVisibility(DynLightInfo light, vec3 position, ivec2 pixel)
+float WorldLightVisibility(DynLightInfo light, vec3 position, ivec2 pixel)
 {
+	if ((light.flags & LIGHTINFO_PROJECTILE_MAP_SHADOW) != 0)
+	{
+		// Start just above the actual receiver plane. The PBR normal and
+		// relief-displaced lighting position can lie inside the receiver.
+		// Scale the contact bias by two float epsilons on large maps.
+		float coordinateScale = max(max(abs(position.x), abs(position.y)), abs(position.z));
+		float bias = max(1.0 / 64.0, coordinateScale * 2.3841858e-7);
+		vec3 origin = position + vWorldNormal.xyz * bias;
+		vec3 toLight = light.pos.xyz - origin;
+		float dist = length(toLight);
+		if (dist <= 2.0 * bias) return 1.0;
+		return TraceOpaqueMapHit(origin, toLight / dist, dist - bias, light.shadowIndex) ? 0.0 : 1.0;
+	}
+
 	if ((light.flags & LIGHTINFO_SHADOW_PUPPET) == 0 ||
 		data[uDataIndex].uShadowPuppetReceiver == 0)
 		return 1.0;

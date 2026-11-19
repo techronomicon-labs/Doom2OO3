@@ -188,6 +188,8 @@ struct HWDrawInfo
 	FLevelLocals *Level;
 	HWDrawInfo * outer = nullptr;
 	bool ShadowPuppetsEligible = false;
+	bool DrawingProjectileMapShadows = false;
+	unsigned ProjectileMapShadowLinks = 0;
 	int FullbrightFlags;
 	std::atomic<int> spriteindex;
 	HWPortal *mClipPortal;

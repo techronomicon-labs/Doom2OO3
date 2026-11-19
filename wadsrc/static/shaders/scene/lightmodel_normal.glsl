@@ -79,7 +79,7 @@
 				attenuation *= shadowAttenuation(light.pos.xyz, light.shadowIndex, light.softShadowRadius, light.flags);
 			}
 			
-			attenuation *= ShadowPuppetVisibility(light, pixelpos.xyz, ivec2(gl_FragCoord.xy));
+			attenuation *= WorldLightVisibility(light, pixelpos.xyz, ivec2(gl_FragCoord.xy));
 			return light.color.rgb * attenuation;
 		}
 		else

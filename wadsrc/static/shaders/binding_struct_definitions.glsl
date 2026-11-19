@@ -6,7 +6,7 @@ struct SurfaceInfo
 	uint PortalIndex;
 	int TextureIndex;
 	float Alpha;
-	float Padding0;
+	int MapShadowGroup;
 	uint LightStart;
 	uint LightEnd;
 	uint Padding1;
@@ -158,6 +158,7 @@ struct Fogball
 #define LIGHTINFO_STAGE_B_EMITTER 64
 #define LIGHTINFO_STAGE_B_DIRECTIONAL 128
 #define LIGHTINFO_SHADOW_PUPPET 256
+#define LIGHTINFO_PROJECTILE_MAP_SHADOW 512
 
 struct DynLightInfo
 {

@@ -1856,7 +1856,6 @@ void DoomLevelMesh::CreateWallSurface(side_t* side, HWWallDispatcher& disp, Mesh
 		info.ControlSector = wallpart.LevelMeshInfo.ControlSector;
 		info.LightmapPlane = -1;
 		info.RuntimeBakeOnly = false;
-		info.OpaqueMapCaster = drawType == LevelMeshDrawType::Opaque;
 		info.TypeIndex = side->Index();
 		info.Side = side;
 
@@ -1864,6 +1863,7 @@ void DoomLevelMesh::CreateWallSurface(side_t* side, HWWallDispatcher& disp, Mesh
 		Sides[sideIndex].FirstSurface = sinfo.Index;
 
 		auto surface = GetSurface(sinfo);
+		surface->OpaqueMapCaster = drawType == LevelMeshDrawType::Opaque;
 		surface->PipelineID = pipelineID;
 		surface->SectorGroup = sectorGroup[side->sector->Index()];
 		surface->Alpha = float(side->linedef->alpha);
@@ -2079,13 +2079,13 @@ void DoomLevelMesh::CreateFlatSurface(HWFlatDispatcher& disp, MeshBuilder& state
 
 		DoomSurfaceInfo info;
 		info.Type = flatpart.ceiling ? ST_CEILING : ST_FLOOR;
-		// The mesh builder also puts masked 3D-floor faces in its opaque list.
-		info.OpaqueMapCaster = drawType == LevelMeshDrawType::Opaque && flatpart.texture &&
-			(!(flatpart.renderflags & SSRF_RENDER3DPLANES) || !flatpart.texture->isMasked());
 		info.ControlSector = flatpart.controlsector ? flatpart.controlsector->model : nullptr;
 		info.LightmapPlane = flatpart.lightmapPlane;
 
 		LevelMeshSurface surf;
+		// The mesh builder also puts masked 3D-floor faces in its opaque list.
+		surf.OpaqueMapCaster = drawType == LevelMeshDrawType::Opaque && flatpart.texture &&
+			(!(flatpart.renderflags & SSRF_RENDER3DPLANES) || !flatpart.texture->isMasked());
 		surf.SectorGroup = sectorGroup[flatpart.sector->Index()];
 		surf.Alpha = flatpart.alpha;
 		surf.Texture = flatpart.texture;
@@ -2308,7 +2308,7 @@ void DoomLevelMesh::CollectFlashlightCasters(const VSMatrix& lightProjection, co
 	{
 		if (triangle < FirstMapTriangle) return;
 		const int surface = Mesh.SurfaceIndexes[triangle];
-		if (!DoomSurfaceInfos[surface].OpaqueMapCaster || Mesh.Surfaces[surface].SectorGroup != group)
+		if (!Mesh.Surfaces[surface].OpaqueMapCaster || Mesh.Surfaces[surface].SectorGroup != group)
 			return;
 		for (int i = 0; i < 3; ++i)
 		{

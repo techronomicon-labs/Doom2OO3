@@ -12,6 +12,8 @@ The flashlight starts 16 map units forward and 12 below eye level, with a 4° up
 
 Open **Options → Projectile lighting** in Doom II or DBP50 to adjust light output from projectiles in flight and on impact. Plasma, rockets, and the BFG each have separate sliders. Other projectiles and bullet impacts have their own controls. **100%** is the authored intensity, **0%** removes the emitted light, and **1200%** is the maximum. The settings save to the active launcher profile.
 
+**Map geometry shadows** in that menu defaults to on. Fire a rocket at the side of an Entryway pillar and watch the floor behind it as you compare the two settings. Opaque walls, floors and ceilings block each projectile or impact light independently. The campaign launchers use this in the single-player Vulkan world view, including on GPUs without hardware ray tracing. Transformed portal views use their existing lighting. The flashlight has its own map-shadow switch under **O**.
+
 ## Edit a material
 
 Open **PBR materials** from **F1** or **Options**. Aim at a wall, floor, or ceiling and choose **Pick aimed surface**, or enter a texture name such as `BRONZE1` or `sprite:TROOA1` under **Find by texture name**. Add `wall:`, `flat:`, or `sprite:` if a name is shared. Each change applies to every use of that material and previews in the scene behind the menu.

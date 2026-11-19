@@ -59,6 +59,7 @@ CVAR(Bool, gl_emitter_lighting, false, 0)
 
 EXTERN_CVAR(Int, gl_shadow_puppets)
 CVAR(Bool, gl_flashlight_map_shadows, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CVAR(Bool, gl_projectile_map_shadows, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 CUSTOM_CVAR(Float, gl_shadow_puppet_softness, 1.f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
