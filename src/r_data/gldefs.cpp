@@ -565,6 +565,7 @@ static const char *LightTags[]=
    "intensity",
    "softshadowradius",
    "linearity",
+   "emitterradiusscale",
    nullptr
 };
 
@@ -596,6 +597,7 @@ enum {
    LIGHTTAG_INTENSITY,
    LIGHTTAG_SOFTSHADOWRADIUS,
    LIGHTTAG_LINEARITY,
+   LIGHTTAG_EMITTER_RADIUS_SCALE,
 };
 
 //==========================================================================
@@ -919,6 +921,9 @@ class GLDefsParser
 						defaults->SetSpotOuterAngle(outerAngle);
 					}
 					break;
+				case LIGHTTAG_EMITTER_RADIUS_SCALE:
+					defaults->SetEmitterRadiusScale(clamp(ParseFloat(sc), 0.f, 1.f));
+					break;
 				case LIGHTTAG_INTENSITY:
 					defaults->SetLightDefIntensity(ParseFloat(sc));
 					break;
@@ -1035,6 +1040,9 @@ class GLDefsParser
 						defaults->SetSpotInnerAngle(innerAngle);
 						defaults->SetSpotOuterAngle(outerAngle);
 					}
+					break;
+				case LIGHTTAG_EMITTER_RADIUS_SCALE:
+					defaults->SetEmitterRadiusScale(clamp(ParseFloat(sc), 0.f, 1.f));
 					break;
 				case LIGHTTAG_INTENSITY:
 					defaults->SetLightDefIntensity(ParseFloat(sc));
@@ -1156,6 +1164,9 @@ class GLDefsParser
 						defaults->SetSpotOuterAngle(outerAngle);
 					}
 					break;
+				case LIGHTTAG_EMITTER_RADIUS_SCALE:
+					defaults->SetEmitterRadiusScale(clamp(ParseFloat(sc), 0.f, 1.f));
+					break;
 				case LIGHTTAG_INTENSITY:
 					defaults->SetLightDefIntensity(ParseFloat(sc));
 					break;
@@ -1275,6 +1286,9 @@ class GLDefsParser
 						defaults->SetSpotOuterAngle(outerAngle);
 					}
 					break;
+				case LIGHTTAG_EMITTER_RADIUS_SCALE:
+					defaults->SetEmitterRadiusScale(clamp(ParseFloat(sc), 0.f, 1.f));
+					break;
 				case LIGHTTAG_INTENSITY:
 					defaults->SetLightDefIntensity(ParseFloat(sc));
 					break;
@@ -1390,6 +1404,9 @@ class GLDefsParser
 						defaults->SetSpotInnerAngle(innerAngle);
 						defaults->SetSpotOuterAngle(outerAngle);
 					}
+					break;
+				case LIGHTTAG_EMITTER_RADIUS_SCALE:
+					defaults->SetEmitterRadiusScale(clamp(ParseFloat(sc), 0.f, 1.f));
 					break;
 				case LIGHTTAG_INTENSITY:
 					defaults->SetLightDefIntensity(ParseFloat(sc));

@@ -119,7 +119,7 @@ struct SurfaceUniforms
 	vec3 uActorCenter;
 	float uDepthFadeThreshold;
 	int uHeightTextureIndex;
-	int uStageBWorld;
+	float uStageBEmission;
 	float uPBRReliefDepth;
 	int uShadowPuppetReceiver;
 	vec4 uSpriteTangent;
@@ -158,7 +158,7 @@ struct Fogball
 #define LIGHTINFO_STAGE_B_EMITTER 64
 #define LIGHTINFO_STAGE_B_DIRECTIONAL 128
 #define LIGHTINFO_SHADOW_PUPPET 256
-#define LIGHTINFO_PROJECTILE_MAP_SHADOW 512
+#define LIGHTINFO_POINT_MAP_SHADOW 512
 
 struct DynLightInfo
 {

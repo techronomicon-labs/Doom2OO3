@@ -213,7 +213,8 @@ void HWWall::RenderTexturedWall(HWWallDispatcher*di, FRenderState &state, int rf
 		SetGlowPlanes(state, frontsector->ceilingplane, frontsector->floorplane);
 	}
 	state.SetMaterial(texture, UF_Texture, 0, flags & 3, NO_TRANSLATION, -1);
-	state.SetEmitterLightingReceiver(di->di && di->di->UsesEmitterLighting() && !(flags & HWWall::HWF_TRANSLUCENT));
+	state.SetEmitterLightingReceiver(di->di && di->di->UsesEmitterLighting() && !(flags & HWWall::HWF_TRANSLUCENT),
+		frontsector ? frontsector->StageBFixtureOutput() : 1.f);
 	if (!(flags & HWWall::HWF_TRANSLUCENT) && texture && !texture->isMasked() && !texture->isWarped())
 		state.EnableWorldRelief();
 #ifdef NPOT_EMULATION
@@ -488,7 +489,7 @@ void HWWall::SetupLights(HWDrawInfo*di, FRenderState& state, FDynLightData &ligh
 			float y = posrel.Y;
 			float z = posrel.Z;
 			float dist = fabsf(p.DistToPoint(x, z, y));
-			float radius = node->lightsource->GetRadius();
+			float radius = light->GetViewRadius(di->UsesEmitterLighting());
 			FVector3 fn, pos;
 
 			if (radius > 0.f && dist < radius)

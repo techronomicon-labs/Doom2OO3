@@ -60,7 +60,7 @@
 #define uColormapIndex data[uDataIndex].uColormapIndex
 #define uDepthFadeThreshold data[uDataIndex].uDepthFadeThreshold
 #define uHeightTextureIndex data[uDataIndex].uHeightTextureIndex
-#define STAGE_B_WORLD_LIGHTING ((uPalLightLevels & 0x01000000) != 0 && data[uDataIndex].uStageBWorld != 0 && !PALETTEMODE)
+#define STAGE_B_WORLD_LIGHTING ((uPalLightLevels & 0x01000000) != 0 && data[uDataIndex].uStageBEmission >= 0.0 && !PALETTEMODE)
 #define uSpriteTangent data[uDataIndex].uSpriteTangent
 #define uSpriteNormal data[uDataIndex].uSpriteNormal
 #define uSpriteReliefParams data[uDataIndex].uSpriteReliefParams

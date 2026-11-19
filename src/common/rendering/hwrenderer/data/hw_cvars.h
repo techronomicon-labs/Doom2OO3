@@ -74,6 +74,7 @@ EXTERN_CVAR(Bool, lm_dynlights)
 
 EXTERN_CVAR(Bool, gl_world_relief)
 EXTERN_CVAR(Bool, gl_emitter_lighting)
+EXTERN_CVAR(Bool, gl_projectile_map_shadows)
 EXTERN_CVAR(Float, gl_emitter_ambient)
 EXTERN_CVAR(Float, gl_emitter_ambient_specular)
 EXTERN_CVAR(Float, gl_emitter_intensity)

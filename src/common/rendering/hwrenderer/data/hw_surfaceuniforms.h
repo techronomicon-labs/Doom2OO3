@@ -54,7 +54,7 @@ struct SurfaceUniforms
 	// SDVK-005 semantic descriptor index, relative to uTextureIndex. Appended
 	// so the established SurfaceUniforms field offsets remain unchanged.
 	int uHeightTextureIndex = -1;
-	int uStageBWorld = 0;
+	float uStageBEmission = -1.f; // Negative for legacy receivers, otherwise the fixture output this tic.
 	float uPBRReliefDepth = 1.0f;
 	int uShadowPuppetReceiver = 0;
 

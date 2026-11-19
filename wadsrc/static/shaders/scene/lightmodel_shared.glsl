@@ -42,7 +42,7 @@ float cachedPuppetVisibility = -1.0;
 
 float WorldLightVisibility(DynLightInfo light, vec3 position, ivec2 pixel)
 {
-	if ((light.flags & LIGHTINFO_PROJECTILE_MAP_SHADOW) != 0)
+	if ((light.flags & LIGHTINFO_POINT_MAP_SHADOW) != 0)
 	{
 		// Start just above the actual receiver plane. The PBR normal and
 		// relief-displaced lighting position can lie inside the receiver.

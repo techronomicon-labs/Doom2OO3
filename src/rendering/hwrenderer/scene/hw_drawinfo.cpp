@@ -73,7 +73,6 @@ EXTERN_CVAR(Bool, gl_render_flats);
 EXTERN_CVAR(Int, gl_shadow_puppets);
 EXTERN_CVAR(Int, gl_shadow_puppets_active);
 EXTERN_CVAR(Bool, gl_flashlight_map_shadows);
-EXTERN_CVAR(Bool, gl_projectile_map_shadows);
 
 CVAR(Bool, lm_always_update, false, 0)
 
@@ -949,7 +948,7 @@ void HWDrawInfo::RenderScene(FRenderState &state)
 	*/
 
 	// The point-light trace uses the level mesh in ordinary world coordinates.
-	DrawingProjectileMapShadows = gl_projectile_map_shadows && ShadowPuppetsEligible && !outer
+	DrawingOpaqueMapShadows = (gl_projectile_map_shadows || UsesEmitterLighting()) && ShadowPuppetsEligible && !outer
 		&& Level->levelMesh && !(Level->flags3 & LEVEL3_NOSHADOWMAP);
 	ProjectileMapShadowLinks = 0;
 	RenderWall.Clock();
@@ -965,7 +964,7 @@ void HWDrawInfo::RenderScene(FRenderState &state)
 	RenderFlat.Unclock();
 
 	drawlists[GLDL_PLAINFLATS].DrawFlats(this, state, false);
-	DrawingProjectileMapShadows = false;
+	DrawingOpaqueMapShadows = false;
 	if (ProjectileMapShadowLinks)
 		SdvkDiagnostics::Emit("projectile-map-shadows", SdvkObservation::Object()
 			.Int("light_links", ProjectileMapShadowLinks).Json());

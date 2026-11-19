@@ -290,6 +290,8 @@ FSerializer &Serialize(FSerializer &arc, const char *key, sector_t &p, sector_t 
 		arc("floorplane", p.floorplane, def->floorplane)
 			("ceilingplane", p.ceilingplane, def->ceilingplane)
 			("lightlevel", p.lightlevel, def->lightlevel)
+			("stageblightpeak", p.StageBLightPeak, def->StageBLightPeak)
+			("stageblightdark", p.StageBLightDark, def->StageBLightDark)
 			("special", p.special, def->special)
 			("seqtype", p.seqType, def->seqType)
 			("seqname", p.SeqName, def->SeqName)

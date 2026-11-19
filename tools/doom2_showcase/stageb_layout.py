@@ -4,7 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from functools import cache
 from hashlib import md5
-from math import ceil, floor, hypot
+from math import ceil, dist, floor, hypot
 from struct import iter_unpack
 
 
@@ -14,45 +14,83 @@ class SurfaceFixture:
     color: tuple[int, int, int]
     radius: int
     intensity: int
+    # Small, persistent hot spots within broad fields of glowing cracks.
+    anchors: tuple[tuple[int, int, int, int], ...] = ()
 
 
 FLUORESCENT = (235, 238, 241)
 WARM_LENS = (255, 199, 143)
 RED_LENS = (255, 72, 57)
 BLUE_LENS = (103, 147, 255)
-FIRELIGHT = (255, 150, 94)
+FIRELIGHT = (255, 155, 90)
+YELLOW_STRIP = (255, 230, 148)
+CRT_GREEN = (104, 192, 93)
 
 # The boxes enclose the light-bearing texels at original resolution. Where
 # a bulb isn't rectangular, the material can further mask the pixels by color.
 FLAT_FIXTURES = {
-    "FLAT2": SurfaceFixture(((18, 20, 46, 45),), FLUORESCENT, 224, 94),
-    "CEIL1_2": SurfaceFixture(((14, 20, 49, 45),), FLUORESCENT, 172, 68),
-    "CEIL1_3": SurfaceFixture(((14, 20, 49, 45),), FLUORESCENT, 172, 68),
-    "TLITE6_1": SurfaceFixture(((21, 21, 43, 43),), WARM_LENS, 166, 65),
-    "TLITE6_4": SurfaceFixture(((21, 21, 43, 43),), WARM_LENS, 166, 65),
-    "TLITE6_5": SurfaceFixture(((7, 7, 23, 23), (40, 7, 56, 23),
-                                (7, 40, 23, 56), (40, 40, 56, 56)), RED_LENS, 136, 49),
-    "TLITE6_6": SurfaceFixture(((7, 7, 23, 23), (40, 7, 56, 23),
-                                (7, 40, 23, 56), (40, 40, 56, 56)), WARM_LENS, 150, 57),
-    "LAVA3": SurfaceFixture(((0, 0, 64, 64),), FIRELIGHT, 145, 40),
-    "LAVA4": SurfaceFixture(((0, 0, 64, 64),), FIRELIGHT, 145, 40),
+    "FLAT2": SurfaceFixture(((16, 20, 48, 46),), FLUORESCENT, 144, 74),
+    "FLAT17": SurfaceFixture(((4, 21, 60, 45),), FLUORESCENT, 150, 78),
+    "CEIL1_2": SurfaceFixture(((15, 22, 49, 45),), FLUORESCENT, 116, 62),
+    "CEIL1_3": SurfaceFixture(((15, 22, 49, 45),), FLUORESCENT, 116, 62),
+    "FLOOR1_7": SurfaceFixture(((7, 25, 58, 41),), RED_LENS, 92, 50),
+    "TLITE6_1": SurfaceFixture(((22, 22, 42, 42),), WARM_LENS, 112, 58),
+    "TLITE6_4": SurfaceFixture(((22, 22, 42, 42),), WARM_LENS, 112, 58),
+    "TLITE6_5": SurfaceFixture(((11, 11, 21, 21), (43, 11, 53, 21),
+                                (11, 43, 21, 53), (43, 43, 53, 53)), RED_LENS, 64, 36),
+    "TLITE6_6": SurfaceFixture(((10, 10, 22, 22), (42, 10, 54, 22),
+                                (10, 42, 22, 54), (42, 42, 54, 54)), WARM_LENS, 78, 42),
 }
 
+
+def shared_fixture(table, names, fixture):
+    table.update(dict.fromkeys(names.split(), fixture))
+
+
+FIELD = ((0, 0, 64, 64),)
+ROCK_SEAMS = ((15, 15, 18, 18), (47, 15, 50, 18), (13, 44, 17, 48), (47, 50, 51, 54))
+shared_fixture(FLAT_FIXTURES, "LAVA1 LAVA2 LAVA3 LAVA4", SurfaceFixture(FIELD, FIRELIGHT, 104, 39))
+shared_fixture(FLAT_FIXTURES, "RROCK05 RROCK06 RROCK07 RROCK08",
+               SurfaceFixture(FIELD, (253, 66, 36), 64, 24, ROCK_SEAMS))
+shared_fixture(FLAT_FIXTURES, "SLIME09 SLIME10 SLIME11 SLIME12",
+               SurfaceFixture(FIELD, (253, 64, 34), 64, 24,
+                              ((18, 14, 21, 17), (50, 14, 53, 17), (18, 46, 21, 49), (50, 46, 53, 49))))
+FLAT_FIXTURES["RROCK02"] = SurfaceFixture(FIELD, (255, 172, 58), 78, 32, ROCK_SEAMS)
+
 WALL_FIXTURES = {
-    "LITE3": SurfaceFixture(((4, 0, 28, 128),), FLUORESCENT, 188, 69),
-    "LITE5": SurfaceFixture(((3, 0, 13, 128),), FLUORESCENT, 170, 65),
-    "LITEBLU1": SurfaceFixture(((1, 20, 7, 45), (1, 84, 7, 110)), BLUE_LENS, 116, 44),
-    "LITEBLU4": SurfaceFixture(((2, 0, 14, 128),), BLUE_LENS, 146, 59),
-    "TEKGREN5": SurfaceFixture(((4, 4, 59, 12),), (255, 245, 205), 192, 56),
-    "EXITSIGN": SurfaceFixture(((2, 3, 31, 13),), RED_LENS, 54, 26),
-    "BRICKLIT": SurfaceFixture(((28, 32, 44, 44),), FIRELIGHT, 132, 51),
-    "FIREBLU2": SurfaceFixture(((0, 0, 128, 128),), (155, 105, 239), 120, 36),
-    "FIRELAV3": SurfaceFixture(((0, 0, 128, 128),), (255, 108, 79), 130, 43),
-    "FIRELAVA": SurfaceFixture(((0, 0, 128, 128),), (255, 108, 79), 130, 43),
-    "FIREMAG2": SurfaceFixture(((0, 32, 128, 128),), FIRELIGHT, 124, 40),
-    "FIREMAG3": SurfaceFixture(((0, 32, 128, 128),), FIRELIGHT, 124, 40),
-    "FIREWALL": SurfaceFixture(((0, 0, 128, 100),), (255, 108, 79), 138, 48),
+    "LITE3": SurfaceFixture(((1, 0, 31, 128),), FLUORESCENT, 128, 62),
+    "LITE5": SurfaceFixture(((1, 0, 15, 128),), FLUORESCENT, 114, 58),
+    "LITEBLU1": SurfaceFixture(((2, 21, 6, 36), (2, 96, 6, 111)), BLUE_LENS, 78, 39),
+    "LITEBLU4": SurfaceFixture(((1, 0, 15, 128),), BLUE_LENS, 92, 46),
+    "SILVER2": SurfaceFixture(tuple((x, y, x + 9, y + 15)
+                                    for x in (8, 28, 47) for y in (27, 88)), BLUE_LENS, 64, 30),
+    "TEKGREN5": SurfaceFixture(((4, 4, 59, 12),), (255, 245, 205), 144, 53),
+    "TEKBRON2": SurfaceFixture(((18, 4, 47, 6),), WARM_LENS, 76, 36),
+    "METAL6": SurfaceFixture(((5, 3, 60, 11),), YELLOW_STRIP, 110, 49),
+    "METAL7": SurfaceFixture(((5, 117, 60, 125),), YELLOW_STRIP, 110, 49),
+    "EXITSIGN": SurfaceFixture(((2, 3, 31, 13),), RED_LENS, 40, 21),
+    "EXITSTON": SurfaceFixture(((20, 25, 47, 35),), RED_LENS, 40, 21),
+    "BRICKLIT": SurfaceFixture(((29, 34, 39, 43),), FIRELIGHT, 96, 44),
+    "BSTONE3": SurfaceFixture(((29, 34, 38, 44),), FIRELIGHT, 96, 44),
+    "COMPSTA1": SurfaceFixture(((8, 24, 50, 41), (97, 5, 118, 19), (96, 28, 117, 41)),
+                               CRT_GREEN, 44, 22),
+    "COMPSTA2": SurfaceFixture(((9, 6, 49, 40), (93, 6, 120, 20), (99, 30, 117, 40)),
+                               CRT_GREEN, 44, 22),
 }
+shared_fixture(WALL_FIXTURES, "BRONZE4 BIGBRIK3",
+               SurfaceFixture(((3, 120, 29, 124), (35, 120, 61, 124)), YELLOW_STRIP, 84, 40))
+shared_fixture(WALL_FIXTURES, "FIREBLU1 FIREBLU2",
+               SurfaceFixture(((0, 0, 128, 128),), (157, 90, 214), 84, 30))
+shared_fixture(WALL_FIXTURES, "FIRELAV3 FIRELAVA FIRELAV2",
+               SurfaceFixture(((0, 0, 128, 128),), (248, 65, 36), 92, 36))
+shared_fixture(WALL_FIXTURES, "FIREMAG1 FIREMAG2 FIREMAG3",
+               SurfaceFixture(((0, 32, 128, 128),), (248, 67, 39), 90, 33))
+shared_fixture(WALL_FIXTURES, "FIREWALA FIREWALB FIREWALL",
+               SurfaceFixture(((0, 0, 128, 100),), (252, 71, 40), 96, 39))
+shared_fixture(WALL_FIXTURES, "CRACKLE2 CRACKLE4",
+               SurfaceFixture(((0, 0, 64, 128),), (255, 170, 58), 76, 29,
+                              ROCK_SEAMS + ((15, 76, 18, 79), (47, 79, 50, 82),
+                                            (14, 110, 17, 113), (45, 111, 48, 114))))
 
 
 @dataclass(frozen=True)
@@ -66,6 +104,8 @@ class Emitter:
     intensity: int
     direction: tuple[int, int] | None = None
     linearity: float = 0.82
+    texture: str | None = None
+    light_cycle: tuple[int, int] | None = None
 
     def call(self):
         yaw, pitch = self.direction or (0, 0)
@@ -86,6 +126,7 @@ class PlaneEmitter:
     intensity: int
     color: tuple[int, int, int] = FLUORESCENT
     ceiling: bool = True
+    light_cycle: tuple[int, int] | None = None
 
     def call(self):
         rgb = ", ".join(map(str, self.color))
@@ -128,6 +169,7 @@ class Sector:
     floor_texture: str
     ceiling_texture: str
     light: int
+    special: int = 0
 
 
 class MapGeometry:
@@ -135,10 +177,10 @@ class MapGeometry:
         self.vertices = tuple(iter_unpack("<hh", lumps["VERTEXES"]))
         self.lines = tuple(iter_unpack("<HHHHHHH", lumps["LINEDEFS"]))
         self.sides = tuple(iter_unpack("<hh8s8s8sH", lumps["SIDEDEFS"]))
-        self.sectors = tuple(Sector(f, c, lump_name(ft), lump_name(ct), light)
-                             for f, c, ft, ct, light, _, _ in iter_unpack("<hh8s8shhh", lumps["SECTORS"]))
+        self.sectors = tuple(Sector(f, c, lump_name(ft), lump_name(ct), light, special)
+                             for f, c, ft, ct, light, special, _ in iter_unpack("<hh8s8shhh", lumps["SECTORS"]))
         self.edges = defaultdict(list)
-        self.open_edges = defaultdict(list)
+        lowest_neighbour = [cell.light for cell in self.sectors]
         for a, b, flags, _, _, front, back in self.lines:
             sides = self.line_sides(front, back)
             if len(sides) == 2 and sides[0][0][-1] == sides[1][0][-1]:
@@ -148,7 +190,15 @@ class MapGeometry:
                 edge = self.vertices[start], self.vertices[end]
                 self.edges[side[-1]].append(edge)
                 if flags & 4 and adjacent is not None:
-                    self.open_edges[side[-1]].append((adjacent, edge))
+                    lowest_neighbour[side[-1]] = min(lowest_neighbour[side[-1]], self.sectors[adjacent].light)
+        self.light_cycles = {}
+        for i, cell in enumerate(self.sectors):
+            if cell.special in (1, 2, 3, 4, 8, 12, 13, 17) and cell.light > 0:
+                # DStrobe treats its dimmer neighbour as the lamp's off state,
+                # or drops to zero when there is no darker adjacent sector.
+                strobe = cell.special in (2, 3, 4, 12, 13)
+                dark = lowest_neighbour[i] if strobe and lowest_neighbour[i] < cell.light else 0
+                self.light_cycles[i] = (cell.light, dark)
         self.scanline = cache(self.scanline)
 
     def line_sides(self, front, back):
@@ -204,18 +254,17 @@ def plane_sites(geometry, sector, bounds, regions, period):
             for left, right in geometry.scanline(sector, y):
                 for x in visible_centres(left, right, u0, u1, period):
                     point = (round(x), y)
-                    if geometry.contains(sector, *point):
+                    if (u0 <= point[0] % period < u1 and v0 <= -point[1] % period < v1
+                        and geometry.contains(sector, *point)):
                         yield point
 
 
-def spaced_sites(sites, bounds, spacing, limit):
+def spaced_sites(sites, center, spacing, limit):
     """Cover the footprint evenly with a bounded number of emitters."""
-    left, bottom, right, top = bounds
-    center = ((left + right) / 2, (bottom + top) / 2)
     sites = sorted(set(sites))
     if not sites:
         return
-    selected = min(sites, key=lambda p: hypot(p[0] - center[0], p[1] - center[1]))
+    selected = min(sites, key=lambda p: dist(p, center))
     remaining = {point: float("inf") for point in sites}
     for _ in range(limit):
         yield selected
@@ -223,7 +272,7 @@ def spaced_sites(sites, bounds, spacing, limit):
         if not remaining:
             break
         for point, previous in remaining.items():
-            remaining[point] = min(previous, hypot(point[0] - selected[0], point[1] - selected[1]))
+            remaining[point] = min(previous, dist(point, selected))
         selected = max(remaining, key=remaining.get)
         if remaining[selected] < spacing:
             break
@@ -241,55 +290,16 @@ def plane_emitters(geometry, sector, cell, bounds):
         fixture = FLAT_FIXTURES.get(texture)
         if fixture is None:
             continue
-        sites = plane_sites(geometry, sector, bounds, fixture.regions, 64)
+        sites = plane_sites(geometry, sector, bounds, fixture.anchors or fixture.regions, 64)
         spacing = 60 if narrow else max(72, fixture.radius * 0.54)
-        positions = list(spaced_sites(sites, bounds, spacing, 6))
+        center = ((bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2)
+        positions = list(spaced_sites(sites, center, spacing, 6))
         strength = lit_intensity(fixture.intensity, cell.light)
         if narrow and len(positions) > 1:
             strength = round(strength * 0.8)
-        radius = max(fixture.radius, min(288, cell.ceiling - cell.floor + 56))
         for x, y in positions:
-            yield PlaneEmitter(texture, sector, x, y, 12, radius, strength, fixture.color, ceiling)
-
-
-def recessed_spill(geometry, emitter):
-    """Place a weaker sample just through an open lip next to a ceiling lamp."""
-    if not emitter.ceiling or emitter.texture.startswith("LAVA"):
-        return
-    fixture = geometry.sectors[emitter.sector]
-    for adjacent, ((ax, ay), (bx, by)) in geometry.open_edges[emitter.sector]:
-        cell = geometry.sectors[adjacent]
-        if (cell.ceiling_texture in FLAT_FIXTURES or not 0 < fixture.ceiling - cell.ceiling <= 24
-            or abs(fixture.floor - cell.floor) > 16 or cell.ceiling - max(cell.floor, fixture.floor) < 48):
-            continue
-        length = hypot(bx - ax, by - ay)
-        if length < 32:
-            continue
-        tx, ty = (bx - ax) / length, (by - ay) / length
-        along = (emitter.x - ax) * tx + (emitter.y - ay) * ty
-        if not 4 <= along <= length - 4:
-            continue
-        x, y = ax + tx * along, ay + ty * along
-        if hypot(x - emitter.x, y - emitter.y) > 38:
-            continue
-        x, y = round(x - ty * 8), round(y + tx * 8)
-        if geometry.contains(adjacent, x, y):
-            yield Emitter(adjacent, x, y, cell.ceiling - cell.floor - 12, min(148, emitter.radius),
-                          emitter.color, max(1, round(emitter.intensity * 0.38)))
-
-
-SKY_COLORS = ((244, 234, 217), (242, 222, 204), (248, 179, 143))
-
-
-def sky_emitters(geometry, sector, cell, bounds, color):
-    if cell.ceiling_texture != "F_SKY1" or cell.floor_texture == "F_SKY1":
-        return
-    # A tile-less sky region; keep even very narrow skylights inside the sector.
-    sites = list(plane_sites(geometry, sector, bounds, ((0, 0, 160, 160),), 160))
-    if not sites:
-        sites = plane_sites(geometry, sector, bounds, ((0, 0, 8, 8),), 8)
-    for x, y in spaced_sites(sites, bounds, 200, 8):
-        yield Emitter(sector, x, y, 80, 472, color, lit_intensity(80, cell.light), (315, 54), 1)
+            yield PlaneEmitter(texture, sector, x, y, 8, fixture.radius, strength, fixture.color,
+                               ceiling, light_cycle=geometry.light_cycles.get(sector))
 
 
 def wall_bands(flags, y_offset, front, back, height, part):
@@ -307,14 +317,16 @@ def wall_bands(flags, y_offset, front, back, height, part):
         texture_top = back.ceiling + height if peg_top else front.ceiling
     elif part == 1:
         low, high = front.floor, min(back.floor, front.ceiling)
-        texture_top = front.ceiling if peg_bottom else back.floor
+        if peg_bottom:
+            texture_top = back.ceiling if front.ceiling_texture == back.ceiling_texture == "F_SKY1" else front.ceiling
+        else:
+            texture_top = back.floor
     else:
         low, high = max(front.floor, back.floor), min(front.ceiling, back.ceiling)
         texture_top = low + height if peg_bottom else high
         low = max(low, texture_top + y_offset - height)
         high = min(high, texture_top + y_offset)
-    # The runtime emitter needs at least eight map units clear of the planes.
-    return max(low, front.floor + 8), min(high, front.ceiling - 8), texture_top + y_offset
+    return max(low, front.floor), min(high, front.ceiling), texture_top + y_offset
 
 
 def wall_emitters(geometry, sizes):
@@ -340,13 +352,17 @@ def wall_emitters(geometry, sizes):
                 if band is None:
                     continue
                 low, high, texture_top = band
-                for u0, v0, u1, v1 in fixture.regions:
+                for u0, v0, u1, v1 in fixture.anchors or fixture.regions:
                     for z in visible_centres(low, high, texture_top - v1, texture_top - v0, height):
                         for along in visible_centres(0, length, u0 - side[0], u1 - side[0], width):
-                            x, y = round(ax + tx * along + ty * 8), round(ay + ty * along - tx * 8)
+                            x, y = round(ax + tx * along + ty * 4), round(ay + ty * along - tx * 4)
                             if geometry.contains(sector, x, y):
-                                yield Emitter(sector, x, y, round(z) - cell.floor, fixture.radius,
-                                              fixture.color, lit_intensity(fixture.intensity, cell.light))
+                                # Identify the lit texels before applying the actor's plane clearance:
+                                # several stock textures have a two-pixel lens right at the top or base.
+                                height_above_floor = min(cell.ceiling - 8, max(cell.floor + 8, round(z))) - cell.floor
+                                yield Emitter(sector, x, y, height_above_floor, fixture.radius,
+                                              fixture.color, lit_intensity(fixture.intensity, cell.light),
+                                              texture=name, light_cycle=geometry.light_cycles.get(sector))
 
 
 def fixture_sizes(wad):
@@ -358,39 +374,28 @@ def fixture_sizes(wad):
 
 
 def infer_layout(wad):
+    from stageb_campaign import tune_stock_lights
+
     sizes = fixture_sizes(wad)
     layouts = {}
     for name, checksum, lumps in stock_map_lumps(wad):
-        if name == "MAP01":
-            continue
         geometry = MapGeometry(lumps)
-        by_sector = defaultdict(list)
+        by_sector = defaultdict(lambda: defaultdict(dict))
         for emitter in wall_emitters(geometry, sizes):
-            group = by_sector[emitter.sector]
-            # Multiple wall segments can expose parts of the same repeated lamp.
-            if all(hypot(hypot(e.x - emitter.x, e.y - emitter.y), e.height - emitter.height) >=
-                   min(84, emitter.radius * 0.44) for e in group):
-                group.append(emitter)
-        sources = {}
-        spills = defaultdict(list)
-        map_number = int(name[3:])
-        sky_color = SKY_COLORS[0 if map_number < 12 or map_number > 30 else 1 if map_number < 21 else 2]
+            by_sector[emitter.sector][emitter.texture][emitter.x, emitter.y, emitter.height] = emitter
+        emitters = []
         for sector, cell in enumerate(geometry.sectors):
             if cell.ceiling - cell.floor < 16 or sector not in geometry.edges:
                 continue
             bounds = geometry.bounds(sector)
-            planes = list(plane_emitters(geometry, sector, cell, bounds))
-            sources[sector] = [*planes, *sky_emitters(geometry, sector, cell, bounds, sky_color), *by_sector[sector]]
-            spill_counts = defaultdict(int)
-            for emitter in planes:
-                for spill in recessed_spill(geometry, emitter):
-                    group = spills[spill.sector]
-                    if (spill_counts[spill.sector] < 2 and len(group) < 4
-                        and all(hypot(e.x - spill.x, e.y - spill.y) >= 72 for e in group)):
-                        group.append(spill)
-                        spill_counts[spill.sector] += 1
-        # The renderer packs at most twelve Stage B lights per receiver.
-        emitters = [emitter for sector, emitters in sources.items() for emitter in (emitters + spills[sector])[:10]]
+            emitters.extend(plane_emitters(geometry, sector, cell, bounds))
+            for texture, sites in by_sector[sector].items():
+                # Sidedefs may tile hundreds of identical footlights or lava cracks around one
+                # room. Bound the cost spatially, retaining actual lit texels around its perimeter.
+                center = tuple((min(axis) + max(axis)) / 2 for axis in zip(*sites))
+                spacing = min(88, max(40, WALL_FIXTURES[texture].radius * 0.55))
+                for point in spaced_sites(sites, center, spacing, 10):
+                    emitters.append(sites[point])
         # Decorations already supply their own lights through the runtime's GLDEFS.
-        layouts[name] = (checksum, emitters)
+        layouts[name] = (checksum, tune_stock_lights(name, emitters))
     return layouts

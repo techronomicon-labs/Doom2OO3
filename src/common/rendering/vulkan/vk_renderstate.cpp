@@ -343,7 +343,7 @@ void VkRenderState::ApplyRenderPass(int dt)
 	pipelineKey.ShaderKey.LightNoNormals = mLightNoNormals;
 	pipelineKey.ShaderKey.UseSpriteCenter = mUseSpriteCenter;
 
-	const bool emitterReceiver = mSurfaceUniforms.uStageBWorld != 0;
+	const bool emitterReceiver = mSurfaceUniforms.uStageBEmission >= 0.f;
 	pipelineKey.ShaderKey.UseShadowmap = emitterReceiver || gl_light_shadows == 1;
 	pipelineKey.ShaderKey.UseRaytrace = !emitterReceiver && gl_light_shadows >= 2;
 	pipelineKey.ShaderKey.Layout.UseRaytracePrecise = !emitterReceiver && gl_light_shadows >= 3;

@@ -113,8 +113,11 @@ if ($Relief -or $SpriteRelief -or $EmitterLighting -or $ShadowPuppets) {
     $argv += @('+bind', 'L', 'netevent SDVKFlashlightToggle')
 }
 if ($EmitterLighting) {
-    $argv += @('+gl_emitter_lighting', 'false', '+gl_ssao', '0',
+    $argv += @('+gl_emitter_lighting', 'true', '+gl_ssao', '0',
               '+bind', 'B', 'toggle gl_emitter_lighting', '+bind', 'F1', 'openmenu DoomIIEmitterLightingMenu')
+    if (!(Test-Path -LiteralPath $config)) {
+        $argv += @('+gl_emitter_ambient', '0.04', '+gl_emitter_ambient_specular', '0.08', '+gl_emitter_intensity', '1')
+    }
 }
 if ($ShadowPuppets) {
     $argv += @('+r_actorspriteshadow', '0', '+gl_ssao', '0', '+gl_multisample', '4', '+crosshair', '2',
@@ -161,6 +164,17 @@ if ($DesktopShortcut) {
     $link = $shell.CreateShortcut($path)
     $link.TargetPath = $engine
     $link.Arguments = $arguments
+    if ($EmitterLighting) {
+        # Let the launcher read profile state when the shortcut is used.
+        $link.TargetPath = (Get-Command powershell.exe).Source
+        $launchArgs = @('-NoProfile', '-ExecutionPolicy', 'RemoteSigned', '-File', $PSCommandPath,
+            '-Game', $Game, '-Exe', $engine, '-Doom2', $iwad, '-Packages', $root,
+            '-ProfileDirectory', $profileRoot, '-EmitterLighting')
+        if ($Relief) { $launchArgs += '-Relief' }
+        if ($SpriteRelief) { $launchArgs += '-SpriteRelief' }
+        if ($ShadowPuppets) { $launchArgs += '-ShadowPuppets' }
+        $link.Arguments = ($launchArgs | ForEach-Object { '"' + $_ + '"' }) -join ' '
+    }
     $link.WorkingDirectory = $workingDir
     $link.IconLocation = "$engine,0"
     $link.Save()

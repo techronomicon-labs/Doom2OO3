@@ -273,7 +273,7 @@ struct FSdvkDiagnosticAccess
                 .Str("scope_name", entry->globalShaderAddr.type == 1 || entry->globalShaderAddr.type == 2 ? FName(ENamedName(entry->globalShaderAddr.name)).GetChars() : "global").Json())
             .Raw("resource", Identity(fb->GetDescriptorSetManager()->GetBindlessIdentity(uniforms.uTextureIndex)))
             .Int("height_texture_index", uniforms.uHeightTextureIndex)
-			.Bool("stage_b_receiver", uniforms.uStageBWorld != 0)
+			.Bool("stage_b_receiver", uniforms.uStageBEmission >= 0.f)
             .Raw("pbr_tuning", Object()
                 .Num("roughness_offset", uniforms.uPBRMaterialFactors.X)
                 .Num("metallic_offset", uniforms.uPBRMaterialFactors.Y)

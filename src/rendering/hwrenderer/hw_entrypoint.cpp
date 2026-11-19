@@ -129,7 +129,7 @@ void CollectLights(FLevelLocals* Level, const DVector3& viewPosition, bool emitt
 	ShadowMap* sm = screen->mShadowMap;
 	std::vector<HWShadowSelectionCandidate<FDynamicLight*>> emitters, dynamicLights;
 	const auto eligible = [emitterLighting, dynamicShadows = gl_light_shadows > 0](const FDynamicLight* light, bool emitter) {
-		return light->IsActive() && (emitter ? emitterLighting : dynamicShadows && light->shadowmapped);
+		return light->GetViewRadius(emitterLighting) > 0 && (emitter ? emitterLighting : dynamicShadows && light->shadowmapped);
 	};
 
 	for (auto light = Level->lights; light; light = light->next)

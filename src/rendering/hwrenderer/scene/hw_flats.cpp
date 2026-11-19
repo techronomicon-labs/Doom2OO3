@@ -383,7 +383,7 @@ void HWFlat::DrawFlat(HWFlatDispatcher *di, FRenderState &state, bool translucen
 		if (sector->special != GLSector_Skybox)
 		{
 			state.SetMaterial(texture, UF_Texture, 0, CLAMP_NONE, NO_TRANSLATION, -1);
-			state.SetEmitterLightingReceiver(di->di && di->di->UsesEmitterLighting());
+			state.SetEmitterLightingReceiver(di->di && di->di->UsesEmitterLighting(), sector->StageBFixtureOutput());
 			if (texture && !texture->isMasked() && !texture->isWarped() && !plane.plane.dithertransflag)
 				state.EnableWorldRelief();
 			bool texmatrix = SetPlaneTextureRotation(state, &plane, texture);

@@ -43,12 +43,13 @@ DEFAULT_CASES = tuple(CASES)
 
 # Pose (x, y, yaw, pitch), selected anchor (kind, x, y), and visible material.
 STOCK_VIEWS = {
-    "MAP01-corridor": ((381, 1110, 90, -14), (1, 328, 1183), "TEKGREN5", "Entryway corridor"),
-    "MAP02-lamp": ((1817, 1082, 180, -12), (1, 1760, 1056), "FLAT2", "Underhalls lamps"),
-    "MAP02-yard": ((1312, 664, 0, 11), (2, 1248, 700), "GRASS2", "Underhalls courtyard"),
+    "MAP01-corridor": ((381, 1110, 90, -14), (1, 324, 1184), "TEKGREN5", "Entryway corridor"),
+    "MAP02-lamp": ((1817, 1082, 180, -12), (1, 1760, 1055), "FLAT2", "Underhalls lamps"),
+    "MAP02-yard": ((1312, 664, 0, 11), None, "GRASS2", "Underhalls courtyard"),
 }
 for case in STOCK_VIEWS:
     CASES[case] = {"legacy": LEGACY, "emitters": EMITTERS, "muted": MUTED}
+CASES["MAP02-lamp"].update({"strobe-off": EMITTERS, "strobe-off-muted": MUTED})
 
 TARGETS = {
     "SBINDR": {"CEMENT7", "FLOOR5_4", "BRICK7"},
@@ -58,7 +59,7 @@ TARGETS = {
 }
 
 
-def view_input(path, flashlight, stock_view=None, freeze=False):
+def view_input(path, flashlight, stock_view=None, freeze=False, strobe_level=None):
     pose = 'players[0].mo.A_SetPitch(level.MapName == "MAP01" ? 18 : level.MapName == "SBOUT" ? -6 : 9);'
     if stock_view is not None:
         x, y, yaw, pitch = stock_view[0]
@@ -66,11 +67,32 @@ def view_input(path, flashlight, stock_view=None, freeze=False):
         players[0].mo.SetOrigin(({x}, {y}, sector.floorplane.ZatPoint(({x}, {y}))), false);
         players[0].mo.A_SetAngle({yaw});
         players[0].mo.A_SetPitch({pitch});'''
+    hold_strobe = ""
+    if strobe_level is not None:
+        # Sector lighting thinkers keep running while actors are frozen. Latch
+        # each lamp bank once its own original strobe reaches the requested phase.
+        hold_strobe = f'''if (level.time > 2 && level.MapName == "MAP02" && locked < 2)
+        {{
+            let effects = ThinkerIterator.Create("Lighting", Thinker.STAT_LIGHT);
+            Lighting effect;
+            while ((effect = Lighting(effects.Next())))
+            {{
+                let sector = effect.GetSector();
+                if ((sector.Index() == 60 || sector.Index() == 62) && sector.GetLightLevel() == {strobe_level})
+                {{
+                    Console.Printf("Held stock lamp %d at %d", sector.Index(), sector.GetLightLevel());
+                    effect.Destroy();
+                    locked++;
+                }}
+            }}
+        }}'''
     script = '''version "4.10"
 class StageBViewInput : EventHandler
 {
+    int locked;
     override void WorldTick()
     {
+        STROBE
         if (level.time != 2 || players[0].mo == null) return;
         POSE
         let lamp = SDVKLocalFlashlightHandler(EventHandler.Find("SDVKLocalFlashlightHandler"));
@@ -79,7 +101,7 @@ class StageBViewInput : EventHandler
     }
 }
 '''.replace("POSE", pose).replace("LAMP", "true" if flashlight else "false").replace(
-        "FREEZE", "level.SetFrozen(true);" if freeze else "")
+        "FREEZE", "level.SetFrozen(true);" if freeze else "").replace("STROBE", hold_strobe)
     with ZipFile(path, "w") as archive:
         archive.writestr(ZipInfo("MAPINFO"), 'GameInfo { AddEventHandlers = "StageBViewInput" }\n',
                          compress_type=ZIP_DEFLATED)
@@ -88,6 +110,8 @@ class StageBViewInput : EventHandler
 
 def capture(args, folder, case, controls, authoring, input_file, commit, relief=True):
     folder.mkdir(parents=True)
+    cache = folder / "cache"
+    cache.mkdir()
     ini = folder / "clean.ini"
     ini.write_text("[GlobalSettings]\nvk_rayquery=false\nvid_fullscreen=false\n", encoding="ascii")
     prefix = folder / "frame"
@@ -100,16 +124,18 @@ def capture(args, folder, case, controls, authoring, input_file, commit, relief=
     argv = [str(args.exe), "-iwad", str(args.iwad), "-file", str(args.materials), str(args.flashlight),
             *map(str, sources), str(input_file), "-stdout", "-nostartup", "-noautoload", "-noautoexec",
             "-nosound", "-nojoy", "-nomonsters", "-rngseed", "2002", "-config", str(ini), "-savedir", str(folder),
-            "-window", "-width", width, "-height", height, "-sdvkobserve", str(prefix),
+            "-window", "-width", width, "-height", height, "-sdvkobserve", str(prefix), "-sdvkobservecache", str(cache),
             "-sdvkobservemode", "timing" if args.timing else "state",
-            "-sdvkobservewarmup", str(TIMING_WARMUP if args.timing else WARMUP), "-sdvkobserveframes", str(frames_requested),
+            "-sdvkobservewarmup", str(TIMING_WARMUP if args.timing else 90 if case == "MAP02-lamp" else WARMUP),
+            "-sdvkobserveframes", str(frames_requested),
             "-sdvkobservegpu", "-sdvkobservequit", "+vid_rendermode", "4", "+vid_setsize", width, height,
             "+gl_levelmesh", "false", "+gl_ubershaders", "false", "+lm_dynlights", "false", "+gl_light_shadows", "0",
             "+gl_lights", "true", "+gl_lightprobe", "true", "+gl_ssao", "0", "+gl_bloom", "false",
             "+gl_tonemap", "0", "+gl_multisample", "0", "+cl_capfps", str(not args.timing).lower(),
             "+vid_vsync", "false", "+vid_maxfps", "0", "+gl_precache", "true",
             "+r_drawplayersprites", "false", "+screenblocks", "12", "+fov", "90", "+crosshair", "0",
-            "+use_mouse", "false", "+con_notifylines", "0", "+show_messages", "false",
+            "+use_mouse", "false", "+i_pauseinbackground", "false", "+vid_activeinbackground", "true",
+            "+con_notifylines", "0", "+show_messages", "false",
             "+screenshot_type", "png", "+screenshot_quiet", "true", "+gl_world_relief", str(relief).lower(),
             "+gl_world_relief_depth", "5", "+gl_world_relief_orientation", "5", "+gl_world_relief_exaggeration", "1.25",
             "+gl_emitter_lighting", str(enabled).lower(), "+gl_emitter_ambient", str(ambient),
@@ -118,8 +144,13 @@ def capture(args, folder, case, controls, authoring, input_file, commit, relief=
     with (folder / "engine.log").open("wb") as log:
         subprocess.run(argv, cwd=args.exe.parent, stdout=log, stderr=subprocess.STDOUT,
                        timeout=60, check=True)
-    require("Unknown command" not in (folder / "engine.log").read_text(encoding="utf-8", errors="replace"),
+    log = (folder / "engine.log").read_text(encoding="utf-8", errors="replace")
+    require("Unknown command" not in log,
             f"Unsupported native capture setting in {folder}")
+    if case == "MAP02-lamp" and not args.timing:
+        level = 128 if folder.name.startswith("strobe-off") else 144
+        require(all(f"Held stock lamp {sector} at {level}" in log for sector in (60, 62)),
+                f"Stock strobe did not reach the requested phase in {folder}")
     raw = json.loads(prefix.with_suffix(".renderer.json").read_text(encoding="utf-8"))
     device = raw["build"]
     require(raw["status"] == "COLLECTED_PENDING_VALIDATION" and raw["dropped_records"] == 0
@@ -174,7 +205,9 @@ def capture(args, folder, case, controls, authoring, input_file, commit, relief=
     if stock_view is not None:
         anchors = {(light["stage_b_kind"], *light["position"][:2]) for record in light_records
                    if record.get("decision") == "selected" and (light := record["light"])["stage_b_kind"] > 0}
-        matches = stock_view[1] in anchors if enabled else not anchors
+        matches = not anchors
+        if enabled:
+            matches = selected_counts[2] == 0 and (stock_view[1] is None or stock_view[1] in anchors)
     else:
         authored = ENTRYWAY if map_name == "MAP01" else FIXTURE_EMITTERS[map_name]
         expected = Counter(2 if getattr(emitter, "direction", None) is not None else 1
@@ -213,8 +246,16 @@ def differences(first, second):
 
 def compare(out, case, captures, *, timing=False):
     reference = captures["legacy"][1]
-    require(all(all(shot[1][key] == reference[key] for key in ("camera", "settings", "build"))
-                for shot in captures.values()), f"Hardware or camera conditions drifted in {case}")
+    # Each shot deliberately uses an empty cache in a different directory.
+    # Keep its path in the report and compare every other build/cache property.
+    def conditions(shot):
+        build = shot["build"].copy()
+        build["application_cache"] = {k: v for k, v in build["application_cache"].items() if k != "path"}
+        return shot["camera"], shot["settings"], build
+
+    expected = conditions(reference)
+    require(all(conditions(shot) == expected for _, shot in captures.values()),
+            f"Hardware or camera conditions drifted in {case}")
     if timing:
         active_name = "sealed" if case == "SBDARK" else "emitters"
         require(reference["max_shadow_rows"] == 0 and captures[active_name][1]["max_shadow_rows"] > 0,
@@ -242,20 +283,34 @@ def compare(out, case, captures, *, timing=False):
         require(report["emitters"]["pixels_over_2"] > 1000, f"Stage B did not change visible lighting in {case}")
         if "muted" in captures:
             active_delta = differences(captures["muted"][0], captures["emitters"][0])
-            require(active_delta["pixels_over_2"] > 1000, f"Authored intensity had no visible effect in {case}")
+            if case != "MAP02-yard":
+                require(active_delta["pixels_over_2"] > 1000, f"Authored intensity had no visible effect in {case}")
             report["emitters_vs_muted"] = active_delta
         if case in ("SBOUT", "MAP02-yard"):
-            # The lower foreground is in the courtyard sector, which contains
-            # the directional emitter. The point emitter sits in the raised alcove.
+            # The demonstration courtyard has a directional source. The stock yard has open sky.
             box = (width // 4, height * 3 // 4, width * 3 // 4, height)
             active = captures["emitters"][0].crop(box)
             muted = captures["muted"][0].crop(box)
-            require(sum(ImageStat.Stat(active).mean) - sum(ImageStat.Stat(muted).mean) > 5,
-                    "Directional lighting did not reach the foreground courtyard tiles")
+            if case == "SBOUT":
+                require(sum(ImageStat.Stat(active).mean) - sum(ImageStat.Stat(muted).mean) > 5,
+                        "Directional lighting did not reach the demonstration courtyard tiles")
+            else:
+                require(differences(active, muted)["max_channel_delta"] <= 1,
+                        "An unlit portion of the Underhalls yard acquired a pool of light")
         if case == "SBINDR":
             relief_delta = differences(captures["without-relief"][0], captures["emitters"][0])
             require(relief_delta["pixels_over_2"] > 1000, "Authored point lamps did not respond to wall and floor height")
             report["emitter_relief_vs_flat"] = relief_delta
+        if case == "MAP02-lamp":
+            # With cast light muted, the remaining change is the luminous face itself.
+            for bright, dark in (("emitters", "strobe-off"), ("muted", "strobe-off-muted")):
+                delta = differences(captures[bright][0], captures[dark][0])
+                require(delta["pixels_over_2"] > 100, f"The fluorescent strobe did not affect {bright}")
+                report[f"{bright}_vs_{dark}"] = delta
+            off_cast = differences(captures["strobe-off"][0], captures["strobe-off-muted"][0])
+            require(report["emitters_vs_muted"]["pixels_over_2"] > 4 * off_cast["pixels_over_2"],
+                    "The fluorescents kept casting light through their off phase")
+            report["off_phase_cast"] = off_cast
         if "original" in captures:
             # Legacy light animation can vary slightly between the two render runs.
             require(report["original"]["max_channel_delta"] <= 1,
@@ -285,12 +340,14 @@ def run(args):
         # Entryway's pickups animate next to the measured surfaces. Pin their
         # simulation phase for the pixel comparison, and leave timing live.
         freeze = case == "MAP01" and not args.timing
-        for _, _, _, beam in CASES[case].values():
-            key = case, beam
-            if key not in inputs:
-                path = args.out / f"view-input-{case}-{int(beam)}.pk3"
-                view_input(path, beam, STOCK_VIEWS.get(case), freeze)
-                inputs[key] = path
+        for shot, (_, _, _, beam) in CASES[case].items():
+            strobe = None
+            if case == "MAP02-lamp" and not args.timing:
+                strobe = 128 if shot.startswith("strobe-off") else 144
+            path = args.out / f"view-input-{case}-{int(beam)}-{strobe or 0}.pk3"
+            if not path.exists():
+                view_input(path, beam, STOCK_VIEWS.get(case), freeze, strobe)
+            inputs[case, shot] = path
     version = subprocess.check_output([args.exe, "--version"], cwd=args.exe.parent, encoding="utf-8", timeout=20)
     identity = re.search(r"^Commit: ([0-9a-f]{40})$", version, re.M)
     require(identity is not None, "Missing native build identity")
@@ -299,14 +356,15 @@ def run(args):
               "warmup_frames": TIMING_WARMUP if args.timing else WARMUP,
               "retained_frames": args.frames if args.timing else FRAMES, "cases": {},
               "sources": {name: sha256(Path(__file__).with_name(name)) for name in
-                          ("capture_stageb_lighting.py", "stageb_lighting.py", "stageb_layout.py", "capture_relief.py")},
+                          ("capture_stageb_lighting.py", "stageb_lighting.py", "stageb_layout.py",
+                           "stageb_campaign.py", "capture_relief.py")},
               "inputs": {str(path): sha256(path) for path in (args.exe, args.iwad, args.materials, args.flashlight)},
               "runtime_pk3": {path.name: sha256(path) for path in sorted(args.exe.parent.glob("*.pk3"))}}
     try:
         for case in cases:
             shots = {name: capture(args, args.out / case / name, case, controls,
                                    None if name == "original" else authoring,
-                                   inputs[case, controls[-1]], identity.group(1), relief=not name.endswith("without-relief"))
+                                   inputs[case, name], identity.group(1), relief=not name.endswith("without-relief"))
                      for name, controls in CASES[case].items()
                      if not args.timing or name in ("legacy", "emitters", "sealed")}
             report["cases"][case] = {"comparisons": compare(args.out, case, shots, timing=args.timing),

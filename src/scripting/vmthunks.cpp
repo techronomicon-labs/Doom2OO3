@@ -2382,6 +2382,20 @@ DEFINE_ACTION_FUNCTION(FLevelLocals, EnableStageBLayout)
 	return 0;
 }
 
+DEFINE_ACTION_FUNCTION(FLevelLocals, SetStageBLightPeak)
+{
+	PARAM_SELF_STRUCT_PROLOGUE(FLevelLocals);
+	PARAM_INT(sectorIndex);
+	PARAM_INT(peak);
+	PARAM_INT(darkLevel);
+	if (unsigned(sectorIndex) < self->sectors.Size() && peak > darkLevel && peak <= 255 && darkLevel >= 0)
+	{
+		self->sectors[sectorIndex].StageBLightPeak = uint8_t(peak);
+		self->sectors[sectorIndex].StageBLightDark = uint8_t(darkLevel);
+	}
+	return 0;
+}
+
 static void Vec2Offset(FLevelLocals *Level, double x, double y, double dx, double dy, bool absolute, DVector2 *result)
 {
 	if (absolute)

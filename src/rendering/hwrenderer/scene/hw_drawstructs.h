@@ -555,8 +555,8 @@ extern const float LARGE_VALUE;
 
 struct FDynLightData;
 struct FDynamicLight;
-bool StageBEmitterAllowed(const FDynLightData& dld, const FDynamicLight* light, const sector_t* receiver);
+bool StageBEmitterAllowed(const FDynLightData& dld, const FDynamicLight* light, const sector_t* receiver, bool traceAcrossSectors = false);
 bool GetLight(FDynLightData& dld, int group, Plane& p, FDynamicLight* light, bool checkside, const sector_t* emitterReceiver = nullptr, HWDrawInfo* worldView = nullptr, const sector_t* mapReceiver = nullptr);
-void AddLightToList(FDynLightData &dld, int group, FDynamicLight* light, bool forceAttenuate, bool doTrace, HWDrawInfo* worldView = nullptr);
+void AddLightToList(FDynLightData &dld, int group, FDynamicLight* light, float radius, bool forceAttenuate, bool doTrace, HWDrawInfo* worldView = nullptr);
 void AddSunLightToList(FDynLightData& dld, float x, float y, float z, const FVector3& sundir, const FVector3& suncolor, bool doTrace);
 void SetSplitPlanes(FRenderState& state, const secplane_t& top, const secplane_t& bottom);

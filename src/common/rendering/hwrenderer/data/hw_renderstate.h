@@ -223,7 +223,7 @@ public:
 		mSurfaceUniforms.uLightLevel = -1.0f;
 		mSurfaceUniforms.uDepthFadeThreshold = 0.0f;
 		mSurfaceUniforms.uHeightTextureIndex = -1;
-		mSurfaceUniforms.uStageBWorld = 0;
+		mSurfaceUniforms.uStageBEmission = -1.f;
 		mSurfaceUniforms.uShadowPuppetReceiver = 0;
 		ClearWorldRelief();
 		ClearSpriteTangentBasis();
@@ -308,12 +308,13 @@ public:
 		mSurfaceUniforms.uWorldReliefParams = {};
 	}
 
-	void SetEmitterLightingReceiver(bool enabled)
+	void SetEmitterLightingReceiver(bool enabled, float emission = 1.f)
 	{
-		mSurfaceUniforms.uStageBWorld = 0;
+		mSurfaceUniforms.uStageBEmission = -1.f;
 		if (!enabled || mPaletteMode) return;
 		const int shader = getShaderIndex();
-		mSurfaceUniforms.uStageBWorld = shader == SHADER_Default || shader == SHADER_PBR || shader == SHADER_Specular;
+		if (shader == SHADER_Default || shader == SHADER_PBR || shader == SHADER_Specular)
+			mSurfaceUniforms.uStageBEmission = emission;
 	}
 
 	void SetShadowPuppetReceiver(bool enabled)

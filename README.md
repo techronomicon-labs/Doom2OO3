@@ -64,7 +64,7 @@ Open **Options → Projectile lighting → Map geometry shadows** to compare how
 
 See the [Stage A relief evaluation](docs/RELIEF.md) for the opt-in Doom II and DBP50 material packs, Windows playtest controls and matched Vulkan captures.
 
-See the [Stage B emitter lighting evaluation](docs/EMITTER_LIGHTING.md) for lighting comparisons in Doom II Entryway and the indoor and outdoor rooms.
+The Doom II emitter launcher covers all 32 stock maps. Press **B** to compare lighting, **L** for the flashlight, or **F1 → Dark campaign lighting** to apply the low ambient preset to an existing profile. [Map-by-map lighting notes](docs/EMITTER_LIGHTING.md#stock-campaign-lighting)
 
 ## What is preserved / what is gone
 

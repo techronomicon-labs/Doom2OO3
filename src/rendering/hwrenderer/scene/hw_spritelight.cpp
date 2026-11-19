@@ -271,7 +271,7 @@ void HWDrawInfo::GetDynSpriteLight(AActor *self, sun_trace_cache_t * traceCache,
 			}
 
 			dist = (float)L.LengthSquared();
-			radius = light->GetRadius();
+			radius = light->GetViewRadius(UsesEmitterLighting());
 
 			if (radius > 0 && dist < radius * radius)
 			{
@@ -414,12 +414,13 @@ void HWDrawInfo::GetDynSpriteLightList(AActor *self, double x, double y, double 
 			}
 
 			DVector3 pos = HWLightPositionRelative(light, group);
-			float radius = (float)(light->GetRadius() + actorradius);
+			const float lightRadius = light->GetViewRadius(UsesEmitterLighting());
+			float radius = (float)(lightRadius + actorradius);
 			double dx = pos.X - x;
 			double dy = pos.Y - y;
 			double dz = pos.Z - z;
 			double distSquared = dx * dx + dy * dy + dz * dz;
-			if (distSquared >= radius * radius)
+			if (lightRadius <= 0 || distSquared >= radius * radius)
 			{
 				if (countDiagnostics) ++filtered;
 				if (countDiagnostics && SdvkDiagnostics::StateEnabled())
@@ -453,7 +454,7 @@ void HWDrawInfo::GetDynSpriteLightList(AActor *self, double x, double y, double 
 				if (selections)
 					selections->push_back({ light, group, LightQueryClass(light) });
 				if (output)
-					AddLightToList(*output, group, light, true, gl_spritelight > 0);
+					AddLightToList(*output, group, light, lightRadius, true, gl_spritelight > 0);
 			}
 			else if (countDiagnostics)
 			{

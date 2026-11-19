@@ -153,15 +153,20 @@ bool FDynamicLight::IsStageBDirectional() const
 	return actor && actor->IsKindOf(directionalClass);
 }
 
-bool StageBEmitterAllowed(const FDynLightData& dld, const FDynamicLight* light, const sector_t* receiver)
+bool StageBEmitterAllowed(const FDynLightData& dld, const FDynamicLight* light, const sector_t* receiver, bool traceAcrossSectors)
 {
-	// A receiver shares the emitter's authored sector, even across closed doors.
-	if (!receiver || light->Sector != receiver || !screen->mShadowMap->Enabled() ||
+	if (!receiver || (light->Sector != receiver && !traceAcrossSectors) || !screen->mShadowMap->Enabled() ||
 		light->mShadowmapIndex < 0 || light->mShadowmapIndex >= static_cast<int>(HWShadowMapLightCapacity))
 		return false;
-	unsigned emitters = 0;
+	unsigned emitters = 0, neighboring = 0;
 	for (auto& packed : dld.arrays[LIGHTARRAY_NORMAL])
-		if (packed.flags & LIGHTINFO_STAGE_B_EMITTER) ++emitters;
+	{
+		if (!(packed.flags & LIGHTINFO_STAGE_B_EMITTER)) continue;
+		++emitters;
+		if (packed.flags & LIGHTINFO_POINT_MAP_SHADOW) ++neighboring;
+	}
+	// Reserve room for the receiver's own fixtures and bound the geometry traces per pixel.
+	if (traceAcrossSectors && neighboring >= 4) return false;
 	// A corridor can have nine authored wall strips on the same floor receiver.
 	return emitters < 12;
 }
@@ -174,9 +179,8 @@ bool StageBEmitterAllowed(const FDynLightData& dld, const FDynamicLight* light, 
 bool GetLight(FDynLightData& dld, int group, Plane & p, FDynamicLight * light, bool checkside,
 	const sector_t* emitterReceiver, HWDrawInfo* worldView, const sector_t* mapReceiver)
 {
-	if (light->IsStageBEmitter() && !StageBEmitterAllowed(dld, light, emitterReceiver)) return false;
 	DVector3 pos = HWLightPositionRelative(light, group);
-	float radius = (light->GetRadius());
+	float radius = light->GetViewRadius(worldView && worldView->UsesEmitterLighting());
 
 	auto dist = fabs(p.DistToPoint((float)pos.X, (float)pos.Z, (float)pos.Y));
 
@@ -188,14 +192,18 @@ bool GetLight(FDynLightData& dld, int group, Plane & p, FDynamicLight * light, b
 	}
 
 	HWDrawInfo* mapShadowView = nullptr;
-	if (worldView && worldView->DrawingProjectileMapShadows && mapReceiver && light->IsProjectileLight()
-		&& light->Sector->PortalGroup == group)
+	const bool emitter = light->IsStageBEmitter();
+	const bool neighboringFixture = emitter && emitterReceiver && emitterReceiver != light->Sector
+		&& !light->IsStageBDirectional() && (light->Level->flags3 & LEVEL3_STAGEBLAYOUT);
+	if (worldView && worldView->DrawingOpaqueMapShadows && mapReceiver && light->Sector->PortalGroup == group
+		&& (neighboringFixture || (gl_projectile_map_shadows && light->IsProjectileLight())))
 	{
 		// Portal links can put a light on a disconnected receiver even when both have portal group zero.
 		const auto& groups = worldView->Level->levelMesh->sectorGroup;
 		if (groups[mapReceiver->Index()] == groups[light->Sector->Index()]) mapShadowView = worldView;
 	}
-	AddLightToList(dld, group, light, false, false, mapShadowView);
+	if (emitter && !StageBEmitterAllowed(dld, light, emitterReceiver, mapShadowView != nullptr)) return false;
+	AddLightToList(dld, group, light, radius, false, false, mapShadowView);
 	return true;
 }
 
@@ -204,7 +212,7 @@ bool GetLight(FDynLightData& dld, int group, Plane & p, FDynamicLight * light, b
 // Add one dynamic light to the light data list
 //
 //==========================================================================
-void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, bool forceAttenuate, bool doTrace, HWDrawInfo* mapShadowView)
+void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, float radius, bool forceAttenuate, bool doTrace, HWDrawInfo* mapShadowView)
 {
 	FDynLightInfo info = {};
 	const bool emitter = light->IsStageBEmitter();
@@ -213,7 +221,7 @@ void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, bool f
 
 	DVector3 pos = HWLightPositionRelative(light, group);
 	
-	info.radius = light->GetRadius();
+	info.radius = radius;
 
 	float cs;
 	if (light->IsAdditive()) 
@@ -232,6 +240,7 @@ void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, bool f
 	cs *= (float)light->GetLightDefIntensity() * light->GetProjectileLightScale();
 	if (emitter)
 	{
+		cs *= light->Sector->StageBFixtureOutput();
 		const int intensity = light->GetSecondaryIntensity();
 		cs *= intensity == 0 ? 1.f : clamp(intensity, 0, 200) * 0.01f;
 		info.radius = std::min(info.radius, 512.f);
@@ -263,10 +272,10 @@ void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, bool f
 
 	if (mapShadowView && !light->IsSpot() && !light->DontShadowmap() && cs > 0)
 	{
-		info.flags |= LIGHTINFO_PROJECTILE_MAP_SHADOW;
+		info.flags |= LIGHTINFO_POINT_MAP_SHADOW;
 		// A traced point light uses this slot for its connected map geometry group.
 		info.shadowIndex = mapShadowView->Level->levelMesh->sectorGroup[light->Sector->Index()];
-		if (SdvkDiagnostics::StateEnabled()) ++mapShadowView->ProjectileMapShadowLinks;
+		if (!emitter && SdvkDiagnostics::StateEnabled()) ++mapShadowView->ProjectileMapShadowLinks;
 	}
 	else if ((light->shadowmapped || emitter) && screen->mShadowMap->Enabled())
 	{
@@ -299,7 +308,7 @@ void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, bool f
 		info.spotDirZ = float(-direction.Y);
 	}
 
-	if (light->Trace() && doTrace && !(info.flags & LIGHTINFO_PROJECTILE_MAP_SHADOW))
+	if (light->Trace() && doTrace && !(info.flags & LIGHTINFO_POINT_MAP_SHADOW))
 	{
 		info.flags |= (LIGHTINFO_TRACE | LIGHTINFO_SHADOWMAPPED);
 	}
