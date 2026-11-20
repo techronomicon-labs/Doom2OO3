@@ -46,12 +46,9 @@ bool MapSegmentBlocked(vec3 start, vec3 end, float bias, int group, bool include
 	return dist > 2.0 * bias && TraceMapHit(start, ray / dist, dist - bias, group, includeMasked);
 }
 
-float DitheredMapVisibility(vec3 receiver, vec3 lamp, vec3 right, vec3 up, float bias, int group)
+#if !defined(SHADOW_PUPPET_VERTEX_STAGE)
+vec3 DitheredLensOffset(vec3 right, vec3 up)
 {
-#if defined(SHADOW_PUPPET_VERTEX_STAGE)
-	// Vertex-lit sprites interpolate a single representative sample.
-	return MapSegmentBlocked(receiver, lamp, bias, group, true) ? 0.0 : 1.0;
-#else
 	// Repeat a stratified 8x8 lens pattern in screen pixels, fixed over time.
 	ivec2 p = ivec2(gl_FragCoord.xy) & 7;
 	int x = p.x ^ p.y;
@@ -59,17 +56,9 @@ float DitheredMapVisibility(vec3 receiver, vec3 lamp, vec3 right, vec3 up, float
 		((p.y & 2) << 1) | ((x & 4) >> 1) | ((p.y & 4) >> 2);
 	float radius = sqrt((float(index) + 0.5) / 64.0);
 	float angle = float(index) * 2.39996323;
-	vec3 offset = radius * (cos(angle) * right + sin(angle) * up);
-	// Reflect a sample that lands behind a wall back across the lens. If
-	// both ends are buried, the physical mount remains a valid source.
-	for (int attempt = 0; attempt < 2; ++attempt)
-	{
-		if (!MapSegmentBlocked(lamp, lamp + offset, bias, group, true)) break;
-		offset = attempt == 0 ? -offset : vec3(0.0);
-	}
-	return MapSegmentBlocked(receiver, lamp + offset, bias, group, true) ? 0.0 : 1.0;
-#endif
+	return radius * (cos(angle) * right + sin(angle) * up);
 }
+#endif
 
 float MapLightVisibility(DynLightInfo light, vec3 position, bool flashlight)
 {
@@ -82,23 +71,50 @@ float MapLightVisibility(DynLightInfo light, vec3 position, bool flashlight)
 		normal = -normal; // Either face of a masked wall can receive the beam.
 	vec3 origin = position + normal * bias;
 	vec3 lamp = light.pos.xyz;
-	if (!flashlight || all(equal(uFlashlightMapShadowRadii, vec2(0.0))))
-		return MapSegmentBlocked(origin, lamp, bias, light.shadowIndex, flashlight) ? 0.0 : 1.0;
-
-	// The disk follows the head mount. Aim trims steer the beam lobes within
-	// that frame. All primary rays meet at the receiver, giving a hard contact.
-	mat3 cameraAxes = transpose(mat3(ViewMatrix));
-	vec3 right = normalize(cameraAxes[0]);
-	vec3 up = normalize(cameraAxes[1] - right * dot(cameraAxes[1], right));
-	right *= uFlashlightMapShadowRadii.x;
-	up *= uFlashlightMapShadowRadii.y;
+	bool spread = flashlight && any(notEqual(uFlashlightMapShadowRadii, vec2(0.0)));
+	vec3 right = vec3(0.0), up = vec3(0.0);
+	if (spread)
+	{
+		// The disk follows the head mount. Aim trims steer the lobes within it.
+		mat3 cameraAxes = transpose(mat3(ViewMatrix));
+		right = normalize(cameraAxes[0]);
+		up = normalize(cameraAxes[1] - right * dot(cameraAxes[1], right));
+		right *= uFlashlightMapShadowRadii.x;
+		up *= uFlashlightMapShadowRadii.y;
+	}
+	if (!spread || uFlashlightMapShadowStyle == 4)
+	{
+		vec3 offset = vec3(0.0);
+		int mountTests = 0;
+#if !defined(SHADOW_PUPPET_VERTEX_STAGE)
+		if (spread)
+		{
+			if (length(lamp - origin) <= 2.0 * bias) return 1.0;
+			offset = DitheredLensOffset(right, up);
+			mountTests = 2;
+		}
+#endif
+		// Share one BVH walk site for the optional mount probes and final
+		// receiver segment. A point source goes straight to the receiver test.
+		for (;;)
+		{
+			vec3 start = mountTests > 0 ? lamp : origin;
+			bool hit = MapSegmentBlocked(start, lamp + offset, bias, light.shadowIndex, flashlight);
+			if (mountTests == 0) return hit ? 0.0 : 1.0;
+			if (hit)
+			{
+				--mountTests;
+				offset = mountTests > 0 ? -offset : vec3(0.0);
+			}
+			else mountTests = 0;
+		}
+	}
 	vec3 ray = lamp - origin;
 	float dist = length(ray);
 	if (dist <= 2.0 * bias) return 1.0;
 	// Shorten every ray by the same fraction, preserving the disk and avoiding
 	// coincident light-endpoint hits. The receiver was already biased above.
 	float fraction = 1.0 - bias / dist;
-	if (uFlashlightMapShadowStyle == 4) return DitheredMapVisibility(origin, lamp, right, up, bias, light.shadowIndex);
 	if (uFlashlightMapShadowStyle >= 2)
 	{
 		bool crossOnly = uFlashlightMapShadowStyle == 3;

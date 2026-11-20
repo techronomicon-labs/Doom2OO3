@@ -484,7 +484,7 @@ bool MapAreaTriangle(int element, vec3 receiver, vec3 toLamp, vec3 right, vec3 u
 	if (!centerHit && center.w > 0.0 && all(greaterThanEqual(center.xyz, vec3(0.0))))
 		centerHit = caster == group || FlashlightMaskHit(primitive, surface, center.xy / (center.x + center.y + center.z));
 
-	for (int row = 0; row < (crossOnly ? 1 : 3); ++row)
+	for (int row = 0; row < 3; ++row)
 	{
 		vec4 spokeX = crossOnly ? mapCrossX : mapSpokeX[row];
 		vec4 spokeY = crossOnly ? mapCrossY : mapSpokeY[row];
@@ -519,6 +519,7 @@ bool MapAreaTriangle(int element, vec3 receiver, vec3 toLamp, vec3 right, vec3 u
 				pending &= pending - 1u;
 			}
 		}
+		if (crossOnly) break;
 	}
 	return false;
 }
