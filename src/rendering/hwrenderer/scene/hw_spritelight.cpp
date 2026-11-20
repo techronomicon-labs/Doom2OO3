@@ -300,6 +300,8 @@ void HWDrawInfo::GetDynSpriteLight(AActor *self, sun_trace_cache_t * traceCache,
 						const auto direction = HWSpotDirection(light);
 						double cosDir = -(L.X * direction.X + L.Y * direction.Y + L.Z * direction.Z);
 						frac *= (float)smoothstep(light->pSpotOuterAngle->Cos(), light->pSpotInnerAngle->Cos(), cosDir);
+						if (const auto* profile = HWFlashlightView::ProfileFor(light))
+							frac *= profile->ProfileGain((-L).ToXZY());
 					}
 
 					if (frac > 0 && (!light->shadowmapped || (self && light->TraceActors()) || screen->mShadowMap->ShadowTest(origin, { x, y, z })))

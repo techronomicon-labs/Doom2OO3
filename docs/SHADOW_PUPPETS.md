@@ -6,6 +6,10 @@ Press **L** to turn on the flashlight. **O → Map geometry shadows** switches f
 
 **O → Map shadow spread (%)** scales your chosen radius from 0% to 400%. At the default radius of 12 units, 100% uses 12 units and 200% uses 24. Set spread to 0% for a hard edge. Each playtest profile saves its own percentage.
 
+**Map shadow edge** changes how the edge looks. **Smooth** is the default and grades the flashlight’s contribution across the edge. **Single shade** gives the projected footprint one shade, including the part that spreads beyond a nearby pillar. **Stepped** keeps the previous bands.
+
+**Shadow darkness (%)** adjusts how much flashlight light a map or sprite shadow removes. At 0% the beam shines through, at 50% a fully blocked area keeps half its flashlight light, and at 100% a solid blocker removes all of it. Values up to 200% deepen partially shaded edges. Ambient light and other light sources keep their own intensity.
+
 **J** cycles **Off → Stencil → Depth** for sprite shadows. **O** also lets you set **Sprite depth edge softness**. A fresh campaign profile starts in Depth. Each game's profile remembers both shadow settings and the softness.
 
 Both campaign launchers enable `gl_precache`. At map entry Vulkan prepares the map's material pipelines, common sprite and projectile draws, and both supported flashlight shadow paths before drawing the first scene. The first load with a cold shader cache can take longer. Later levels reuse pipelines already built for the same render settings. Set `gl_precache false` in the console before changing levels to use on-demand loading.

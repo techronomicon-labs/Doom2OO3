@@ -22,7 +22,7 @@ DISTANCES = {"near": 32, "far": 96}
 DEFAULT_RADIUS = 12
 
 
-def capture(pack, exe, folder, pose, beam, shadows, radius=None, spread=None):
+def capture(pack, exe, folder, pose, beam, shadows, radius=None, spread=None, style=None, darkness=None):
     folder.mkdir(parents=True)
     x, y, yaw, pitch = pose
     fixture = folder / "pose.pk3"
@@ -82,6 +82,10 @@ class EntrywayLampPose : EventHandler
         args.extend(["+gl_flashlight_map_shadow_radius", str(radius)])
     if spread is not None:
         args.extend(["+gl_flashlight_map_shadow_spread", str(spread)])
+    if style is not None:
+        args.extend(["+gl_flashlight_map_shadow_style", str(style)])
+    if darkness is not None:
+        args.extend(["+gl_flashlight_shadow_darkness", str(darkness)])
     log = folder / "engine.log"
     with log.open("wb") as stream:
         subprocess.run(list(map(str, args)), cwd=exe.parent, stdout=stream, stderr=subprocess.STDOUT,
@@ -102,7 +106,29 @@ class EntrywayLampPose : EventHandler
             tuple(map(float, source.groups())) if source else None)
 
 
-def measure(pack, exe, root, edge_x, outward, distance, check_spread=False):
+def verify_edge_styles(pack, exe, root, pose, region, aperture_x, clear, fill):
+    # Double the spread so two strips inside one legacy band span several columns.
+    views = [capture(pack, exe, root / name, pose, True, True, DEFAULT_RADIUS, 200, style)[0]
+             for name, style in (("stepped", 0), ("single", 1), ("smooth", 2))]
+    stepped, single, smooth = views
+    u = aperture_x / (2 * DEFAULT_RADIUS)
+    inner = region & (u > .04) & (u < .09)
+    outer = region & (u > .14) & (u < .19)
+    require(min(inner.sum(), outer.sum()) >= 20, "Insufficient floor inside a stepped band")
+    require(np.max(abs(single - fill)[inner | outer]) <= 2, "Single shade left a graded edge")
+    dark, _, _ = capture(pack, exe, root / "darkness-200", pose, True, True, DEFAULT_RADIUS, 200, 2, 200)
+    partial = inner | outer
+    require(np.median(np.max(smooth - dark, axis=2)[partial]) > 3 and np.min((dark - fill)[partial]) >= -2,
+            "Extra darkness did not deepen the penumbra while preserving ambient light")
+    light = np.maximum(np.max(clear - fill, axis=2), 1)
+    for label, view in (("stepped", stepped), ("smooth", smooth)):
+        fraction = np.max(view - fill, axis=2) / light
+        gain = np.median(fraction[outer]) - np.median(fraction[inner])
+        require(abs(gain) < .025 if label == "stepped" else gain > .045,
+                f"{label}: unexpected light gradient inside one band ({gain:.3f})")
+
+
+def measure(pack, exe, root, edge_x, outward, distance, check_spread=False, check_edges=False):
     pose = (edge_x, 960 - distance, 90, 14)
     fill, fill_camera, _ = capture(pack, exe, root / "ambient", pose, False, True)
     clear, camera, lamp = capture(pack, exe, root / "unshadowed", pose, True, False)
@@ -154,6 +180,8 @@ def measure(pack, exe, root, edge_x, outward, distance, check_spread=False):
         # half-plane is the area of a circular segment. The renderer may sample
         # the disk sparsely; the inner and outer bands must still be ordered.
         if kind == "floor":
+            if check_edges:
+                verify_edge_styles(pack, exe, root, pose, region, aperture_x, clear, fill)
             u = np.clip(aperture_x / DEFAULT_RADIUS, 0, 1)
             fraction = (np.arccos(u) - u * np.sqrt(1 - u * u)) / np.pi
             inner = region & (fraction > .37)
@@ -199,7 +227,8 @@ def main():
     exe = (args.exe or pack / "runtime/vkdoom.exe").resolve()
     for side, (edge_x, outward) in PILLAR_SIDES.items():
         widths = {label: measure(pack, exe, out / f"{side}-{label}", edge_x, outward, distance,
-                                 check_spread=side == "column-right" and label == "far")
+                                 check_spread=side == "column-right" and label == "far",
+                                 check_edges=side == "column-right" and label == "near")
                   for label, distance in DISTANCES.items()}
         require(widths["near"]["floor"] > 2 * widths["far"]["floor"],
                 f"{side}: floor penumbra failed to widen closer to the pillar: {widths}")

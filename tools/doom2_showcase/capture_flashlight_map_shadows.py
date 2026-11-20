@@ -146,10 +146,12 @@ class MapShadowFixture : EventHandler
         archive.writestr("ZSCRIPT", script)
 
 
-def capture(exe, iwad, root, case, enabled, torch, mode, animate=False, sprite_lighting=2):
+def capture(exe, iwad, root, case, enabled, torch, mode, animate=False, sprite_lighting=2, darkness=100):
     label = "moving" if animate else f"{'torch' if torch else 'fill'}-{int(enabled)}-sprites-{mode}"
     if sprite_lighting != 2:
         label += f"-lighting-{sprite_lighting}"
+    if darkness != 100:
+        label += f"-darkness-{darkness}"
     folder = root / case / label
     folder.mkdir(parents=True)
     package = folder / "fixture.pk3"
@@ -172,6 +174,7 @@ def capture(exe, iwad, root, case, enabled, torch, mode, animate=False, sprite_l
             "+gl_ssao", "0", "+gl_multisample", "4", "+gl_precache", "false",
             "+gl_emitter_lighting", "false", "+gl_bloom", "false", "+gl_shadow_puppets", str(mode),
             "+gl_flashlight_map_shadows", str(enabled).lower(),
+            "+gl_flashlight_shadow_darkness", str(darkness),
             "+gl_flashlight_map_shadow_radius", "12" if case == "aperture-wall" else "0",
             "+r_drawplayersprites", "false",
             "+screenblocks", "12", "+fov", "90", "+crosshair", "0", "+cl_capfps", "true",
@@ -404,6 +407,12 @@ def main():
         if case == "lifting":
             control, _, _ = capture(exe, iwad, root, case, False, False, 0)
             require(np.array_equal(control, fill), "Map shadows changed independent lighting with the torch off")
+            zero, _, _ = capture(exe, iwad, root, case, True, True, 0, darkness=0)
+            half, _, _ = capture(exe, iwad, root, case, True, True, 0, darkness=50)
+            require(np.max(abs(zero - off)) <= 1, "Zero darkness still occluded the beam")
+            channel = (off - on) > 32
+            require(channel.sum() > 100 and ((on[channel] < half[channel]) & (half[channel] < off[channel])).mean() > .99,
+                    "Half darkness did not partially restore the beam in the door shadow")
             for mode in (1, 2):
                 same, _, _ = capture(exe, iwad, root, case, True, True, mode)
                 require(np.array_equal(same, on), f"Map shadow changed with sprite shadow mode {mode}")

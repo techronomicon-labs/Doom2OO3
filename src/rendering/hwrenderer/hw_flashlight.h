@@ -24,6 +24,11 @@ public:
 	HWFlashlightView(const HWFlashlightView&) = delete;
 	HWFlashlightView& operator=(const HWFlashlightView&) = delete;
 
+	// Render-space angular projection shared by all lobes, with strengths in W.
+	FVector4 LensRight{0, 0, 0, 0}, LensUp{0, 0, 0, 0};
+	static const HWFlashlightView* ProfileFor(const FDynamicLight* light);
+	float ProfileGain(const FVector3& fromLamp) const;
+
 private:
 	friend const HWFlashlightPose* HWPresentedFlashlight(const FDynamicLight*);
 	static const HWFlashlightView* Current;

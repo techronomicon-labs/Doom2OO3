@@ -56,6 +56,10 @@ struct HWViewpointUniforms
 	VSMatrix ShadowPuppetProjection = VSMatrix::identity();
 	alignas(16) FVector2 ShadowPuppetDepthRange{0, 0};
 	float FlashlightMapShadowRadius = 0.f;
+	int FlashlightMapShadowStyle = 2;
+	float FlashlightShadowDarkness = 1.f;
+	alignas(16) FVector4 FlashlightLensRight{0, 0, 0, 0};
+	FVector4 FlashlightLensUp{0, 0, 0, 0};
 
 	void CalcDependencies()
 	{
@@ -69,7 +73,11 @@ static_assert(offsetof(HWViewpointUniforms, StageBAmbientSpecular) == 304);
 static_assert(offsetof(HWViewpointUniforms, ShadowPuppetProjection) == 320);
 static_assert(offsetof(HWViewpointUniforms, ShadowPuppetDepthRange) == 384);
 static_assert(offsetof(HWViewpointUniforms, FlashlightMapShadowRadius) == 392);
-static_assert(sizeof(HWViewpointUniforms) == 400);
+static_assert(offsetof(HWViewpointUniforms, FlashlightMapShadowStyle) == 396);
+static_assert(offsetof(HWViewpointUniforms, FlashlightShadowDarkness) == 400);
+static_assert(offsetof(HWViewpointUniforms, FlashlightLensRight) == 416);
+static_assert(offsetof(HWViewpointUniforms, FlashlightLensUp) == 432);
+static_assert(sizeof(HWViewpointUniforms) == 448);
 
 
 

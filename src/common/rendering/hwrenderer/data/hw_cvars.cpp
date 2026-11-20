@@ -69,7 +69,17 @@ CUSTOM_CVAR(Int, gl_flashlight_map_shadow_spread, 100, CVAR_ARCHIVE | CVAR_GLOBA
 	if (self < 0) self = 0;
 	else if (self > 400) self = 400;
 }
+CUSTOM_CVAR(Int, gl_flashlight_map_shadow_style, 2, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (self < 0) self = 0;
+	else if (self > 2) self = 2;
+}
 CVAR(Bool, gl_projectile_map_shadows, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CUSTOM_CVAR(Int, gl_flashlight_shadow_darkness, 100, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (self < 0) self = 0;
+	else if (self > 200) self = 200;
+}
 
 CUSTOM_CVAR(Float, gl_shadow_puppet_softness, 1.f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
@@ -105,6 +115,18 @@ CUSTOM_CVAR(Float, gl_emitter_intensity, 1.f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 }
 
 CVAR(Bool, gl_sprite_lighting_relief, false, 0)
+
+CUSTOM_CVAR(Int, gl_flashlight_hotspot, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (self < 0) self = 0;
+	else if (self > 100) self = 100;
+}
+
+CUSTOM_CVAR(Int, gl_flashlight_unevenness, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (self < 0) self = 0;
+	else if (self > 100) self = 100;
+}
 
 CUSTOM_CVAR(Float, gl_sprite_lighting_relief_depth, 3.5f, 0)
 {

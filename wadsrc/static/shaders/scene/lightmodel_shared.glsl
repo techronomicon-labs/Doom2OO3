@@ -34,6 +34,11 @@ bool UseStructuralRelief(DynLightInfo light)
 }
 
 #if !defined(SIMPLE)
+float FlashlightShadowVisibility(float visibility)
+{
+	return max(0.0, mix(1.0, visibility, uFlashlightShadowDarkness));
+}
+
 bool MapSegmentBlocked(vec3 start, vec3 end, float bias, int group, bool includeMasked)
 {
 	vec3 ray = end - start;
@@ -68,6 +73,7 @@ float MapLightVisibility(DynLightInfo light, vec3 position, bool flashlight)
 	// Shorten every ray by the same fraction, preserving the disk and avoiding
 	// coincident light-endpoint hits. The receiver was already biased above.
 	float fraction = 1.0 - bias / dist;
+	if (uFlashlightMapShadowStyle == 2) return SmoothMapVisibility(origin, lamp, right, up, fraction, light.shadowIndex);
 	vec3 diskCenter = origin + ray * fraction;
 	int activeMask = mapDiskMask, blocked = 0;
 	do
@@ -82,6 +88,7 @@ float MapLightVisibility(DynLightInfo light, vec3 position, bool flashlight)
 		origin = diskCenter = lamp;
 		fraction = 1.0;
 	} while (activeMask != 0);
+	if (uFlashlightMapShadowStyle == 1) return blocked == 0 ? 1.0 : 0.0;
 	return 1.0 - float(bitCount(blocked)) / 13.0;
 }
 #endif
@@ -97,19 +104,20 @@ float cachedPuppetVisibility = -1.0;
 
 float WorldLightVisibility(DynLightInfo light, vec3 position, ivec2 pixel)
 {
+	if ((light.flags & (LIGHTINFO_SHADOW_PUPPET | LIGHTINFO_FLASHLIGHT_MAP_SHADOW)) == 0)
+		return (light.flags & LIGHTINFO_POINT_MAP_SHADOW) != 0 ? MapLightVisibility(light, position, false) : 1.0;
+	if (uFlashlightShadowDarkness == 0.0) return 1.0;
 	float visibility = 1.0;
-	if ((light.flags & (LIGHTINFO_POINT_MAP_SHADOW | LIGHTINFO_FLASHLIGHT_MAP_SHADOW)) != 0)
+	if ((light.flags & LIGHTINFO_FLASHLIGHT_MAP_SHADOW) != 0)
 	{
-		bool flashlight = (light.flags & LIGHTINFO_FLASHLIGHT_MAP_SHADOW) != 0;
-		if (flashlight && cachedMapVisibility >= 0.0 && cachedMapGroup == light.shadowIndex &&
+		if (cachedMapVisibility >= 0.0 && cachedMapGroup == light.shadowIndex &&
 			all(equal(cachedMapOrigin, light.pos.xyz)))
 		{
 			visibility = cachedMapVisibility;
 		}
 		else
 		{
-			visibility = MapLightVisibility(light, position, flashlight);
-			if (!flashlight) return visibility;
+			visibility = MapLightVisibility(light, position, true);
 			cachedMapVisibility = visibility;
 			cachedMapGroup = light.shadowIndex;
 			cachedMapOrigin = light.pos.xyz;
@@ -118,7 +126,7 @@ float WorldLightVisibility(DynLightInfo light, vec3 position, ivec2 pixel)
 
 	if (visibility == 0.0 || (light.flags & LIGHTINFO_SHADOW_PUPPET) == 0 ||
 		data[uDataIndex].uShadowPuppetReceiver == 0 || uShadowPuppetTexture <= 0)
-		return visibility;
+		return FlashlightShadowVisibility(visibility);
 
 	if (cachedPuppetVisibility < 0.0)
 	{
@@ -126,7 +134,7 @@ float WorldLightVisibility(DynLightInfo light, vec3 position, ivec2 pixel)
 		if (uShadowPuppetMode == 1)
 		{
 			ivec2 size = textureSize(textures[nonuniformEXT(image)], 0);
-			if (any(lessThan(pixel, ivec2(0))) || any(greaterThanEqual(pixel, size))) return visibility;
+			if (any(lessThan(pixel, ivec2(0))) || any(greaterThanEqual(pixel, size))) return FlashlightShadowVisibility(visibility);
 			cachedPuppetVisibility = texelFetch(textures[nonuniformEXT(image)], pixel, 0).r;
 		}
 		else
@@ -134,14 +142,35 @@ float WorldLightVisibility(DynLightInfo light, vec3 position, ivec2 pixel)
 			cachedPuppetVisibility = ShadowPuppetDepthVisibility(light, position, image);
 		}
 	}
-	return visibility * cachedPuppetVisibility;
+	return FlashlightShadowVisibility(visibility * cachedPuppetVisibility);
 }
 #endif
+
+float FlashlightProfileGain(vec3 fromLamp)
+{
+	// The same angular coordinates modulate every cone in an elliptical beam.
+	// These smooth reflector patches are fixed in the lens, including during motion.
+	vec2 uv = vec2(dot(fromLamp, uFlashlightLensRight.xyz), dot(fromLamp, uFlashlightLensUp.xyz));
+	float core = max(0.0, 1.0 - 3.0 * dot(uv, uv));
+	vec2 a = uv - vec2(-0.30, 0.25), b = uv - vec2(0.41, -0.18);
+	float bright = max(0.0, 1.0 - dot(a*a, vec2(2.5, 6.0)));
+	float shade = max(0.0, 1.0 - dot(b*b, vec2(7.0, 2.5)));
+	return (1.0 + uFlashlightLensRight.w * (1.1 * core*core - 0.25)) *
+		(1.0 + uFlashlightLensUp.w * (0.32 * bright*bright - 0.48 * shade*shade));
+}
 
 float PackedLightFalloff(DynLightInfo light, float lightDistance)
 {
 	if ((light.flags & LIGHTINFO_STAGE_B_EMITTER) == 0)
-		return distanceAttenuation(lightDistance, light.radius, light.strength, light.linearity);
+	{
+		float falloff = distanceAttenuation(lightDistance, light.radius, light.strength, light.linearity);
+		if ((light.flags & LIGHTINFO_FLASHLIGHT_PROFILE) != 0)
+		{
+			vec3 ray = SDVK_LIGHTING_POSITION - light.pos.xyz;
+			falloff *= FlashlightProfileGain(ray * inversesqrt(max(dot(ray, ray), 1e-12)));
+		}
+		return falloff;
+	}
 	if ((light.flags & LIGHTINFO_STAGE_B_DIRECTIONAL) != 0)
 		return uStageBIntensity * (1.0 - smoothstep(0.8 * light.radius, light.radius, lightDistance));
 	float reach = clamp(1.0 - lightDistance / light.radius, 0.0, 1.0);
@@ -172,6 +201,8 @@ float SDVKFullbrightReliefScale(vec4 relief)
 			continue;
 		vec3 lightDir = toLight / baseDistance;
 		float beam = smoothstep(light.spotOuterAngle, light.spotInnerAngle, dot(lightDir, light.spotDir.xyz));
+		if ((light.flags & LIGHTINFO_FLASHLIGHT_PROFILE) != 0)
+			beam *= FlashlightProfileGain(-lightDir);
 		if (beam <= 0.0)
 			continue;
 #if !defined(SHADOW_PUPPET_VERTEX_STAGE) && !defined(SIMPLE)

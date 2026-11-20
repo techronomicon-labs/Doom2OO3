@@ -87,7 +87,28 @@ HWFlashlightView::HWFlashlightView(const FRenderViewpoint* view) : Previous(Curr
 		Poses[Count++] = { light, clippedOrigin, rotation * localDir };
 		if (Count == Poses.size()) break;
 	}
-	if (Count) Current = this;
+	if (!Count) return;
+	Current = this;
+	if (!gl_flashlight_hotspot && !gl_flashlight_unevenness) return;
+
+	// Symmetric outer lobes average to the trimmed optical axis of the lamp.
+	// Use head-local up so rolling or aiming vertically cannot rotate the lens pattern.
+	DVector3 axis(0, 0, 0);
+	for (unsigned i = 0; i < Count; ++i) axis += Poses[i].Direction;
+	const auto right = (axis.Unit() ^ (rotation * DVector3(0, 0, 1))).Unit();
+	const auto up = (right ^ axis).Unit();
+	double halfWidth = 0, halfHeight = 0;
+	for (unsigned i = 0; i < Count; ++i)
+	{
+		const auto& pose = Poses[i];
+		const double cone = pose.Light->pSpotOuterAngle->Radians();
+		halfWidth = std::max(halfWidth, cone + std::asin(std::min(1., std::abs(pose.Direction | right))));
+		halfHeight = std::max(halfHeight, cone + std::asin(std::min(1., std::abs(pose.Direction | up))));
+	}
+	if (!(halfWidth > 0 && halfHeight > 0 && halfWidth < M_PI / 2 && halfHeight < M_PI / 2)) return;
+	const auto horizontal = right / std::sin(halfWidth), vertical = up / std::sin(halfHeight);
+	LensRight = {float(horizontal.X), float(horizontal.Z), float(horizontal.Y), gl_flashlight_hotspot / 100.f};
+	LensUp = {float(vertical.X), float(vertical.Z), float(vertical.Y), gl_flashlight_unevenness / 100.f};
 }
 
 HWFlashlightView::~HWFlashlightView()
@@ -102,6 +123,24 @@ const HWFlashlightPose* HWPresentedFlashlight(const FDynamicLight* light)
 		for (unsigned i = 0; i < view->Count; ++i)
 			if (view->Poses[i].Light == light) return &view->Poses[i];
 	return nullptr;
+}
+
+const HWFlashlightView* HWFlashlightView::ProfileFor(const FDynamicLight* light)
+{
+	if (!Current || (Current->LensRight.W == 0 && Current->LensUp.W == 0)) return nullptr;
+	return HWPresentedFlashlight(light) ? Current : nullptr;
+}
+
+float HWFlashlightView::ProfileGain(const FVector3& fromLamp) const
+{
+	// Keep CPU-lit sprites and the weapon sample consistent with the scene shader.
+	const float u = fromLamp | LensRight.XYZ(), v = fromLamp | LensUp.XYZ();
+	const float core = std::max(0.f, 1.f - 3.f * (u * u + v * v));
+	const FVector2 brightOffset(u + .30f, v - .25f), shadeOffset(u - .41f, v + .18f);
+	const float bright = std::max(0.f, 1.f - 2.5f * brightOffset.X * brightOffset.X - 6.f * brightOffset.Y * brightOffset.Y);
+	const float shade = std::max(0.f, 1.f - 7.f * shadeOffset.X * shadeOffset.X - 2.5f * shadeOffset.Y * shadeOffset.Y);
+	return (1.f + LensRight.W * (1.1f * core * core - .25f)) *
+		(1.f + LensUp.W * (.32f * bright * bright - .48f * shade * shade));
 }
 
 DVector3 HWLightPosition(const FDynamicLight* light)
@@ -320,6 +359,7 @@ void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, float 
 	if (light->IsSpot())
 	{
 		info.flags |= LIGHTINFO_SPOT;
+		if (HWFlashlightView::ProfileFor(light)) info.flags |= LIGHTINFO_FLASHLIGHT_PROFILE;
 		if (HWShadowPuppetFlashlight.Contains(light)) info.flags |= LIGHTINFO_SHADOW_PUPPET;
 		if ((gl_world_relief || gl_sprite_lighting_relief || gl_emitter_lighting) && light->IsLocalFlashlight()) info.flags |= LIGHTINFO_FLASHLIGHT;
 
