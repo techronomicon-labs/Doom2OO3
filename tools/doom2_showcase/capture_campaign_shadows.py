@@ -19,14 +19,15 @@ from gallery import Map, wad
 # an animated lantern, a shootable barrel and an unshootable solid column.
 CROWD = [(3004, -78, 22), (66, 0, 42), (3005, 77, 40), (58, -51, 75),
          (2035, -29, -6), (37, 40, 8), (29, 15, 96)]
-CONTROLS = [(2014, -29, 0), (10, 0, 24), (34, 29, 0)]
+PICKUPS = [(2014, -46, 0), (2008, -16, -20), (2001, 20, 20), (2019, 46, 0)]
+CONTROLS = [(10, 0, 24), (34, 29, 0)]
 # Together with CROWD these cover every Doom II enemy family, including the
 # Lost Soul's translucent style. DBP50 repurposes the SS and Keen slots as
 # invisible ambient sound sources through DEHACKED.
 ROSTER = [(9, -94, 14), (65, -57, 22), (3001, -14, 4), (3002, 37, 14), (3006, 85, 18),
           (64, -104, 87), (3003, -57, 76), (69, 5, 60), (68, 55, 80), (67, 110, 78), (71, 9, 110)]
 BOSSES = [(7, -62, 60), (16, 57, 82), (88, -12, -18), (84, 43, 5), (72, 0, 116)]
-GROUPS = {"crowd": CROWD, "roster": ROSTER, "bosses": BOSSES, "controls": CONTROLS,
+GROUPS = {"crowd": CROWD, "roster": ROSTER, "bosses": BOSSES, "pickups": PICKUPS, "controls": CONTROLS,
           "spectre": [(58, 0, 0)], "decor": [(37, 0, 0)]}
 # An 8-bit stencil accumulator would wrap here if all volumes were added at once.
 OVERLAP = GROUPS["decor"] * 256
@@ -167,8 +168,6 @@ def main():
                     require(differences(decor_masks[mode], delta)["max_channel_delta"] <= 1,
                             f"Overlapping identical silhouettes changed the flashlight shadow in {label}/{MODES[mode]}")
                 if expected == 0:
-                    # The pickup's own light can advance by a tic between launches.
-                    # The backend never uploads a caster in this control.
                     change = differences(images[0], images[mode])["max_channel_delta"]
                     state["control_max_rgb_delta"] = change
                     require(change <= 1, f"Control changed by {change} RGB levels in {label}")

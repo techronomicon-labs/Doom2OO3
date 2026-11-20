@@ -161,10 +161,14 @@ namespace
 		FVector3 TopLeft, Across, Down; // complete untrimmed source image
 	};
 
-	bool IsFlashlightBlocker(const AActor& actor)
+	bool IsFlashlightBlocker(AActor& actor)
 	{
-		if (actor.player || actor.flags & (MF_MISSILE | MF_SPECIAL) || actor.IsKindOf(NAME_Inventory))
+		if (actor.player || actor.flags & MF_MISSILE)
 			return false;
+		// A dropped weapon is visible even during its pickup cooldown. Test
+		// inventory ownership rather than relying on solidity or MF_SPECIAL.
+		if (actor.IsKindOf(NAME_Inventory)) return actor.IsMapActor();
+		if (actor.flags & MF_SPECIAL) return false;
 		// Use the effective flags after DeHackEd replacements and state actions.
 		// A dying actor still blocks while solid. A visible Spectre or Lost Soul
 		// contributes its sprite silhouette regardless of its display blend.

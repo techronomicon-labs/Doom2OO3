@@ -20,7 +20,7 @@ With **Map geometry shadows** on, the renderer traces the segment from the mount
 
 With per-pixel sprite lighting, a crossing shadow can cover part of a monster. CPU sprite lighting keeps the beam brightness calculated at the actor’s centre and masks it per pixel. Vertex sprite lighting tests visibility at the actor’s centre, so the part of a standing sprite drawn below the floor cannot dim the rest. Vertex-lit particles use their own corners.
 
-Enemies and solid scenery cast from their current sprite frame. Doom selects the directional artwork and mirror as seen from the flashlight, then projects its opaque texels onto map geometry. The silhouette follows animation, scale, patch offsets and floor clipping. DBP50 uses its own replacements and effective actor flags. An exploding barrel stops blocking when it loses solidity. Flying enemies and ceiling-hung decorations cast from their actual heights. Pickups, projectiles and non-solid scenery let the beam through.
+Enemies, solid scenery and visible pickups cast from their current sprite frame. Doom selects the directional artwork and mirror as seen from the flashlight, then projects its opaque texels onto map geometry. The silhouette follows animation, scale, patch offsets and floor clipping. DBP50 uses its own replacements and effective actor flags. An exploding barrel stops blocking when it loses solidity. Flying enemies and ceiling-hung decorations cast from their actual heights. A dropped weapon casts as soon as it appears in the world. Collecting it removes its shadow.
 
 | Backend | Integration in the immediate Vulkan renderer | Main risks |
 | --- | --- | --- |
