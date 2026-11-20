@@ -1,5 +1,6 @@
 #pragma once
 
+#include <set>
 #include "base_sysfb.h"
 #include "engineerrors.h"
 #include <zvulkan/vulkandevice.h>
@@ -27,6 +28,7 @@ class VkHardwareTexture;
 class VkRenderBuffers;
 class VkPostprocess;
 class VkPipelineKey;
+class VkRenderPassKey;
 class VkRenderPassSetup;
 class VkShaderCache;
 class VkShadowPuppetDepth;
@@ -86,6 +88,7 @@ public:
 	void SetSaveBuffers(bool yes) override;
 	void ImageTransitionScene(bool unknown) override;
 	void SetActiveRenderTarget() override;
+	void PrecacheFlashlightShadowPipelines();
 	bool SupportsShadowPuppetStencil();
 	int RenderShadowPuppetStencil(const HWShadowPuppetMesh& mesh, FVector3 origin,
 		const VSMatrix& cameraProjection, const IntRect& viewport);
@@ -132,6 +135,8 @@ private:
 	void UploadLightProbes(int probeCount, const TArray<uint16_t>& irradianceMaps, const TArray<uint16_t>& prefilterMaps) override;
 
 	void PrintStartupLog();
+	void PrecacheMapPipelines();
+	void PrecacheMapAuxiliaryPipelines(const VkPipelineKey& common, VkRenderPassKey scene);
 	void CopyScreenToBuffer(int w, int h, uint8_t *data) override;
 
 	bool SupportsRenderTargetFormat(VkFormat format);
@@ -167,6 +172,8 @@ private:
 
 	LevelMesh* levelMesh = nullptr;
 	bool levelMeshChanged = true;
+	bool mapPipelinePreloadPending = false;
+	std::set<std::pair<int, int>> mapSpriteShaders;
 	int FrameTileCompletions = 0;
 	std::unique_ptr<LevelMesh> NullMesh;
 

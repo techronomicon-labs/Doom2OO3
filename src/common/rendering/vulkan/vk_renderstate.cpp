@@ -1123,11 +1123,17 @@ void VkRenderState::DispatchLightTiles(const VSMatrix& worldToView, float m5)
 
 void VkRenderState::DrawLevelMeshList(const TArray<TArray<MeshBufferRange>>& drawList, LevelMeshDrawSurface surface, bool masked, bool noFragmentShader)
 {
+	bool applied = false;
 	int pipelineID = 0;
 	for (const TArray<MeshBufferRange>& ranges : drawList)
 	{
 		if (ranges.size() != 0)
 		{
+			if (!applied)
+			{
+				ApplyLevelMesh();
+				applied = true;
+			}
 			const VkPipelineKey& key = fb->GetLevelMeshPipelineKey(pipelineID);
 			ApplyLevelMeshPipeline(mCommandBuffer, key, masked, noFragmentShader);
 			for (const MeshBufferRange& range : ranges)

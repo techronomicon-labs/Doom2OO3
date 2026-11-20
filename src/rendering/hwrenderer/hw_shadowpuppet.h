@@ -28,6 +28,7 @@ struct HWShadowPuppetScene
 {
 	HWShadowPuppetLightSet Flashlight;
 	FVector3 Origin;
+	FVector2 DepthRange; // nearest caster axial distance and perspective depth coefficient
 	VSMatrix LightProjection = VSMatrix::identity();
 	HWShadowPuppetMesh Mesh;
 	std::unordered_set<const AActor*> Casters;

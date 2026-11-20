@@ -1081,11 +1081,23 @@ void HWSprite::PerformSpriteClipAdjustment(AActor *thing, const DVector2 &thingp
 
 void HWSprite::Process(HWDrawInfo *di, FRenderState& state, AActor* thing, sector_t * sector, area_t in_area, int thruportal, bool isSpriteShadow)
 {
+	if (!Prepare(di, thing, sector, in_area, thruportal, isSpriteShadow, false)) return;
+	PutSprite(di, state, hw_styleflags != STYLEHW_Solid);
+	rendered_sprites++;
+}
+
+bool HWSprite::PrepareFlashlightCaster(HWDrawInfo *di, AActor* thing)
+{
+	return Prepare(di, thing, thing->Sector, di->in_area, 0, false, true);
+}
+
+bool HWSprite::Prepare(HWDrawInfo *di, AActor* thing, sector_t *sector, area_t in_area, int thruportal, bool isSpriteShadow, bool flashlightCaster)
+{
 	sector_t rs;
 	sector_t * rendersector;
 
 	if (thing == nullptr)
-		return;
+		return false;
 
 	RenderSurface = {};
 	RenderSurface.source = HWSpriteSurfaceSource::Actor;
@@ -1104,24 +1116,25 @@ void HWSprite::Process(HWDrawInfo *di, FRenderState& state, AActor* thing, secto
 	// Don't waste time projecting sprites that are definitely not visible.
 	if ((thing->sprite == 0 && !isPicnumOverride && !isFogball) || !thing->IsVisibleToPlayer() || ((thing->renderflags & RF_MASKROTATION) && !thing->IsInsideVisibleAngles()))
 	{
-		return;
+		return false;
 	}
 
 	if (isFogball)
 	{
+		if (flashlightCaster) return false;
 		Fogball fogball;
 		fogball.Position = FVector3(thing->PosRelative(r_viewpoint.sector));
 		fogball.Radius = (float)thing->args[3];
 		fogball.Color = FVector3(powf(thing->args[0] * (1.0f / 255.0f), 2.2), powf(thing->args[1] * (1.0f / 255.0f), 2.2), powf(thing->args[2] * (1.0f / 255.0f), 2.2));
 		fogball.Fog = (float)thing->Alpha;
 		di->Fogballs.Push(fogball);
-		return;
+		return false;
 	}
 
 	if (thing->IsKindOf(NAME_Corona))
 	{
-		Coronas.SortedInsertUnique(thing);
-		return;
+		if (!flashlightCaster) Coronas.SortedInsertUnique(thing);
+		return false;
 	}
 
 	const auto &vp = di->Viewpoint;
@@ -1133,14 +1146,14 @@ void HWSprite::Process(HWDrawInfo *di, FRenderState& state, AActor* thing, secto
 	if (thing->renderflags & RF_INVISIBLE || !thing->RenderStyle.IsVisible(visualAlpha))
 	{
 		if (!(thing->flags & MF_STEALTH) || !di->isStealthVision() || thing == camera)
-			return;
+			return false;
 	}
 
 	// check renderrequired vs ~r_rendercaps, if anything matches we don't support that feature,
 	// check renderhidden vs r_rendercaps, if anything matches we do support that feature and should hide it.
 	if ((!r_debug_disable_vis_filter && !!(thing->RenderRequired & ~r_renderercaps)) ||
 		(!!(thing->RenderHidden & r_renderercaps)))
-		return;
+		return false;
 
 	int spritenum = thing->sprite;
 	DVector2 sprscale = thing->InterpolatedScale(visualFraction);
@@ -1163,19 +1176,19 @@ void HWSprite::Process(HWDrawInfo *di, FRenderState& state, AActor* thing, secto
 	bool isInMirror = di->mCurrentPortal && (di->mCurrentPortal->mState->MirrorFlag > 0 || di->mCurrentPortal->mState->PlaneMirrorFlag > 0);
 	if (thing->renderflags2 & RF2_INVISIBLEINMIRRORS && isInMirror)
 	{
-		return;
+		return false;
 	}
 	else if (thing->renderflags2 & RF2_ONLYVISIBLEINMIRRORS && !isInMirror)
 	{
-		return;
+		return false;
 	}
 	// Some added checks if the camera actor is not supposed to be seen. It can happen that some portal setup has this actor in view in which case it may not be skipped here
 	if (viewmaster == camera && !vp.showviewer)
 	{
-		if (vp.bForceNoViewer || (viewmaster->player && viewmaster->player->crossingPortal)) return;
+		if (vp.bForceNoViewer || (viewmaster->player && viewmaster->player->crossingPortal)) return false;
 		DVector3 vieworigin = viewmaster->Pos();
 		if (thruportal == 1) vieworigin += di->Level->Displacements.getOffset(viewmaster->Sector->PortalGroup, sector->PortalGroup);
-		if (fabs(vieworigin.X - vp.ActorPos.X) < 2 && fabs(vieworigin.Y - vp.ActorPos.Y) < 2) return;
+		if (fabs(vieworigin.X - vp.ActorPos.X) < 2 && fabs(vieworigin.Y - vp.ActorPos.Y) < 2) return false;
 
 		// Necessary in order to prevent sprite pop-ins with viewpos and models. 
 		auto* sec = viewmaster->Sector;
@@ -1184,26 +1197,27 @@ void HWSprite::Process(HWDrawInfo *di, FRenderState& state, AActor* thing, secto
 			double zh = sec->GetPortalPlaneZ(sector_t::ceiling);
 			double top = (viewmaster->player ? max<double>(viewmaster->player->viewz, viewmaster->Top()) + 1 : viewmaster->Top());
 			if (viewmaster->Z() < zh && top >= zh)
-				return;
+				return false;
 		}
 	}
 	// Thing is invisible if close to the camera.
-	if (viewmaster->renderflags & RF_MAYBEINVISIBLE)
+	if (!flashlightCaster && (viewmaster->renderflags & RF_MAYBEINVISIBLE))
 	{
 		DVector3 viewpos = viewmaster->InterpolatedPosition(vp.TicFrac);
 		if (thruportal == 1) viewpos += di->Level->Displacements.getOffset(viewmaster->Sector->PortalGroup, sector->PortalGroup);
-		if (fabs(viewpos.X - vp.Pos.X) < 32 && fabs(viewpos.Y - vp.Pos.Y) < 32) return;
+		if (fabs(viewpos.X - vp.Pos.X) < 32 && fabs(viewpos.Y - vp.Pos.Y) < 32) return false;
 	}
 
 	modelframe = isPicnumOverride ? nullptr : FindModelFrame(thing, spritenum, thing->frame, !!(thing->flags & MF_DROPPED));
+	if (flashlightCaster && modelframe) return false;
 	modelframeflags = modelframe ? modelframe->getFlags(thing->modelData) : 0;
 
 	// Too close to the camera. This doesn't look good if it is a sprite.
-	if (fabs(thingpos.X - vp.Pos.X) < 2 && fabs(thingpos.Y - vp.Pos.Y) < 2
+	if (!flashlightCaster && fabs(thingpos.X - vp.Pos.X) < 2 && fabs(thingpos.Y - vp.Pos.Y) < 2
 		&& vp.Pos.Z >= thingpos.Z - 2 && vp.Pos.Z <= thingpos.Z + thing->Height + 2
 		&& !thing->Vel.isZero() && !modelframe) // exclude vertically moving objects from this check.
 	{
-		return;
+		return false;
 	}
 
 	// don't draw first frame of a player missile
@@ -1215,7 +1229,7 @@ void HWSprite::Process(HWDrawInfo *di, FRenderState& state, AActor* thing, secto
 			if (speed >= thing->target->radius / 2)
 			{
 				double clipdist = clamp(thing->Speed, thing->target->radius, thing->target->radius * 2);
-				if ((thingpos - vp.Pos).LengthSquared() < clipdist * clipdist) return;
+				if ((thingpos - vp.Pos).LengthSquared() < clipdist * clipdist) return false;
 			}
 		}
 		thing->flags7 |= MF7_FLYCHEAT;	// do this only once for the very first frame, but not if it gets into range again.
@@ -1224,7 +1238,7 @@ void HWSprite::Process(HWDrawInfo *di, FRenderState& state, AActor* thing, secto
 	if (thruportal != 2 && di->mClipPortal != nullptr)
 	{
 		int clipres = di->mClipPortal->ClipPoint(thingpos.XY());
-		if (clipres == PClip_InFront) return;
+		if (clipres == PClip_InFront) return false;
 	}
 	// disabled because almost none of the actual game code is even remotely prepared for this. If desired, use the INTERPOLATE flag.
 	if (thing->renderflags & RF_INTERPOLATEANGLES)
@@ -1266,7 +1280,7 @@ void HWSprite::Process(HWDrawInfo *di, FRenderState& state, AActor* thing, secto
 	// don't bother drawing sprite shadows if this is a model (it will never look right)
 	if (modelframe && isSpriteShadow)
 	{
-		return;
+		return false;
 	}
 	if (!modelframe)
 	{
@@ -1279,7 +1293,7 @@ void HWSprite::Process(HWDrawInfo *di, FRenderState& state, AActor* thing, secto
 		{
 			// Animate picnum overrides.
 			auto tex = TexMan.GetGameTexture(thing->picnum, true);
-			if (tex == nullptr) return;
+			if (tex == nullptr) return false;
 
 			if (tex->GetRotations() != 0xFFFF)
 			{
@@ -1328,10 +1342,10 @@ void HWSprite::Process(HWDrawInfo *di, FRenderState& state, AActor* thing, secto
 			patch = sprites[spritenum].GetSpriteFrame(thing->frame, rot, sprangle, &mirror, !!(thing->renderflags & RF_SPRITEFLIP));
 		}
 
-		if (!patch.isValid()) return;
+		if (!patch.isValid()) return false;
 		int type = thing->renderflags & RF_SPRITETYPEMASK;
 		auto tex = TexMan.GetGameTexture(patch, false);
-		if (!tex || !tex->isValid()) return;
+		if (!tex || !tex->isValid()) return false;
 		auto& spi = tex->GetSpritePositioning(type == RF_FACESPRITE);
 
 		offx = (float)thing->GetSpriteOffset(false);
@@ -1365,7 +1379,7 @@ void HWSprite::Process(HWDrawInfo *di, FRenderState& state, AActor* thing, secto
 
 		texture = tex;
 		if (!texture || !texture->isValid())
-			return;
+			return false;
 
 		if (thing->renderflags & RF_SPRITEFLIP) // [SP] Flip back
 			thing->renderflags ^= RF_XFLIP;
@@ -1692,7 +1706,7 @@ void HWSprite::Process(HWDrawInfo *di, FRenderState& state, AActor* thing, secto
 		hw_styleflags = STYLEHW_NoAlphaTest;
 	}
 
-	if (trans == 0.0f) return;
+	if (trans == 0.0f) return false;
 
 	// end of light calculation
 
@@ -1725,8 +1739,7 @@ void HWSprite::Process(HWDrawInfo *di, FRenderState& state, AActor* thing, secto
 	{
 		lightlist = nullptr;
 	}
-	PutSprite(di, state, hw_styleflags != STYLEHW_Solid);
-	rendered_sprites++;
+	return true;
 }
 
 
