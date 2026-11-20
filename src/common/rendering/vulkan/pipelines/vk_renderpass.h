@@ -110,7 +110,7 @@ public:
 	VkRenderPassSetup(VulkanRenderDevice* fb, const VkRenderPassKey &key);
 
 	VulkanRenderPass *GetRenderPass(int clearTargets);
-	void PrecachePipeline(const VkPipelineKey& key);
+	void PrecachePipeline(VkPipelineKey key);
 	VulkanPipeline *GetPipeline(const VkPipelineKey &key, UniformStructHolder &Uniforms);
 
 private:
