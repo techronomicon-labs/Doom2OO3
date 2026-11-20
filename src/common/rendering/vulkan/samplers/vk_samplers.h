@@ -23,8 +23,9 @@ public:
 	{
 		if (filterOverride == MaterialLayerSampling::Default)
 			return Get(no);
-		return mOverrideSamplers[int(filterOverride)].get();
+		return mOverrideSamplers[int(filterOverride)][CLAMP_NONE].get();
 	}
+	VulkanSampler* GetWithAddressing(MaterialLayerSampling filterOverride, int clamp) const;
 
 	std::unique_ptr<VulkanSampler> ShadowmapSampler;
 	std::unique_ptr<VulkanSampler> LightmapSampler;
@@ -43,6 +44,6 @@ private:
 
 	VulkanRenderDevice* fb = nullptr;
 	std::array<std::unique_ptr<VulkanSampler>, NUMSAMPLERS> mSamplers;
-	std::array<std::unique_ptr<VulkanSampler>, 2> mOverrideSamplers;
+	std::array<std::array<std::unique_ptr<VulkanSampler>, CLAMP_XY + 1>, 2> mOverrideSamplers;
 	std::array<std::unique_ptr<VulkanSampler>, 4> mPPSamplers;
 };

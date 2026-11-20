@@ -29,6 +29,15 @@ static void UpdateLightmapTiles();
 static int InvalidateLightmap();
 static void InvalidateActorLightTraceCache();
 
+void InvalidatePBRLevelMesh(FGameTexture* texture)
+{
+	for (auto current : AllLevels())
+	{
+		if (current && current->levelMesh)
+			current->levelMesh->InvalidateMaterialUniforms(texture);
+	}
+}
+
 static void RefreshLightmap()
 {
 	if(level.levelMesh)
@@ -975,6 +984,7 @@ void DoomLevelMesh::CopyToMeshLight(FDynamicLight* light, LevelMeshLight& meshli
 	meshlight.RelativeOrigin = meshlight.Origin;
 	meshlight.Radius = (float)light->GetRadius();
 	meshlight.Intensity = light->target ? (float)light->target->Alpha : 1.0f;
+	meshlight.Intensity *= light->GetProjectileLightScale();
 	if (light->IsSpot() && light->pSpotInnerAngle && light->pSpotOuterAngle && light->pPitch && light->target)
 	{
 		meshlight.InnerAngleCos = (float)light->pSpotInnerAngle->Cos();

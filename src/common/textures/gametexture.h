@@ -65,6 +65,7 @@ struct MaterialLayers
 	MaterialLayerSampling RoughnessSampling = MaterialLayerSampling::Default;
 	MaterialLayerSampling AmbientOcclusionSampling = MaterialLayerSampling::Default;
 	MaterialLayerSampling HeightSampling = MaterialLayerSampling::LinearMipLinear;
+	bool HeightLightingOnly = false;
 
 	FGameTexture* CustomShaderTextures[MAX_CUSTOM_HW_SHADER_TEXTURES] = {};
 	MaterialLayerSampling CustomShaderTextureSampling[MAX_CUSTOM_HW_SHADER_TEXTURES] = {};
@@ -104,6 +105,7 @@ struct FMaterialLayers
 	MaterialLayerSampling RoughnessSampling = MaterialLayerSampling::Default;
 	MaterialLayerSampling AmbientOcclusionSampling = MaterialLayerSampling::Default;
 	MaterialLayerSampling HeightSampling = MaterialLayerSampling::LinearMipLinear;
+	bool HeightLightingOnly = false;
 
 	RefCountedPtr<FTexture> CustomShaderTextures[MAX_CUSTOM_HW_SHADER_TEXTURES]; // Custom texture maps for custom hardware shaders
 	MaterialLayerSampling CustomShaderTextureSampling[MAX_CUSTOM_HW_SHADER_TEXTURES];
@@ -309,7 +311,12 @@ public:
 			if (lay.Metallic) { Layers->Metallic = lay.Metallic->GetTexture(); Layers->MetallicSampling = lay.MetallicSampling; }
 			if (lay.Roughness) { Layers->Roughness = lay.Roughness->GetTexture(); Layers->RoughnessSampling = lay.RoughnessSampling; }
 			if (lay.AmbientOcclusion) { Layers->AmbientOcclusion = lay.AmbientOcclusion->GetTexture(); Layers->AmbientOcclusionSampling = lay.AmbientOcclusionSampling; }
-			if (lay.Height) { Layers->Height = lay.Height->GetTexture(); Layers->HeightSampling = lay.HeightSampling; }
+			if (lay.Height)
+			{
+				Layers->Height = lay.Height->GetTexture();
+				Layers->HeightSampling = lay.HeightSampling;
+				Layers->HeightLightingOnly = lay.HeightLightingOnly;
+			}
 			for (int i = 0; i < MAX_CUSTOM_HW_SHADER_TEXTURES; i++)
 			{
 				if (lay.CustomShaderTextures[i])
@@ -491,6 +498,7 @@ public:
 		if (!Layers) return nullptr;
 		return Layers->Height.get();
 	}
+	bool HasLightingOnlyHeight() const { return Layers && Layers->Height.get() && Layers->HeightLightingOnly; }
 	MaterialLayerSampling GetBrightmapSampling() const { return BrightmapSampling; }
 
 	void SetGlowmap(FTexture *T)
@@ -517,6 +525,7 @@ public:
 	{
 		if (!Layers) Layers = std::make_unique<FMaterialLayers>();
 		Layers->Height = T;
+		Layers->HeightLightingOnly = false;
 	}
 
 };

@@ -1,19 +1,22 @@
 vec2 lightAttenuation(DynLightInfo light, vec3 normal, vec3 viewdir, float glossiness, float specularLevel)
 {
+	if (!UsePackedLight(light))
+		return vec2(0.0);
+	bool directional = (light.flags & LIGHTINFO_STAGE_B_DIRECTIONAL) != 0;
 	float lightdistance = distance(light.pos.xyz, SDVK_LIGHTING_POSITION);
 	if (light.radius < lightdistance)
 		return vec2(0.0); // Early out lights touching surface but not this fragment
 
-	float attenuation = distanceAttenuation(lightdistance, light.radius, light.strength, light.linearity);
+	float attenuation = PackedLightFalloff(light, lightdistance);
 
 	if ((light.flags & LIGHTINFO_SPOT) != 0)
 	{
 		attenuation *= spotLightAttenuation(light.pos.xyz, light.spotDir.xyz, light.spotInnerAngle, light.spotOuterAngle);
 	}
 
-	vec3 lightdir = normalize(light.pos.xyz - SDVK_LIGHTING_POSITION);
+	vec3 lightdir = directional ? light.spotDir : normalize(light.pos.xyz - SDVK_LIGHTING_POSITION);
 
-	if ((light.flags & LIGHTINFO_ATTENUATED) != 0)
+	if (directional || (light.flags & LIGHTINFO_ATTENUATED) != 0)
 	{
 		attenuation *= clamp(dot(normal, lightdir), 0.0, 1.0);
 	}
@@ -38,6 +41,7 @@ vec2 lightAttenuation(DynLightInfo light, vec3 normal, vec3 viewdir, float gloss
 
 vec3 ProcessMaterialLight(Material material, vec3 color, float sunlightAttenuation)
 {
+	bool stageB = STAGE_B_WORLD_LIGHTING;
 	vec4 dynlight = uDynLightColor;
 	vec4 specular = vec4(0.0, 0.0, 0.0, 1.0);
 
@@ -55,7 +59,9 @@ vec3 ProcessMaterialLight(Material material, vec3 color, float sunlightAttenuati
 		specular.rgb += color * material.SpecularLevel * pow(specAngle, phExp);
 	}
 
-#ifndef UBERSHADER
+#ifdef UBERSHADER
+	if (stageB)
+#endif
 	if (uLightIndex >= 0)
 	{
 		ivec4 lightRange = getLightRange();
@@ -80,7 +86,6 @@ vec3 ProcessMaterialLight(Material material, vec3 color, float sunlightAttenuati
 			}
 		}
 	}
-#endif
 	
 	if (LIGHT_BLEND_CLAMPED)
 	{
@@ -103,7 +108,9 @@ vec3 ProcessMaterialLight(Material material, vec3 color, float sunlightAttenuati
 
 	vec3 frag = material.Base.rgb * dynlight.rgb + material.Specular * specular.rgb;
 
-#ifndef UBERSHADER
+#ifdef UBERSHADER
+	if (stageB)
+#endif
 	if (uLightIndex >= 0)
 	{
 		ivec4 lightRange = getLightRange();
@@ -122,7 +129,6 @@ vec3 ProcessMaterialLight(Material material, vec3 color, float sunlightAttenuati
 			frag = clamp(frag + desaturate(addlight).rgb, 0.0, 1.0);
 		}
 	}
-#endif
 
 	return frag;
 }

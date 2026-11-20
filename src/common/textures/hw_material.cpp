@@ -38,6 +38,7 @@ TArray<UserShaderDesc> usershaders;
 
 void FRenderState::SetMaterial(FMaterial *mat, int clampmode, int translation, int overrideshader, PClass *cls)
 {
+	ClearWorldRelief();
 	mMaterial.mMaterial = mat;
 	mMaterial.mClampMode = clampmode;
 	mMaterial.mTranslation = translation;

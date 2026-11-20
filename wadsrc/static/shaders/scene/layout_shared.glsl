@@ -60,10 +60,14 @@
 #define uColormapIndex data[uDataIndex].uColormapIndex
 #define uDepthFadeThreshold data[uDataIndex].uDepthFadeThreshold
 #define uHeightTextureIndex data[uDataIndex].uHeightTextureIndex
+#define STAGE_B_WORLD_LIGHTING ((uPalLightLevels & 0x01000000) != 0 && data[uDataIndex].uStageBWorld != 0 && !PALETTEMODE)
 #define uSpriteTangent data[uDataIndex].uSpriteTangent
 #define uSpriteNormal data[uDataIndex].uSpriteNormal
 #define uSpriteReliefParams data[uDataIndex].uSpriteReliefParams
 #define uSpriteReliefBounds data[uDataIndex].uSpriteReliefBounds
+#define uWorldReliefParams data[uDataIndex].uWorldReliefParams
+#define uPBRMaterialFactors data[uDataIndex].uPBRMaterialFactors
+#define uPBRReliefDepth data[uDataIndex].uPBRReliefDepth
 #define uViewmodelSample data[uDataIndex].uViewmodelSample
 // Lighting only: preserve geometry, depth, fog, alpha and relief inputs.
 #define SDVK_LIGHTING_POSITION (uViewmodelSample.w > 0.5 ? uViewmodelSample.xyz : pixelpos.xyz)

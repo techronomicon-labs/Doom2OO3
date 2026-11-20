@@ -220,12 +220,13 @@ struct FSdvkDiagnosticAccess
         {
             MaterialLayerDiagnostic layer;
             if (!material->GetLayerDiagnostic(i, layer)) throw std::runtime_error("SDVK bound material layer is unavailable");
+            auto sampler = material->GetLayerSampler(layer.semantic, layer.sampling, entry->clampmode);
             const bool fallbackPlaceholder = layer.sourceTexture && layer.sourceTexture->GetSourceLump() == 0 &&
                 layer.sourceTexture->GetWidth() == 1 && layer.sourceTexture->GetHeight() == 1;
             if (i) layers += ',';
             layers += Object().Int("binding", i).Str("semantic", MaterialLayerSemanticName(layer.semantic))
                 .Int("custom_index", layer.customIndex).Int("scale_flags", layer.scaleFlags).Int("layer_clamp_flags", layer.clampflags)
-                .Int("requested_sampling", int(layer.sampling)).Raw("sampler", Sampler(fb->GetSamplerManager()->Get(layer.sampling, entry->clampmode)))
+                .Int("requested_sampling", int(layer.sampling)).Raw("sampler", Sampler(sampler))
                 .Raw("source", layer.sourceTexture ? Object().Int("lump", layer.sourceTexture->GetSourceLump())
                     .Int("width", layer.sourceTexture->GetWidth()).Int("height", layer.sourceTexture->GetHeight()).Json() : Unavailable("placeholder/no source texture"))
                 .Str("role", fallbackPlaceholder ? "fallback-placeholder" : "authored-layer").Json();
@@ -257,7 +258,8 @@ struct FSdvkDiagnosticAccess
                 if (layers.size() > 1) layers += ',';
                 layers += Object().Int("binding", entry->heightLayerIndex).Str("semantic", "height")
                     .Int("custom_index", -1).Int("scale_flags", height.scaleFlags).Int("layer_clamp_flags", height.clampflags)
-                    .Int("requested_sampling", int(height.sampling)).Raw("sampler", Sampler(fb->GetSamplerManager()->Get(height.sampling, entry->clampmode)))
+                    .Int("requested_sampling", int(height.sampling))
+                    .Raw("sampler", Sampler(material->GetLayerSampler(height.semantic, height.sampling, entry->clampmode)))
                     .Raw("source", height.sourceTexture ? Object().Int("lump", height.sourceTexture->GetSourceLump())
                         .Int("width", height.sourceTexture->GetWidth()).Int("height", height.sourceTexture->GetHeight()).Json() : Unavailable("height source unavailable"))
                     .Str("role", "authored-layer").Json();
@@ -271,6 +273,16 @@ struct FSdvkDiagnosticAccess
                 .Str("scope_name", entry->globalShaderAddr.type == 1 || entry->globalShaderAddr.type == 2 ? FName(ENamedName(entry->globalShaderAddr.name)).GetChars() : "global").Json())
             .Raw("resource", Identity(fb->GetDescriptorSetManager()->GetBindlessIdentity(uniforms.uTextureIndex)))
             .Int("height_texture_index", uniforms.uHeightTextureIndex)
+			.Bool("stage_b_receiver", uniforms.uStageBWorld != 0)
+            .Raw("pbr_tuning", Object()
+                .Num("roughness_offset", uniforms.uPBRMaterialFactors.X)
+                .Num("metallic_offset", uniforms.uPBRMaterialFactors.Y)
+                .Num("normal_strength", uniforms.uPBRMaterialFactors.Z)
+                .Num("ao_strength", uniforms.uPBRMaterialFactors.W)
+                .Num("relief_depth_multiplier", uniforms.uPBRReliefDepth).Json())
+            .Num("world_relief_depth", uniforms.uWorldReliefParams.W == 0.f ? uniforms.uWorldReliefParams.X : 0.f)
+            .Num("world_relief_orientation", uniforms.uWorldReliefParams.W == 0.f ? uniforms.uWorldReliefParams.Y : 0.f)
+            .Num("world_relief_exaggeration", uniforms.uWorldReliefParams.W == 0.f ? uniforms.uWorldReliefParams.Z : 0.f)
             .Raw("layers", layers).Json();
     }
 
@@ -555,6 +567,8 @@ struct FSdvkDiagnosticAccess
         const std::string name = material && material->Source() ? material->Source()->GetName().GetChars() : "";
         const auto pipeline = Pipeline(state->mPipelineKey);
         const auto spriteSurface = SdvkDiagnostics::CurrentSpriteBasisJson();
+        const auto& structural = state->mSurfaceUniforms.uWorldReliefParams;
+        const bool structuralHeight = material && material->Source()->HasLightingOnlyHeight();
 		const auto& vm = state->mSurfaceUniforms.uViewmodelMode;
 		if (vm.W > 0.5f)
 		{
@@ -582,6 +596,9 @@ struct FSdvkDiagnosticAccess
 				.Bool("model_geometry", model).Raw("normal_model_matrix", normalMatrix)
 				.Str("basis_source", model ? "model-world-normal-matrix-and-derivative-tbn" : "final-hud-quad")
 				.Bool("relief_enabled", state->mSurfaceUniforms.uSpriteReliefParams.W > 0.5f)
+				.Int("lighting_relief_mode", int(structural.W)).Bool("structural_height", structuralHeight)
+				.Num("lighting_relief_depth", structural.X).Num("lighting_relief_orientation", structural.Y)
+				.Num("lighting_relief_exaggeration", structural.Z).Num("vertex_alpha", state->mSurfaceUniforms.uVertexColor.W)
 				.Int("authored_probe", state->mLightProbeIndex).Int("runtime_irradiance_index", probe)
 				.Int("probe_epoch", fb->GetTextureManager()->GetLightProbeEpoch().Generation)
 				.Raw("probe_resource", probe ? Identity(fb->GetDescriptorSetManager()->GetBindlessIdentity(probe)) : Unavailable("zero is the no-probe sentinel"))
@@ -602,6 +619,9 @@ struct FSdvkDiagnosticAccess
                 .Num("handedness", tangent.W).Bool("explicit", normal.W > 0.5f)
                 .Str("material", name).Int("shader", material ? material->GetShaderIndex() : -1)
                 .Int("height_texture_index", state->mSurfaceUniforms.uHeightTextureIndex)
+                .Int("lighting_relief_mode", int(structural.W)).Bool("structural_height", structuralHeight)
+                .Num("lighting_relief_depth", structural.X).Num("lighting_relief_orientation", structural.Y)
+                .Num("lighting_relief_exaggeration", structural.Z).Num("vertex_alpha", state->mSurfaceUniforms.uVertexColor.W)
                 .Int("light_index", state->mPushConstants.uLightIndex)
                 .Bool("indexed", indexed).Int("draw_count", count)
                 .Str("uniform_scope", "emitted-vulkan-draw-after-apply-surface-uniforms").Json(), true);

@@ -240,7 +240,7 @@ void HWDrawInfo::GetDynSpriteLight(AActor *self, sun_trace_cache_t * traceCache,
 	{
 		light=node->lightsource;
 		const char* observationDecision = "actor-policy-rejected";
-		if (light->ShouldLightActor(self))
+		if (!light->IsStageBEmitter() && light->ShouldLightActor(self))
 		{
 			if (observing) observationDecision = "radius-rejected";
 			float dist;
@@ -313,10 +313,10 @@ void HWDrawInfo::GetDynSpriteLight(AActor *self, sun_trace_cache_t * traceCache,
 							lb *= alpha;
 						}
 
-						// Get GLDEFS intensity
-						lr *= light->GetLightDefIntensity();
-						lg *= light->GetLightDefIntensity();
-						lb *= light->GetLightDefIntensity();
+						const double intensity = light->GetLightDefIntensity() * light->GetProjectileLightScale();
+						lr *= intensity;
+						lg *= intensity;
+						lb *= intensity;
 
 						if (light->IsSubtractive())
 						{
@@ -353,11 +353,11 @@ void HWDrawInfo::GetDynSpriteLight(AActor *thing, particle_t *particle, sun_trac
 }
 
 
-void HWDrawInfo::GetDynSpriteLightList(AActor *self, double x, double y, double z, sun_trace_cache_t * traceCache, FDynLightData &modellightdata, bool isModel)
+void HWDrawInfo::GetDynSpriteLightList(AActor *self, double x, double y, double z, sun_trace_cache_t * traceCache, FDynLightData &modellightdata, bool isModel, bool flashlightOnly, bool emitterReceiver)
 {
 	modellightdata.Clear();
 
-	if (self && (self->flags5 & MF5_BRIGHT))
+	if (!flashlightOnly && self && (self->flags5 & MF5_BRIGHT))
 		return;
 
 	float actorradius = self ? (float)self->RenderRadius() : 1;
@@ -365,7 +365,7 @@ void HWDrawInfo::GetDynSpriteLightList(AActor *self, double x, double y, double 
 	dl_validcount++;
 
 	const int actorPortalGroup = self && self->Sector ? self->Sector->PortalGroup : 0;
-	ActorTraceStaticLight staticLight(self, actorPortalGroup);
+	ActorTraceStaticLight staticLight(flashlightOnly ? nullptr : self, actorPortalGroup);
 
 	int gl_spritelight = get_gl_spritelight();
 
@@ -375,9 +375,10 @@ void HWDrawInfo::GetDynSpriteLightList(AActor *self, double x, double y, double 
 		AddSunLightToList(modellightdata, x, y, z, FVector3(Level->SunDirection.X + 180, 45, 0), Level->SunColor * Level->SunIntensity * gl_fakemodellightintensity, false);
 	}
 
-	if ((level.lightmaps && gl_spritelight > 0) || ActorTraceStaticLight::TraceSunVisibility(x, y, z, traceCache, (self ? staticLight.ActorMoved : traceCache ? traceCache->Pos != DVector3(x, y, z) : false)))
+	if (!flashlightOnly && ((level.lightmaps && gl_spritelight > 0) || ActorTraceStaticLight::TraceSunVisibility(x, y, z, traceCache, (self ? staticLight.ActorMoved : traceCache ? traceCache->Pos != DVector3(x, y, z) : false))))
 	{
-		AddSunLightToList(modellightdata, x, y, z, Level->SunDirection, Level->SunColor * Level->SunIntensity, gl_spritelight > 0);
+		const float ambient = emitterReceiver && UsesEmitterLighting() ? VPUniforms.StageBAmbient : 1.f;
+		AddSunLightToList(modellightdata, x, y, z, Level->SunDirection, Level->SunColor * (Level->SunIntensity * ambient), gl_spritelight > 0);
 	}
 
 	// PF-016: both candidate sources feed exactly the same filter/portal/trace
@@ -399,7 +400,9 @@ void HWDrawInfo::GetDynSpriteLightList(AActor *self, double x, double y, double 
 		{
 			FDynamicLight *light = node->lightsource;
 			if (countDiagnostics) ++candidates;
-			if (!light->ShouldLightActor(self))
+			const bool rejectedEmitter = light->IsStageBEmitter() &&
+				(!emitterReceiver || !self || !StageBEmitterAllowed(modellightdata, light, self->Sector));
+			if (rejectedEmitter || (flashlightOnly && !light->IsLocalFlashlight()) || !light->ShouldLightActor(self))
 			{
 				if (countDiagnostics) ++filtered;
 				if (countDiagnostics && SdvkDiagnostics::StateEnabled())
@@ -544,11 +547,11 @@ void HWDrawInfo::GetDynSpriteLightList(AActor *self, double x, double y, double 
 		SdvkDiagnostics::LightQuerySummary(this, self, x, y, z, observationSource, candidates, filtered, duplicates, traces);
 }
 
-void HWDrawInfo::GetDynSpriteLightList(AActor *thing, particle_t *particle, sun_trace_cache_t * traceCache, FDynLightData &modellightdata, bool isModel)
+void HWDrawInfo::GetDynSpriteLightList(AActor *thing, particle_t *particle, sun_trace_cache_t * traceCache, FDynLightData &modellightdata, bool isModel, bool emitterReceiver)
 {
 	if (thing)
 	{
-		GetDynSpriteLightList(thing, thing->X(), thing->Y(), thing->Center(), &thing->StaticLightsTraceCache, modellightdata, isModel);
+		GetDynSpriteLightList(thing, thing->X(), thing->Y(), thing->Center(), &thing->StaticLightsTraceCache, modellightdata, isModel, false, emitterReceiver);
 	}
 	else if (particle)
 	{

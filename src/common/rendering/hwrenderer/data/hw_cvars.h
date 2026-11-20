@@ -72,3 +72,16 @@ EXTERN_CVAR(Float, gl_fakemodellightintensity)
 
 EXTERN_CVAR(Bool, lm_dynlights)
 
+EXTERN_CVAR(Bool, gl_world_relief)
+EXTERN_CVAR(Bool, gl_emitter_lighting)
+EXTERN_CVAR(Float, gl_emitter_ambient)
+EXTERN_CVAR(Float, gl_emitter_ambient_specular)
+EXTERN_CVAR(Float, gl_emitter_intensity)
+EXTERN_CVAR(Float, gl_world_relief_depth)
+EXTERN_CVAR(Float, gl_world_relief_orientation)
+EXTERN_CVAR(Float, gl_world_relief_exaggeration)
+EXTERN_CVAR(Bool, gl_sprite_lighting_relief)
+EXTERN_CVAR(Float, gl_sprite_lighting_relief_depth)
+EXTERN_CVAR(Float, gl_sprite_lighting_relief_orientation)
+EXTERN_CVAR(Float, gl_sprite_lighting_relief_exaggeration)
+

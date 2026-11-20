@@ -40,25 +40,29 @@ cmake --build build/windows --config RelWithDebInfo --parallel 4
 & .\build\windows\RelWithDebInfo\vkdoom.exe --version
 ```
 
-Play with your own Doom II WAD:
+Play with the Doom II WAD in `assets/wads`:
 
 ```powershell
-& .\build\windows\RelWithDebInfo\vkdoom.exe -iwad "C:\doom2.wad"
+& .\build\windows\RelWithDebInfo\vkdoom.exe -iwad ".\assets\wads\doom2.wad"
 ```
 
 ## Original procedural PBR and flashlight (#190)
 
-Generate opt-in local materials from **your own** Doom II WAD (Python 3.11+, NumPy and Pillow):
+Generate opt-in local materials (Python 3.11+, NumPy and Pillow):
 
 ```powershell
 py -m pip install numpy pillow
-py tools/doom2_showcase/build.py --doom2 "C:\doom2.wad" --out ".\build\addons"
-.\tools\doom2_showcase\launch.ps1 -Game DoomII -Exe ".\build\windows\RelWithDebInfo\vkdoom.exe" -Doom2 "C:\doom2.wad" -Packages ".\build\addons"
+py tools/doom2_showcase/build.py --doom2 ".\assets\wads\doom2.wad" --out ".\build\addons"
+.\tools\doom2_showcase\launch.ps1 -Game DoomII -Exe ".\build\windows\RelWithDebInfo\vkdoom.exe" -Doom2 ".\assets\wads\doom2.wad" -Packages ".\build\addons"
 ```
 
-Add `--dbp50 "C:\path\to\DBP50.wad"` and `--gallery` if desired; build into a fresh `--out` directory each time. The input-hash checks deliberately reject unsupported/repacked WADs; do not fabricate compatible hashes. No copyrighted game WADs or generated WAD-derived assets are distributed here.
+Add `--dbp50 ".\assets\wads\DBP50.wad"` to build the DBP50 add-ons, or `--gallery` to build the material gallery. Use a fresh `--out` directory for each build. The generator checks the WAD hashes against the versions it supports.
 
 Press **L** for the flashlight and **O** for its options in the supported add-on configuration. See [building notes](docs/BUILDING.md) for dependencies and Linux compilation.
+
+See the [Stage A relief evaluation](docs/RELIEF.md) for the opt-in Doom II and DBP50 material packs, Windows playtest controls and matched Vulkan captures.
+
+See the [Stage B emitter lighting evaluation](docs/EMITTER_LIGHTING.md) for lighting comparisons in Doom II Entryway and the indoor and outdoor rooms.
 
 ## What is preserved / what is gone
 

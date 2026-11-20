@@ -30,6 +30,7 @@
 #include "vulkan/shaders/vk_shadercache.h"
 #include "hw_levelmesh.h"
 #include "hw_material.h"
+#include "pbr_material_tuning.h"
 #include "texturemanager.h"
 #include "cmdlib.h"
 
@@ -1034,12 +1035,14 @@ void VkLevelMeshUploader::UploadUniforms()
 				surfaceUniforms.uDepthFadeThreshold = source->GetDepthFadeThreshold();
 				surfaceUniforms.uTextureIndex = Mesh->fb->GetBindlessTextureIndex(material.mMaterial, material.mClampMode, material.mTranslation, false);
 				surfaceUniforms.uHeightTextureIndex = Mesh->fb->GetBindlessHeightLayerIndex(material.mMaterial, material.mClampMode, material.mTranslation, false);
+				surfaceUniforms.SetPBRMaterialTuning(GetPBRMaterialTuning(*material.mMaterial).Values);
 			}
 			else
 			{
 				surfaceUniforms.uDepthFadeThreshold = 0.f;
 				surfaceUniforms.uTextureIndex = 0;
 				surfaceUniforms.uHeightTextureIndex = -1;
+				surfaceUniforms.SetPBRMaterialTuning(PBRMaterialTuning{}.Values);
 			}
 		}
 

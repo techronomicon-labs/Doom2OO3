@@ -40,6 +40,7 @@
 #include "hw_cvars.h"
 #include "hw_clock.h"
 #include "flatvertices.h"
+#include "pbr_material_tuning.h"
 
 #include "g_levellocals.h"
 
@@ -342,9 +343,10 @@ void VkRenderState::ApplyRenderPass(int dt)
 	pipelineKey.ShaderKey.LightNoNormals = mLightNoNormals;
 	pipelineKey.ShaderKey.UseSpriteCenter = mUseSpriteCenter;
 
-	pipelineKey.ShaderKey.UseShadowmap = gl_light_shadows == 1;
-	pipelineKey.ShaderKey.UseRaytrace = gl_light_shadows >= 2;
-	pipelineKey.ShaderKey.Layout.UseRaytracePrecise = gl_light_shadows >= 3;
+	const bool emitterReceiver = mSurfaceUniforms.uStageBWorld != 0;
+	pipelineKey.ShaderKey.UseShadowmap = emitterReceiver || gl_light_shadows == 1;
+	pipelineKey.ShaderKey.UseRaytrace = !emitterReceiver && gl_light_shadows >= 2;
+	pipelineKey.ShaderKey.Layout.UseRaytracePrecise = !emitterReceiver && gl_light_shadows >= 3;
 	pipelineKey.ShaderKey.ShadowmapFilter = std::clamp(int(gl_light_shadow_filter), 0, 15);
 
 	pipelineKey.ShaderKey.Layout.GBufferPass = mRenderTarget.DrawBuffers > 1;
@@ -490,12 +492,14 @@ void VkRenderState::ApplySurfaceUniforms()
 			mSurfaceUniforms.uHeightTextureIndex = vkMaterial->GetHeightLayerIndex(mMaterial);
 			mSurfaceUniforms.uSpecularMaterial = { source->GetGlossiness(), source->GetSpecularLevel() };
 			mSurfaceUniforms.uDepthFadeThreshold = source->GetDepthFadeThreshold();
+			mSurfaceUniforms.SetPBRMaterialTuning(GetPBRMaterialTuning(*vkMaterial).Values);
 		}
 		else
 		{
 			mSurfaceUniforms.uDepthFadeThreshold = 0.f;
 			mSurfaceUniforms.uTextureIndex = 0;
 			mSurfaceUniforms.uHeightTextureIndex = -1;
+			mSurfaceUniforms.SetPBRMaterialTuning(PBRMaterialTuning{}.Values);
 		}
 		mMaterial.mChanged = false;
 	}

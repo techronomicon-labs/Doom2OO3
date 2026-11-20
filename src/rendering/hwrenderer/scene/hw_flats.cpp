@@ -181,7 +181,7 @@ void HWFlat::SetupLights(HWFlatDispatcher *di, FRenderState& state, FLightNode *
 	{
 		FDynamicLight * light = node->lightsource;
 
-		if (!light->IsActive() || light->DontLightMap())
+		if (!light->IsActive() || (light->DontLightMap() && !(di->di->UsesEmitterLighting() && light->IsStageBEmitter())))
 		{
 			node = node->nextLight;
 			continue;
@@ -198,7 +198,8 @@ void HWFlat::SetupLights(HWFlatDispatcher *di, FRenderState& state, FLightNode *
 		}
 
 		p.Set(plane.plane.Normal(), plane.plane.fD());
-		draw_dlightf += GetLight(lightdata, portalgroup, p, light, false);
+		draw_dlightf += GetLight(lightdata, portalgroup, p, light, false,
+			di->di->UsesEmitterLighting() && alpha >= 1.f ? section->sector : nullptr);
 		node = node->nextLight;
 	}
 
@@ -380,8 +381,13 @@ void HWFlat::DrawFlat(HWFlatDispatcher *di, FRenderState &state, bool translucen
 		if (sector->special != GLSector_Skybox)
 		{
 			state.SetMaterial(texture, UF_Texture, 0, CLAMP_NONE, NO_TRANSLATION, -1);
+			state.SetEmitterLightingReceiver(di->di && di->di->UsesEmitterLighting());
+			if (texture && !texture->isMasked() && !texture->isWarped() && !plane.plane.dithertransflag)
+				state.EnableWorldRelief();
 			bool texmatrix = SetPlaneTextureRotation(state, &plane, texture);
 			DrawSubsectors(di, state);
+			state.ClearWorldRelief();
+			state.SetEmitterLightingReceiver(false);
 			if (texmatrix)
 				state.SetTextureMatrix(VSMatrix::identity());
 		}

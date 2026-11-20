@@ -110,6 +110,7 @@ struct Observer
 {
     bool Initialized = false, StateMode = true, Quit = false, Written = false, InFrame = false;
     bool Screenshot = false, GpuRequested = false, ProbeBuilderTrace = false;
+    bool FramePngs = false;
     // SDVK-153 fixture input is explicitly opt-in and outcome-blind. It queues
     // ordinary console CVAR commands after fixed main-view ordinals; it is not
     // part of the passive observation state and reads no renderer result.
@@ -131,6 +132,7 @@ struct Observer
     // They reuse the existing light census/query calls and add no timing-mode
     // traversal or clock sampling.
     uint64_t AuthoredLights = 0, ActiveLights = 0, SpotLights = 0;
+    uint64_t ReliefFlashlightLights = 0;
     uint64_t SubtractiveLights = 0, AdditiveLights = 0;
     uint64_t ActorLightQueries = 0, ActorCandidates = 0, ActorSelected = 0;
     uint64_t ActorFiltered = 0, ActorDuplicates = 0, ActorTraces = 0;
@@ -418,6 +420,9 @@ void Initialize()
         if (const char* count = Option("-sdvkobserveframes")) observer.Requested = ParseCount(count, 1, 4096);
         if (const char* count = Option("-sdvkobservewarmup")) observer.Warmup = ParseCount(count, 0, 100000);
         observer.Quit = Args->CheckParm("-sdvkobservequit") != 0;
+        observer.FramePngs = Args->CheckParm("-sdvkobservepngs") != 0;
+        Require(!observer.FramePngs || (observer.StateMode && observer.Requested <= 128),
+            "SDVK frame PNGs require state mode and at most 128 retained frames");
         observer.GpuRequested = Args->CheckParm("-sdvkobservegpu") != 0;
         observer.ProbeBuilderTrace = Args->CheckParm("-sdvkprobeownertrace") != 0;
         observer.SamplerResetInput = Args->CheckParm("-sdvk153samplerresetdriver") != 0;
@@ -470,6 +475,7 @@ std::string LightJson(const FDynamicLight* light, const char* map, unsigned ordi
         .Int("portal_group", light->Sector ? light->Sector->PortalGroup : -1).Num("radius", light->GetRadius())
         .Num("strength", light->GetStrength()).Num("linearity", light->GetLinearity()).Num("soft_shadow_radius", light->GetSoftShadowRadius())
         .Int("red", light->GetRed()).Int("green", light->GetGreen()).Int("blue", light->GetBlue()).Int("type", unsigned(light->lighttype))
+        .Int("stage_b_kind", light->IsStageBDirectional() ? 2 : light->IsStageBEmitter() ? 1 : 0)
         .Bool("active", light->IsActive()).Bool("spot", light->IsSpot()).Bool("subtractive", light->IsSubtractive()).Bool("additive", light->IsAdditive()).Json();
 }
 
@@ -830,6 +836,7 @@ void BeginFrame()
         {
             observer.Lights.clear();
             observer.AuthoredLights = observer.ActiveLights = observer.SpotLights = 0;
+            observer.ReliefFlashlightLights = 0;
             observer.SubtractiveLights = observer.AdditiveLights = 0;
             observer.ActorLightQueries = observer.ActorCandidates = observer.ActorSelected = 0;
             observer.ActorFiltered = observer.ActorDuplicates = observer.ActorTraces = 0;
@@ -843,6 +850,7 @@ void BeginFrame()
                     ++observer.AuthoredLights;
                     if (light->IsActive()) ++observer.ActiveLights;
                     if (light->IsSpot()) ++observer.SpotLights;
+                    if (light->IsActive() && light->IsLocalFlashlight()) ++observer.ReliefFlashlightLights;
                     if (light->IsSubtractive()) ++observer.SubtractiveLights;
                     if (light->IsAdditive()) ++observer.AdditiveLights;
                 }
@@ -870,7 +878,7 @@ void EndFrame()
         const auto counter = [hardware](int value) { return hardware ? std::to_string(value) : std::string("null"); };
         ++observer.Collected;
         const auto& visualTime = RenderVisualTime::RuntimeClock().Snapshot();
-        Emit("frame", Object().Int("gametic", gametic).Str("map", level.MapName.GetChars()).Num("cpu_render_view_ms", elapsed)
+        Emit("frame", Object().Int("gametic", gametic).Int("level_tic", level.time).Str("map", level.MapName.GetChars()).Num("cpu_render_view_ms", elapsed)
             .Raw("visual_time", Object().Str("scope", "main-view-owner").Num("delta_seconds", visualTime.DeltaSeconds)
                 .Num("accumulated_seconds", visualTime.AccumulatedSeconds).Int("generation", visualTime.Generation)
                 .Int("main_frame", visualTime.MainFrame).Bool("delta_valid", visualTime.DeltaValid)
@@ -888,6 +896,9 @@ void EndFrame()
                 .Int("gl_light_shadows", int(gl_light_shadows)).Int("gl_light_shadow_filter", int(gl_light_shadow_filter))
                 .Int("effective_sprite_light_mode", get_gl_spritelight())
                 .Bool("gl_bloom", bool(gl_bloom)).Int("gl_ssao", int(gl_ssao)).Int("gl_tonemap", int(gl_tonemap)).Json())
+            .Raw("stage_b", Object().Bool("requested", bool(gl_emitter_lighting))
+                .Num("ambient", float(gl_emitter_ambient)).Num("intensity", float(gl_emitter_intensity))
+                .Num("ambient_specular", float(gl_emitter_ambient_specular)).Json())
             .Str("cpu_scope", "RenderView steady-clock interval; excludes later finish/presentation")
             .Bool("state_instrumentation", observer.StateMode).Bool("hardware_renderer", V_IsHardwareRenderer())
             .Int("width", screen->GetWidth()).Int("height", screen->GetHeight())
@@ -898,6 +909,7 @@ void EndFrame()
             .Raw("authored_lights", observer.StateMode && hardware ? std::to_string(observer.AuthoredLights) : std::string("null"))
             .Raw("active_lights", observer.StateMode && hardware ? std::to_string(observer.ActiveLights) : std::string("null"))
             .Raw("spot_lights", observer.StateMode && hardware ? std::to_string(observer.SpotLights) : std::string("null"))
+            .Raw("relief_flashlight_lights", observer.StateMode && hardware ? std::to_string(observer.ReliefFlashlightLights) : std::string("null"))
             .Raw("subtractive_lights", observer.StateMode && hardware ? std::to_string(observer.SubtractiveLights) : std::string("null"))
             .Raw("additive_lights", observer.StateMode && hardware ? std::to_string(observer.AdditiveLights) : std::string("null"))
             .Raw("actor_light_queries", observer.StateMode && hardware ? std::to_string(observer.ActorLightQueries) : std::string("null"))
@@ -957,6 +969,22 @@ void FramePresented()
         // just-completed main view. No extra view/tic or fixture outcome is
         // introduced, and the following input commands have not run yet.
         const uint64_t frame = observer.Frame.load(std::memory_order_relaxed);
+        if (observer.FramePngs && frame > 0 && observer.Records.Failure().empty())
+        {
+            try
+            {
+                const auto path = std::filesystem::u8path(observer.Prefix + ".frame-" + std::to_string(frame) + ".png");
+                Require(!std::filesystem::exists(path) && bool(screenshot_quiet) && int(con_notifylines) == 0 &&
+                    std::string(static_cast<const char*>(screenshot_type)) == "png",
+                    "SDVK frame PNGs need fresh quiet PNG output and con_notifylines=0");
+                M_ScreenShot(path.generic_u8string().c_str());
+                Require(std::filesystem::is_regular_file(path) && std::filesystem::file_size(path) > 0,
+                    "SDVK completed frame PNG missing");
+                Emit("frame-sequence", Object().Str("image", path.filename().generic_u8string())
+                    .Str("map", level.MapName.GetChars()).Int("gametic", gametic).Int("level_tic", level.time).Json());
+            }
+            catch (const std::exception& error) { Fail(error.what()); }
+        }
         if (observer.SpecialSurfaceInput && frame > 0 && frame <= 96 && frame % 8 == 0)
         {
             try

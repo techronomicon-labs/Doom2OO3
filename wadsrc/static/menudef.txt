@@ -359,6 +359,11 @@ OptionMenu "OptionsMenu" protected
 	Submenu "$OPTMNU_INPUT",			"InputMenu"
 	Submenu "$OPTMNU_GAMEPLAY",			"GameplayMenu"
 	Submenu "$OPTMNU_DISPLAY",			"VideoOptions"
+	Submenu "PBR materials",				"PBRMaterialMenu"
+	IfGame(Doom)
+	{
+		Submenu "Projectile lighting", "DoomProjectileLighting"
+	}
 	Submenu "$OPTMNU_SOUND",			"SoundOptions"
 	Submenu "$OPTMNU_MULTIPLAYER",		"MultiplayerMenu"
 	Submenu "$OPTMNU_MISCELLANEOUS",	"MiscOptions"
@@ -1083,6 +1088,23 @@ OptionMenu "LightOptions" protected
 	StaticText " "
 	Option "$GLPREFMNU_ENV",					gl_enhanced_nightvision,		"OnOff"
 	Option "$GLPREFMNU_ENVSTEALTH",				gl_enhanced_nv_stealth,			"EnhancedStealth"
+}
+
+OptionMenu "DoomProjectileLighting"
+{
+	Title "Projectile lighting"
+	StaticText "Light output (%)", 1
+	Slider "Plasma flight", gl_plasma_flight_light, 0, 1200, 5, 0
+	Slider "Plasma impact", gl_plasma_impact_light, 0, 1200, 5, 0
+	Slider "Rocket flight", gl_rocket_flight_light, 0, 1200, 5, 0
+	Slider "Rocket explosion", gl_rocket_impact_light, 0, 1200, 5, 0
+	Slider "BFG flight", gl_bfg_flight_light, 0, 1200, 5, 0
+	Slider "BFG impact", gl_bfg_impact_light, 0, 1200, 5, 0
+	Slider "Other projectile flight", gl_other_projectile_flight_light, 0, 1200, 5, 0
+	Slider "Other projectile impact", gl_other_projectile_impact_light, 0, 1200, 5, 0
+	Slider "Bullet impact", gl_bullet_impact_light, 0, 1200, 5, 0
+	StaticText " "
+	Command "Reset projectile lighting", "resetcvar gl_plasma_flight_light; resetcvar gl_plasma_impact_light; resetcvar gl_rocket_flight_light; resetcvar gl_rocket_impact_light; resetcvar gl_bfg_flight_light; resetcvar gl_bfg_impact_light; resetcvar gl_other_projectile_flight_light; resetcvar gl_other_projectile_impact_light; resetcvar gl_bullet_impact_light"
 }
 
 OptionMenu "SpriteOptions" protected
@@ -2768,6 +2790,27 @@ OptionMenu "GLTextureGLOptions" protected
 	Option "$GLTEXMNU_PRECACHETEX",		gl_precache,					"YesNo"
 	Option "$GLTEXMNU_SORTDRAWLIST", 	gl_sort_textures,				"YesNo"
 	Class "GLTextureGLOptions"
+}
+
+OptionMenu "PBRMaterialMenu" protected
+{
+	Class "PBRMaterialMenu"
+	Title "PBR materials"
+	DontDim
+	DontBlur
+	StaticTextSwitchable "No material selected", "", "PBRMaterialName", 1
+	PBRMaterialAction "Pick aimed surface", 0
+	PBRMaterialLookup "Find by texture name"
+	StaticText " "
+	PBRMaterialSlider "Roughness offset", 0, -1.0, 1.0
+	PBRMaterialSlider "Metallic offset", 1, -1.0, 1.0
+	PBRMaterialSlider "Normal strength", 2, 0.0, 2.0
+	PBRMaterialSlider "Ambient occlusion strength", 3, 0.0, 2.0
+	PBRMaterialSlider "Relief depth strength", 4, 0.0, 2.0
+	StaticText " "
+	PBRMaterialAction "Save material settings", 1
+	PBRMaterialAction "Preview material defaults", 2
+	StaticTextSwitchable " ", "", "PBRMaterialStatus"
 }
 
 OptionMenu "VR3DMenu" protected

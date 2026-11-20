@@ -5,6 +5,7 @@
 #include "m_fixed.h"
 #include "textures.h"
 #include "material_layer_semantics.h"
+#include "pbr_material_tuning.h"
 
 struct FRemapTable;
 class IHardwareTexture;
@@ -45,6 +46,9 @@ class FMaterial
 	int mScaleFlags;
 
 	int mNumNonMaterialLayers = 0;
+	friend const PBRMaterialTuning& GetPBRMaterialTuning(const FMaterial& material);
+	mutable uint64_t mTuningRevision = 0;
+	mutable PBRMaterialTuning mTuning;
 
 public:
 

@@ -2,6 +2,8 @@
 #pragma once
 
 #include "vectors.h"
+#include <array>
+#include <cstddef>
 
 struct SurfaceUniforms
 {
@@ -52,8 +54,8 @@ struct SurfaceUniforms
 	// SDVK-005 semantic descriptor index, relative to uTextureIndex. Appended
 	// so the established SurfaceUniforms field offsets remain unchanged.
 	int uHeightTextureIndex = -1;
-	int uMaterialSemanticPad0;
-	int uMaterialSemanticPad1;
+	int uStageBWorld = 0;
+	float uPBRReliefDepth = 1.0f;
 	int uMaterialSemanticPad2;
 
 	// SDVK-007/v1: per-draw sprite-only world TBN. Normal.W = 1 iff
@@ -69,7 +71,22 @@ struct SurfaceUniforms
 	// SDVK-011 shader-world lighting sample; W enables enhanced HUD lighting.
 	FVector4 uViewmodelSample = {};
 	FVector4 uViewmodelMode = {}; // requested, effective, fallback, HUD marker (1 card, 2 model)
+	// Flashlight depth, orientation, height multiplier (0 disables), surface kind.
+	// W: world = 0, sprite = 1/2, enhanced viewmodel = 3/4, fullbright sprite = 5/6.
+	// Modes 2, 3 and 6 have padded albedo.
+	FVector4 uWorldReliefParams = {};
+	FVector4 uPBRMaterialFactors = { 0.f, 0.f, 1.f, 1.f }; // roughness, metallic, normal, AO
+
+	void SetPBRMaterialTuning(const std::array<float, 5>& values)
+	{
+		uPBRMaterialFactors = { values[0], values[1], values[2], values[3] };
+		uPBRReliefDepth = values[4];
+	}
 };
+
+static_assert(offsetof(SurfaceUniforms, uPBRReliefDepth) == 408);
+static_assert(offsetof(SurfaceUniforms, uPBRMaterialFactors) == 528);
+static_assert(sizeof(SurfaceUniforms) == 544);
 
 struct SurfaceLightUniforms
 {

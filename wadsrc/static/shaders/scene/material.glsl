@@ -17,6 +17,7 @@ struct Material
 	float Metallic;
 	float Roughness;
 	float AO;
+	vec4 WorldRelief; // world-space slope, signed displacement in world units
 };
 
 vec4 Process(vec4 color);
@@ -50,6 +51,7 @@ Material CreateMaterial()
 	material.Metallic = 0.0;
 	material.Roughness = 0.0;
 	material.AO = 0.0;
+	material.WorldRelief = vec4(0.0);
 	SetupMaterial(material);
 	return material;
 }
@@ -107,6 +109,15 @@ Material CreateMaterial()
 				material.Metallic = texture(metallictexture, texCoord.st).r;
 				material.Roughness = texture(roughnesstexture, texCoord.st).r;
 				material.AO = texture(aotexture, texCoord.st).r;
+				if (uPBRMaterialFactors.x != 0.0)
+					material.Roughness = clamp(material.Roughness + uPBRMaterialFactors.x, 0.045, 1.0);
+				if (uPBRMaterialFactors.y != 0.0)
+					material.Metallic = clamp(material.Metallic + uPBRMaterialFactors.y, 0.0, 1.0);
+				if (uPBRMaterialFactors.w != 1.0)
+					material.AO = clamp(1.0 - (1.0 - material.AO) * uPBRMaterialFactors.w, 0.0, 1.0);
+			#endif
+			#ifdef SDVK_STRUCTURAL_RELIEF
+				material.WorldRelief = SDVKSampleStructuralRelief(texCoord.st, uvDx, uvDy, material.Base.a);
 			#endif
 			
 			#ifdef SPECULAR

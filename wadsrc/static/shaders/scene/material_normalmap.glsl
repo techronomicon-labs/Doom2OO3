@@ -39,6 +39,19 @@ vec3 ApplyNormalMap(vec2 texcoord)
 	{
 		tbn = cotangent_frame(interpolatedNormal, pixelpos.xyz, vTexCoord.st);
 	}
+
+	#ifdef PBR
+	if (uPBRMaterialFactors.z != 1.0)
+	{
+		if (uPBRMaterialFactors.z == 0.0)
+			return tbn[2];
+		map.xy *= uPBRMaterialFactors.z;
+		vec3 bumped = tbn * map;
+		float lengthSquared = dot(bumped, bumped);
+		return lengthSquared > 1e-12 && !isinf(lengthSquared) ? bumped * inversesqrt(lengthSquared) : tbn[2];
+	}
+	#endif
+
 	vec3 bumpedNormal = normalize(tbn * map);
 	return bumpedNormal;
 }

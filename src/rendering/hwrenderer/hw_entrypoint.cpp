@@ -62,6 +62,7 @@ EXTERN_CVAR(Float, r_visibility)
 EXTERN_CVAR(Bool, gl_bandedswlight)
 EXTERN_CVAR(Bool, gl_levelmesh)
 EXTERN_CVAR(Bool, lm_dynlights);
+EXTERN_CVAR(Bool, gl_ubershaders);
 
 CVAR(Bool, gl_raytrace, false, 0/*CVAR_ARCHIVE | CVAR_GLOBALCONFIG*/)
 CVAR(Bool, gl_lightprobe, true, 0/*CVAR_ARCHIVE | CVAR_GLOBALCONFIG*/)
@@ -83,6 +84,15 @@ void CleanSWDrawer()
 namespace
 {
 constexpr int NoShadowMapIndex = 16000000;
+constexpr std::size_t EmitterShadowCapacity = 48;
+
+bool HasEmitterLayout(const FLevelLocals* level)
+{
+	if (level->flags3 & LEVEL3_STAGEBLAYOUT) return true;
+	for (auto light = level->lights; light; light = light->next)
+		if (light->IsActive() && light->IsStageBEmitter()) return true;
+	return false;
+}
 
 HWShadowSelectionKey MakeShadowSelectionKey(FDynamicLight* light, const DVector3& viewPosition)
 {
@@ -112,32 +122,41 @@ HWShadowSelectionKey MakeShadowSelectionKey(FDynamicLight* light, const DVector3
 }
 }
 
-void CollectLights(FLevelLocals* Level, const DVector3& viewPosition)
+void CollectLights(FLevelLocals* Level, const DVector3& viewPosition, bool emitterLighting)
 {
 	ShadowMap* sm = screen->mShadowMap;
-	std::vector<HWShadowSelectionCandidate<FDynamicLight*>> candidates;
+	std::vector<HWShadowSelectionCandidate<FDynamicLight*>> emitters, dynamicLights;
+	const auto eligible = [emitterLighting, dynamicShadows = gl_light_shadows > 0](const FDynamicLight* light, bool emitter) {
+		return light->IsActive() && (emitter ? emitterLighting : dynamicShadows && light->shadowmapped);
+	};
 
 	for (auto light = Level->lights; light; light = light->next)
 	{
 		ShadowMap::LightsProcessed++;
 		light->mShadowmapIndex = NoShadowMapIndex;
-		if (light->shadowmapped && light->IsActive())
-			candidates.push_back({ light, MakeShadowSelectionKey(light, viewPosition) });
+		const bool emitter = light->IsStageBEmitter();
+		if (eligible(light, emitter))
+			(emitter ? emitters : dynamicLights).push_back({ light, MakeShadowSelectionKey(light, viewPosition) });
 	}
 
-	ShadowMap::LightsCandidates = static_cast<int>(candidates.size());
-	HWSelectShadowCandidates(candidates);
-	ShadowMap::LightsShadowmapped = static_cast<int>(candidates.size());
+	ShadowMap::LightsCandidates = static_cast<int>(emitters.size() + dynamicLights.size());
+	HWSelectShadowCandidates(emitters, EmitterShadowCapacity);
+	HWSelectShadowCandidates(dynamicLights, HWShadowMapLightCapacity - emitters.size());
+	ShadowMap::LightsShadowmapped = static_cast<int>(emitters.size() + dynamicLights.size());
 	ShadowMap::LightsDropped = ShadowMap::LightsCandidates - ShadowMap::LightsShadowmapped;
 
 	int lightindex = 0;
-	for (const auto& candidate : candidates)
-	{
-		auto light = candidate.Value;
-		light->mShadowmapIndex = lightindex;
-		sm->SetLight(lightindex, (float)light->X(), (float)light->Y(), (float)light->Z(), light->GetRadius());
-		lightindex++;
-	}
+	const auto assignRows = [sm, &lightindex](const auto& candidates) {
+		for (const auto& candidate : candidates)
+		{
+			auto light = candidate.Value;
+			light->mShadowmapIndex = lightindex;
+			sm->SetLight(lightindex, (float)light->X(), (float)light->Y(), (float)light->Z(), light->GetRadius());
+			lightindex++;
+		}
+	};
+	assignRows(emitters);
+	assignRows(dynamicLights);
 
 	for (; lightindex < static_cast<int>(HWShadowMapLightCapacity); lightindex++)
 		sm->SetLight(lightindex, 0, 0, 0, 0);
@@ -146,9 +165,9 @@ void CollectLights(FLevelLocals* Level, const DVector3& viewPosition)
 	{
 		for (auto light = Level->lights; light; light = light->next)
 		{
-			const bool eligible = light->shadowmapped && light->IsActive();
-			const bool selected = eligible && light->mShadowmapIndex != NoShadowMapIndex;
-			SdvkDiagnostics::ShadowDecision(Level, light, selected ? "selected" : eligible ? "capacity-rejected" : "not-eligible",
+			const bool candidate = eligible(light, light->IsStageBEmitter());
+			const bool selected = candidate && light->mShadowmapIndex != NoShadowMapIndex;
+			SdvkDiagnostics::ShadowDecision(Level, light, selected ? "selected" : candidate ? "capacity-rejected" : "not-eligible",
 				selected ? light->mShadowmapIndex : -1);
 		}
 	}
@@ -183,13 +202,18 @@ sector_t* RenderViewpoint(FRenderViewpoint& mainvp, AActor* camera, IntRect* bou
 	Pf020ViewDiagnostics::BeginRoot(mainview, toscreen, side, camera->Level->MapName.GetChars());
 	mainvp.TicFrac = Pf020ViewDiagnostics::ActorFraction(mainvp.TicFrac);
 
-	if (mainview && toscreen && !(camera->Level->flags3 & LEVEL3_NOSHADOWMAP) && camera->Level->HasDynamicLights && gl_light_shadows > 0 && !lm_dynlights)
+	const auto player = camera->player;
+	const bool specialVision = player && (player->fixedcolormap != NOFIXEDCOLORMAP || player->fixedlightlevel != -1 || player->extralight == INT_MIN);
+	const bool emitterLighting = gl_emitter_lighting && contextType == HWRenderContextType::MainView &&
+		!specialVision && screen->IsVulkan() && V_IsTrueColor() && !gl_levelmesh && !gl_raytrace && !gl_ubershaders &&
+		!lm_dynlights && camera->Level->aabbTree && !(camera->Level->flags3 & LEVEL3_NOSHADOWMAP) && HasEmitterLayout(camera->Level);
+	if (mainview && toscreen && !(camera->Level->flags3 & LEVEL3_NOSHADOWMAP) && camera->Level->HasDynamicLights && (gl_light_shadows > 0 || emitterLighting) && !lm_dynlights)
 	{
 		screen->mShadowMap->SetAABBTree(camera->Level->aabbTree);
 		const auto shadowViewPosition = mainvp.Pos;
 		auto shadowLevel = camera->Level;
-		screen->mShadowMap->SetCollectLights([shadowLevel, shadowViewPosition] {
-			CollectLights(shadowLevel, shadowViewPosition);
+		screen->mShadowMap->SetCollectLights([shadowLevel, shadowViewPosition, emitterLighting] {
+			CollectLights(shadowLevel, shadowViewPosition, emitterLighting);
 		});
 		screen->mShadowMap->PerformUpdate();
 	}
@@ -236,6 +260,13 @@ sector_t* RenderViewpoint(FRenderViewpoint& mainvp, AActor* camera, IntRect* bou
 		di->Set3DViewport(RenderState);
 		di->SetViewArea();
 		auto cm = di->SetFullbrightFlags(mainview ? vp.camera->player : nullptr);
+		if (emitterLighting && !di->isFullbrightScene())
+		{
+			di->VPUniforms.mPalLightLevels |= HWViewpointUniforms::EmitterLighting;
+			di->VPUniforms.StageBAmbient = gl_emitter_ambient;
+			di->VPUniforms.StageBIntensity = gl_emitter_intensity;
+			di->VPUniforms.StageBAmbientSpecular = gl_emitter_ambient_specular;
+		}
 		float flash = 1.f;
 
 		// Only used by the GLES2 renderer

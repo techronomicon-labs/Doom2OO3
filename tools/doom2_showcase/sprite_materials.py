@@ -174,12 +174,24 @@ def png(array):
     return out.getvalue()
 
 
-def build(out, label, sprites, palette, overridden):
+def build(out, label, sprites, palette, overridden, include_relief=False):
     selected = sorted(name for name in sprites if name[:4] in PROFILES)
     decoder = SpriteDecoder(sprites, palette)
     counts = Counter()
     definitions = []
     records = []
+    relief_bindings = []
+    relief_fallbacks = []
+    relief_shadowed = []
+    relief = None
+    if include_relief:
+        from sprite_structural_relief import PatchBounds, SpriteRelief
+
+        relief = SpriteRelief(sprites, decoder, overridden)
+        selected.extend(sorted(set(sprites) - set(selected)))
+    # DBP50's eight directed mailboxes fill every engine rotation before the
+    # inherited unrotated skull-column patch is considered.
+    mailbox_overrides = all(f"COL6A{rotation}" in overridden for rotation in range(1, 9))
     package = out / f"{label}-SpritePBR.pk3"
     pending = package.with_suffix(".tmp")
     with ZipFile(pending, "w", ZIP_DEFLATED) as archive:
@@ -188,27 +200,57 @@ def build(out, label, sprites, palette, overridden):
                 r"[A-Z0-9]{4}[A-Z\[\]\\][0-9](?:[A-Z\[\]\\][0-9])?", name
             ):
                 raise ValueError(f"Unexpected sprite lump name: {name}")
-            family = PROFILES[name[:4]]
+            family = PROFILES.get(name[:4])
             pixels = decoder.patch(name)
             if not pixels[:, :, 3].any():
                 raise ValueError(f"Empty sprite: {name}")
-            paths = {
-                channel: f"sdvksprpbr/{index:04}/{channel}.png" for channel in CHANNELS
+            key = f"sdvksprpbr/{index:04}"
+            layers = []
+            record = {
+                "name": name,
+                "size": list(pixels.shape[1::-1]),
+                "source": "DBP50" if name in overridden else "DoomII",
+                "sprite_sha256": sha(sprites[name]),
             }
-            for channel, array in maps_for(pixels, family, name).items():
-                archive.writestr(paths[channel], png(array))
-            layers = " ".join(f'{c} "{paths[c]}" {{ filter linear }}' for c in CHANNELS)
-            definitions.append(f'material sprite "{name}" {{ {layers} }}')
-            records.append(
-                {
-                    "name": name,
-                    "family": family,
-                    "size": list(pixels.shape[1::-1]),
-                    "source": "DBP50" if name in overridden else "DoomII",
-                    "sprite_sha256": sha(sprites[name]),
+            if family is not None:
+                maps = maps_for(pixels, family, name)
+                for channel in CHANNELS:
+                    path = f"{key}/{channel}.png"
+                    archive.writestr(path, png(maps[channel]))
+                    layers.append(f'{channel} "{path}" {{ filter linear }}')
+                records.append({"name": name, "family": family, **record})
+                counts[family] += 1
+            if relief is not None:
+                bounds = PatchBounds.from_lump(sprites[name])
+                record = {
+                    **record,
+                    "offsets": [bounds.left, bounds.top],
+                    "aliases": [
+                        {
+                            "frame": name[index],
+                            "rotation": int(name[index + 1]),
+                            "mirrored": index == 6,
+                        }
+                        for index in range(4, len(name), 2)
+                    ],
                 }
-            )
-            counts[family] += 1
+                if mailbox_overrides and name == "COL6A0":
+                    relief_shadowed.append({**record, "reason": "superseded by all eight DBP50 COL6A rotations"})
+                    continue
+                height, profile = relief.height(name, pixels)
+                if height is None:
+                    relief_fallbacks.append({**record, "reason": profile})
+                else:
+                    path = f"{key}/height.png"
+                    data = png(height)
+                    archive.writestr(path, data)
+                    layers.append(f'height "{path}" {{ filter linear lightingonly }}')
+                    relief_bindings.append(
+                        {**record, "profile": profile, "height": path, "height_sha256": sha(data)}
+                    )
+            if layers:
+                scope = "iwad " if relief is not None and name not in overridden else ""
+                definitions.append(f'material sprite "{name}" {{ {scope}{" ".join(layers)} }}')
         archive.writestr("GLDEFS", "\n".join(definitions) + "\n")
     pending.replace(package)
     manifest = {
@@ -219,10 +261,15 @@ def build(out, label, sprites, palette, overridden):
         "counts": dict(counts),
         "bindings": records,
     }
+    if relief is not None:
+        manifest["relief_bindings"] = relief_bindings
+        manifest["relief_fallbacks"] = relief_fallbacks
+        if relief_shadowed:
+            manifest["relief_shadowed"] = relief_shadowed
     (out / f"{label}-sprite-manifest.json").write_text(
         json.dumps(manifest, indent=2) + "\n", encoding="utf-8"
     )
     print(
-        label, len(selected), "frames", dict(counts), package.stat().st_size, flush=True
+        label, len(records), "frames", dict(counts), package.stat().st_size, flush=True
     )
     return manifest

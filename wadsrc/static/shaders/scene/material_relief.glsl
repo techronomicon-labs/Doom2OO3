@@ -1,8 +1,8 @@
 // SDVK-008: bounded, opt-in sprite-only shallow parallax occlusion mapping.
 // Uses the *accepted* SDVK-007 final-quad world tangent and UV handedness.
 // Do not treat this as geometry, sprite shadows, or changes to fragment depth.
-#ifndef SDVK_SPRITE_RELIEF_GLSL
-#define SDVK_SPRITE_RELIEF_GLSL
+#ifndef SDVK_MATERIAL_RELIEF_GLSL
+#define SDVK_MATERIAL_RELIEF_GLSL
 
 bool SDVKFinite(float v) { return !isnan(v) && !isinf(v); }
 bool SDVKFinite(vec2 v) { return all(not(isnan(v))) && all(not(isinf(v))); }
@@ -28,6 +28,12 @@ vec2 SDVKResolveSpriteReliefUV(vec2 original, vec2 uvDx, vec2 uvDy, out bool app
 		TM_INVERTOPAQUE || TM_ALPHATEXTURE || TM_FOGLAYER || TM_CLAMPY ||
 		uNpotEmulation.y != 0.0)
 		return original;
+
+#ifdef PBR
+	scale = min(scale * uPBRReliefDepth, 0.0200);
+	if (scale <= 0.0)
+		return original;
+#endif
 
 	// vTexCoord already includes TextureMatrix. Permit only axis-aligned,
 	// positively scaled transforms; a rotated/skewed/negative-U matrix would
@@ -141,4 +147,184 @@ vec2 SDVKResolveSpriteReliefUV(vec2 original, vec2 uvDx, vec2 uvDy, out bool app
 	return original;
 #endif
 }
+
+vec3 SDVKReliefGeometricNormal()
+{
+	return uWorldReliefParams.w > 0.0 ? uSpriteNormal.xyz : normalize(vWorldNormal.xyz);
+}
+
+vec3 SDVKReliefNormal(vec3 normal, vec3 geometricNormal, vec3 slope)
+{
+	if (dot(slope, slope) == 0.0)
+		return normal;
+	vec3 reliefNormal = normalize(geometricNormal - slope);
+	// Rotate the original material normal with the virtual plane.
+	vec3 axis = cross(geometricNormal, reliefNormal);
+	vec3 tangent = cross(axis, normal);
+	return normalize(normal + tangent + cross(axis, tangent) / (1.0 + dot(geometricNormal, reliefNormal)));
+}
+
+#if !defined(NO_LAYERS) && !defined(USE_LEVELMESH) && !defined(UBERSHADER) && \
+	(defined(SHADERTYPE_PBR) || (defined(SHADERTYPE_DEFAULT) && !defined(SHADE_VERTEX)))
+#define SDVK_STRUCTURAL_RELIEF
+vec4 SDVKSampleStructuralRelief(vec2 uv, vec2 uvDx, vec2 uvDy, float alpha)
+{
+	float exaggeration = uWorldReliefParams.z;
+#ifdef PBR
+	exaggeration *= uPBRReliefDepth;
+#endif
+	if (exaggeration <= 0.0 || uHeightTextureIndex < 0)
+		return vec4(0.0);
+
+	float kind = uWorldReliefParams.w;
+	bool sprite = kind > 0.0;
+	bool hud = kind == 3.0 || kind == 4.0;
+	bool fullbright = kind == 5.0 || kind == 6.0;
+	bool expanded = kind == 2.0 || kind == 3.0 || kind == 6.0;
+	bool orientationEnabled = uWorldReliefParams.y > 0.0;
+	bool usesDirectLight = uLightIndex >= 0;
+#if defined(PBR)
+	bool usesRetainedFill = !sprite && orientationEnabled && STAGE_B_WORLD_LIGHTING &&
+		(uStageBAmbient > 0.0 || uStageBAmbientSpecular > 0.0);
+#else
+	const bool usesRetainedFill = false;
+#endif
+	if (!usesDirectLight && !usesRetainedFill)
+		return vec4(0.0);
+#if !defined(PBR)
+	if (!sprite)
+		return vec4(0.0);
+#endif
+	if (sprite && (uSpriteNormal.w < 0.5 || (hud && uViewmodelSample.w < 0.5) ||
+		PALETTEMODE || TM_STENCIL || TM_OPAQUE || TM_INVERSE || TM_INVERTOPAQUE ||
+		TM_ALPHATEXTURE || TM_FOGLAYER || TM_CLAMPY || uNpotEmulation.y != 0.0 ||
+		!SDVKFinite(uv) || !SDVKFinite(uvDx) || !SDVKFinite(uvDy)))
+		return vec4(0.0);
+
+	// Compute derivatives before any branch on alpha or texture coordinates.
+	vec3 posDx = vec3(0.0), posDy = vec3(0.0);
+	if (orientationEnabled && !hud)
+	{
+		posDx = dFdx(pixelpos.xyz);
+		posDy = dFdy(pixelpos.xyz);
+	}
+
+	vec2 texel = vec2(0.0);
+	float fade = 1.0;
+	const float neutralHeight = 128.0 / 255.0;
+	if (sprite)
+	{
+		ivec2 dimensions = textureSize(uHeightTextureIndex, 0);
+		if (any(lessThanEqual(dimensions, ivec2(0))))
+			return vec4(0.0);
+		texel = 1.0 / vec2(dimensions);
+		if (expanded)
+		{
+			// Expanded albedo has a one-source-texel border on every side.
+			vec2 scale = vec2(1.0) + 2.0 * texel;
+			uv = uv * scale - texel;
+			uvDx *= scale;
+			uvDy *= scale;
+		}
+		vec2 footprint = 0.5 * (abs(uvDx) + abs(uvDy));
+		vec2 edgeDistance = min(uv, vec2(1.0) - uv);
+		vec2 edgeFade = smoothstep(footprint, footprint + texel, edgeDistance);
+		fade = edgeFade.x * edgeFade.y * smoothstep(0.55, 0.95, alpha);
+		if (fade <= 0.0)
+			return vec4(0.0);
+		if (fullbright)
+		{
+			// Preserve authored emissive texels even beside a solid support.
+			ivec2 center = min(ivec2(uv * vec2(dimensions)), dimensions - 1);
+			float authoredHeight = texelFetch(uHeightTextureIndex, center, 0).r;
+			fade *= smoothstep(1e-6, 0.045, abs(authoredHeight - neutralHeight));
+			if (fade <= 0.0)
+				return vec4(0.0);
+		}
+	}
+
+	float displacement = 0.0;
+	float centerHeight = neutralHeight;
+	if ((usesDirectLight && uWorldReliefParams.x > 0.0) || fullbright)
+	{
+		// Code 128 is the exact neutral value in the linear 8-bit map.
+		centerHeight = textureGrad(uHeightTextureIndex, uv, uvDx, uvDy).r;
+		float height = centerHeight - neutralHeight;
+		if (abs(height) > 1e-6)
+			displacement = height * exaggeration * uWorldReliefParams.x;
+		if (hud)
+			displacement = clamp(displacement, -0.35, 0.35);
+		displacement *= fade;
+	}
+	if (!orientationEnabled && (!fullbright || displacement == 0.0))
+		return vec4(vec3(0.0), displacement);
+
+	vec3 normal = SDVKReliefGeometricNormal();
+	vec3 dualX = vec3(0.0), dualY = vec3(0.0);
+	float determinant = 0.0;
+	if (orientationEnabled && !hud)
+	{
+		dualX = cross(posDy, normal);
+		dualY = cross(normal, posDx);
+		determinant = dot(posDx, dualX);
+		if (!SDVKFinite(determinant) || abs(determinant) <= max(1e-12, 1e-5 * length(posDx) * length(posDy)))
+			return fullbright ? vec4(0.0) : vec4(vec3(0.0), displacement);
+	}
+
+	// Sample the same mip footprint on each side of an axis. The stencil
+	// expands along minified axes so distant seams and grazing views stay stable.
+	if (!sprite)
+		texel = 1.0 / vec2(textureSize(uHeightTextureIndex, 0));
+	vec2 stepUV = max(texel, 0.5 * (abs(uvDx) + abs(uvDy)));
+	vec2 u = vec2(stepUV.x, 0.0);
+	vec2 v = vec2(0.0, stepUV.y);
+	vec2 rightUV = uv + u, leftUV = uv - u;
+	vec2 topUV = uv + v, bottomUV = uv - v;
+	if (sprite)
+	{
+		vec2 border = 0.5 * texel;
+		rightUV = clamp(rightUV, border, 1.0 - border);
+		leftUV = clamp(leftUV, border, 1.0 - border);
+		topUV = clamp(topUV, border, 1.0 - border);
+		bottomUV = clamp(bottomUV, border, 1.0 - border);
+	}
+	float rightHeight = textureGrad(uHeightTextureIndex, rightUV, uvDx, uvDy).r;
+	float leftHeight = textureGrad(uHeightTextureIndex, leftUV, uvDx, uvDy).r;
+	float topHeight = textureGrad(uHeightTextureIndex, topUV, uvDx, uvDy).r;
+	float bottomHeight = textureGrad(uHeightTextureIndex, bottomUV, uvDx, uvDy).r;
+	if (fullbright)
+	{
+		// A constant-height patch has no shape contrast at any depth setting.
+		vec4 variation = abs(vec4(rightHeight, leftHeight, topHeight, bottomHeight) - centerHeight);
+		float localVariation = max(max(variation.x, variation.y), max(variation.z, variation.w));
+		if (localVariation <= 1e-6)
+			return vec4(0.0);
+		displacement *= smoothstep(1e-6, 0.025, localVariation);
+	}
+	if (!orientationEnabled)
+		return vec4(vec3(0.0), displacement);
+	vec2 slopeUV = vec2(rightHeight - leftHeight, topHeight - bottomHeight) / (2.0 * stepUV);
+
+	vec3 slope;
+	if (hud)
+	{
+		// HUD geometry is screen space. Its lighting uses a world-space basis
+		// and a slope measured per source texel, independent of viewport size.
+		vec3 tangent = uSpriteTangent.xyz;
+		vec3 bitangent = cross(normal, tangent) * uSpriteTangent.w;
+		slope = tangent * (slopeUV.x * texel.x) + bitangent * (slopeUV.y * texel.y);
+	}
+	else
+	{
+		// The UV-to-world derivative preserves tiling, scale, and mirrored UVs.
+		slope = (dualX * dot(slopeUV, uvDx) + dualY * dot(slopeUV, uvDy)) / determinant;
+	}
+	slope *= exaggeration * uWorldReliefParams.y * fade;
+	float slopeSquared = dot(slope, slope);
+	if (!SDVKFinite(slopeSquared))
+		return vec4(vec3(0.0), displacement);
+	slope *= 1.5 * inversesqrt(max(2.25, slopeSquared));
+	return vec4(slope, displacement);
+}
+#endif
 #endif

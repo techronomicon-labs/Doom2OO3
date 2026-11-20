@@ -2,6 +2,7 @@
 #include "hw_levelmesh.h"
 #include "halffloat.h"
 #include "hw_dynlightdata.h"
+#include "hw_material.h"
 #include <atomic>
 #include <limits>
 
@@ -106,6 +107,33 @@ void LevelMesh::InvalidateMaterialBindings()
 	markLive(FreeLists.Uniforms, UploadRanges.Uniforms);
 	markLive(FreeLists.Surface, UploadRanges.Surface);
 	MarkMutation(LevelMeshMutationDomain::Surface);
+}
+
+void LevelMesh::InvalidateMaterialUniforms(const FGameTexture* texture)
+{
+	// Freed slots can retain material pointers from earlier draws.
+	int index = 0;
+	bool changed = false;
+	auto invalidateLive = [&](int end)
+	{
+		for (; index < end; ++index)
+		{
+			auto* material = Mesh.Materials[index].mMaterial;
+			if (material && material->Source() == texture)
+			{
+				UploadRanges.Uniforms.Add(index, 1);
+				changed = true;
+			}
+		}
+	};
+	for (const MeshBufferRange& unused : FreeLists.Uniforms.GetFreeRanges())
+	{
+		invalidateLive(unused.Start);
+		index = unused.End;
+	}
+	invalidateLive(FreeLists.Uniforms.GetTotalSize());
+	if (changed)
+		MarkMutation(LevelMeshMutationDomain::Surface);
 }
 
 void LevelMesh::AddEmptyMesh()

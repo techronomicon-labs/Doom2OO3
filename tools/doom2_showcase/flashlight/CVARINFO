@@ -6,8 +6,8 @@ user int sdvk_fl_range = 360;
 user bool sdvk_fl_lightactors = true;
 
 
-user float sdvk_fl_offset_x = 0;
+user float sdvk_fl_offset_x = 16;
 user float sdvk_fl_offset_y = 0;
-user float sdvk_fl_offset_z = 0;
+user float sdvk_fl_offset_z = -12;
 user float sdvk_fl_aim_yaw = 0;
-user float sdvk_fl_aim_pitch = 0;
+user float sdvk_fl_aim_pitch = 4;

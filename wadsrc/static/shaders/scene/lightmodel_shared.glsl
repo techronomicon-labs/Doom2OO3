@@ -21,3 +21,72 @@ float distanceAttenuation(float dist, float radius, float strength, float linear
 	}
 }
 
+bool UsePackedLight(DynLightInfo light)
+{
+	return (light.flags & LIGHTINFO_STAGE_B_EMITTER) == 0 ||
+		(STAGE_B_WORLD_LIGHTING && uStageBIntensity > 0.0);
+}
+
+bool UseStructuralRelief(DynLightInfo light)
+{
+	return (light.flags & (LIGHTINFO_FLASHLIGHT | LIGHTINFO_SUN)) == LIGHTINFO_FLASHLIGHT ||
+		(STAGE_B_WORLD_LIGHTING && (light.flags & LIGHTINFO_STAGE_B_EMITTER) != 0);
+}
+
+float PackedLightFalloff(DynLightInfo light, float lightDistance)
+{
+	if ((light.flags & LIGHTINFO_STAGE_B_EMITTER) == 0)
+		return distanceAttenuation(lightDistance, light.radius, light.strength, light.linearity);
+	if ((light.flags & LIGHTINFO_STAGE_B_DIRECTIONAL) != 0)
+		return uStageBIntensity * (1.0 - smoothstep(0.8 * light.radius, light.radius, lightDistance));
+	float reach = clamp(1.0 - lightDistance / light.radius, 0.0, 1.0);
+	return uStageBIntensity * mix(reach * reach, reach, light.linearity);
+}
+
+#ifdef SDVK_STRUCTURAL_RELIEF
+float SDVKFullbrightReliefScale(vec4 relief)
+{
+	if (uLightIndex < 0 || all(equal(relief, vec4(0.0))))
+		return 1.0;
+
+	vec3 normal = uSpriteNormal.xyz;
+	vec3 displacedNormal = normalize(normal - relief.xyz);
+	vec3 position = SDVK_LIGHTING_POSITION;
+	vec3 displacedPosition = position + normal * relief.w;
+	float contrast = 0.0;
+	ivec4 range = getLightRange();
+	for (int i = range.x; i < range.y; ++i)
+	{
+		DynLightInfo light = getLights()[i];
+		if ((light.flags & (LIGHTINFO_FLASHLIGHT | LIGHTINFO_SPOT | LIGHTINFO_SUN)) !=
+			(LIGHTINFO_FLASHLIGHT | LIGHTINFO_SPOT))
+			continue;
+		vec3 toLight = light.pos.xyz - position;
+		float baseDistance = length(toLight);
+		if (baseDistance <= 1e-4 || baseDistance >= light.radius)
+			continue;
+		vec3 lightDir = toLight / baseDistance;
+		float beam = smoothstep(light.spotOuterAngle, light.spotInnerAngle, dot(lightDir, light.spotDir.xyz));
+		if (beam <= 0.0)
+			continue;
+
+		vec3 toDisplacedLight = light.pos.xyz - displacedPosition;
+		float displacedDistance = length(toDisplacedLight);
+		if (displacedDistance <= 1e-4)
+			continue;
+		if ((light.flags & LIGHTINFO_SHADOWMAPPED) != 0)
+			beam *= shadowAttenuation(light.pos.xyz, light.shadowIndex, light.softShadowRadius, light.flags);
+
+		float flatDiffuse = clamp(dot(normal, lightDir), 0.0, 1.0) *
+			distanceAttenuation(baseDistance, light.radius, light.strength, light.linearity);
+		float displacedDiffuse = clamp(dot(displacedNormal, toDisplacedLight / displacedDistance), 0.0, 1.0) *
+			distanceAttenuation(displacedDistance, light.radius, light.strength, light.linearity);
+		float strength = dot(light.color.rgb, vec3(0.2126, 0.7152, 0.0722));
+		contrast += beam * strength * (displacedDiffuse - flatDiffuse);
+	}
+
+	// Fullbright sprites retain their authored light level plus bounded relief contrast.
+	return 1.0 + clamp(1.65 * contrast, -0.45, 0.32);
+}
+#endif
+
