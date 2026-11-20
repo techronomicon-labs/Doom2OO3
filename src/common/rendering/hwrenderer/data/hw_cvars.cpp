@@ -59,6 +59,11 @@ CVAR(Bool, gl_emitter_lighting, false, 0)
 
 EXTERN_CVAR(Int, gl_shadow_puppets)
 CVAR(Bool, gl_flashlight_map_shadows, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CUSTOM_CVAR(Float, gl_flashlight_map_shadow_radius, 12.f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (!std::isfinite(float(self)) || self < 0.f) self = 0.f;
+	else if (self > 24.f) self = 24.f;
+}
 CVAR(Bool, gl_projectile_map_shadows, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 
 CUSTOM_CVAR(Float, gl_shadow_puppet_softness, 1.f, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)

@@ -2,6 +2,8 @@
 
 Press **L** to turn on the flashlight. **O → Map geometry shadows** switches flashlight occlusion by walls, floors and ceilings on or off. Aim past a raised step or under a moving door to see its shadow travel across the floor or wall beyond it. A fresh profile enables map shadows. To compare them while moving, bind **Toggle flashlight map shadows** under **Customize Controls → Local Flashlight**.
 
+**O → Map shadow source radius** sets the radius of the flashlight’s emitting area from 0 to 24 map units. At the default of 12, a pillar can hide part of the source. Its shadow stays tight at contact and develops a wider, partially lit edge on surfaces farther behind it. Move closer with the lamp centred to see this on either side of the pillar. Radius 0 gives a hard point-source shadow.
+
 **J** cycles **Off → Stencil → Depth** for sprite shadows. **O** also lets you set **Sprite depth edge softness**. A fresh campaign profile starts in Depth. Each game's profile remembers both shadow settings and the softness.
 
 Both campaign launchers enable `gl_precache`. At map entry Vulkan prepares the map's material pipelines, common sprite and projectile draws, and both supported flashlight shadow paths before drawing the first scene. The first load with a cold shader cache can take longer. Later levels reuse pipelines already built for the same render settings. Set `gl_precache false` in the console before changing levels to use on-demand loading.
@@ -52,7 +54,7 @@ The `penumbra` case aims the flashlight down to light the feet and the stairs in
 
 To measure shadow growth, run `py tools/doom2_showcase/capture_shadow_magnification.py --pack build/flashlight-map-shadows-playtest/DoomII --out build/shadow-growth`. It keeps the camera, sprite and wall fixed while it moves the flashlight mount. It also checks a caster crossing the camera and one within a unit of the lamp.
 
-To check the campaign mount in Entryway, run `py tools/doom2_showcase/capture_entryway_flashlight.py --pack build/flashlight-map-shadows-playtest/DoomII --out build/entryway-pillar`. It compares the centred and default mounts from two views beside the bronze pillar and checks the light on the floor against a flashlight-off capture.
+To check map shadow edges in Entryway, run `py tools/doom2_showcase/capture_entryway_flashlight.py --pack build/flashlight-map-shadows-playtest/DoomII --out build/entryway-pillar`. It compares floor and wall receivers on both sides of the bronze pillar at two distances, using lamp-off, unshadowed and point-source captures as controls.
 
 To check shader preloading, run `py tools/doom2_showcase/check_map_shader_preload.py --pack build/flashlight-map-shadows-playtest/DoomII --output build/map-shader-check`. The test starts with empty caches and records any shader or pipeline builds during a short MAP01 encounter. Use the DBP50 kit path to test The Passage.
 

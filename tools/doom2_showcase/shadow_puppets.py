@@ -155,6 +155,7 @@ MENUDEF = '''OptionMenu DoomIIShadowPuppetsMenu
 {
     Title "Shadow Puppets"
     Option "Map geometry shadows", "gl_flashlight_map_shadows", "OnOff"
+    Slider "Map shadow source radius (units)", "gl_flashlight_map_shadow_radius", 0, 24, 1, 0
     Option "Sprite shadows (J)", "gl_shadow_puppets", "SDVKFlashlightShadowModes"
     Slider "Sprite depth edge softness", "gl_shadow_puppet_softness", 0.0, 2.0, 0.25, 2
     Command "Preview soft Depth", "gl_shadow_puppet_softness 1; gl_shadow_puppets 2", 0, 1

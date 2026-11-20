@@ -32,6 +32,7 @@ layout(set = 1, binding = 0, std140) uniform readonly ViewpointUBO
 	float uShadowPuppetSoftness;
 	mat4 ShadowPuppetProjection;
 	vec2 uShadowPuppetDepthRange;
+	float uFlashlightMapShadowRadius;
 };
 
 layout(set = 1, binding = 1, std140) uniform readonly MatricesUBO

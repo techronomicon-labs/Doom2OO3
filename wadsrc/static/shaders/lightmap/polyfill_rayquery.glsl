@@ -20,6 +20,14 @@ bool FlashlightMaskHit(int primitiveIndex, uint surfaceIndex, vec2 bc)
 	return textureLod(textures[nonuniformEXT(image)], uv, 0.0).a > surfaces[surfaceIndex].MaskThreshold;
 }
 
+// One centre and twelve equal-weight disk strata. Both reflection axes are
+// exact, and the offsets along either axis cover seven different depths of edge.
+const vec2 mapDisk[13] = vec2[13](
+	vec2(0), vec2(0.2,0.2), vec2(-0.2,-0.2), vec2(0.2,-0.2), vec2(-0.2,0.2),
+	vec2(0.84,0.44), vec2(-0.84,-0.44), vec2(0.84,-0.44), vec2(-0.84,0.44),
+	vec2(0.44,0.84), vec2(-0.44,-0.84), vec2(0.44,-0.84), vec2(-0.44,0.84));
+const int mapDiskMask = (1 << 13) - 1;
+
 #if defined(USE_RAYQUERY) || defined(SUPPORTS_RAYQUERY)
 
 TraceResult TraceFirstHit(vec3 origin, float tmin, vec3 dir, float tmax)
@@ -121,6 +129,19 @@ bool TraceMapHit(vec3 origin, vec3 dir, float distance, int group, bool includeM
 		}
 	}
 	return rayQueryGetIntersectionTypeEXT(query, true) != gl_RayQueryCommittedIntersectionNoneEXT;
+}
+
+int TraceMapDisk(vec3 receiver, vec3 lamp, vec3 right, vec3 up, int group, int activeMask)
+{
+	int blocked = 0;
+	for (int i = 0; i < 13; ++i)
+	{
+		if ((activeMask & (1 << i)) == 0) continue;
+		vec3 ray = lamp + mapDisk[i].x * right + mapDisk[i].y * up - receiver;
+		// A unit segment parameter lets every sample terminate at its own endpoint.
+		if (TraceMapHit(receiver, ray, 1.0, group, true)) blocked |= 1 << i;
+	}
+	return blocked;
 }
 
 #else
@@ -269,10 +290,10 @@ bool TraceAnyHit(vec3 origin, float tmin, vec3 dir, float tmax)
 	return false;
 }
 
-float MapNodeEntry(int node, vec3 origin, vec3 invRay, vec3 absInvRay, bvec3 parallel)
+float MapNodeEntry(int node, vec3 origin, vec3 invRay, vec3 absInvRay, bvec3 parallel, vec3 expand)
 {
 	vec3 offset = nodes[node].center - origin;
-	vec3 extents = nodes[node].extents;
+	vec3 extents = nodes[node].extents + expand;
 	vec3 center = offset * invRay, reach = extents * absInvRay;
 	vec3 lo = center - reach, hi = center + reach;
 	if (any(parallel))
@@ -303,40 +324,89 @@ bool MapTriangleHit(int element, vec3 origin, vec3 ray, out vec3 scaledWeights)
 		distance > FLT_EPSILON * scale && distance < scale;
 }
 
-bool TraceMapHit(vec3 origin, vec3 dir, float distance, int group, bool includeMasked)
+// Barycentric edge and depth tests are affine in the ray endpoint for a fixed
+// receiver. Evaluate their gradients once per triangle for the whole aperture.
+vec4 MapDiskEdges(vec3 direction, vec3 uNormal, vec3 vNormal, vec3 triNormal)
 {
-	if (distance <= 0.0 || nodesRoot < 0) return false;
+	float u = dot(direction, uNormal), v = dot(direction, vNormal), det = dot(direction, triNormal);
+	return vec4(u, v, det - u - v, det);
+}
+
+int MapDiskTriangle(int element, vec3 receiver, vec3 toLamp, vec3 right, vec3 up, int group, int blocked)
+{
+	vec3 a = vertices[elements[element]].pos;
+	vec3 ab = vertices[elements[element + 1]].pos - a;
+	vec3 ac = vertices[elements[element + 2]].pos - a;
+	vec3 t = receiver - a;
+	vec3 vNormal = cross(t, ab);
+	float depth = dot(ac, vNormal);
+	if (depth == 0.0) return blocked;
+	float side = sign(depth);
+	vec3 uNormal = cross(ac, t) * side;
+	vec3 normal = cross(ac, ab) * side;
+	vNormal *= side;
+	vec4 center = MapDiskEdges(toLamp, uNormal, vNormal, normal);
+	center.w -= abs(depth); // segment must reach the triangle before the lamp
+	vec4 dx = MapDiskEdges(right, uNormal, vNormal, normal);
+	vec4 dy = MapDiskEdges(up, uNormal, vNormal, normal);
+	vec4 reach = abs(dx) + abs(dy);
+	if (any(lessThan(center + reach, vec4(0.0)))) return blocked;
+
+	int primitive = element / 3;
+	uint surface = surfaceIndices[primitive];
+	int caster = surfaces[surface].MapShadowGroup;
+	if (caster != group && caster != -group) return blocked;
+	if (caster == group && all(greaterThan(center - reach, vec4(0.0)))) return mapDiskMask;
+	for (int i = 0; i < 13; ++i)
+	{
+		int bit = 1 << i;
+		vec4 e = center + dx * mapDisk[i].x + dy * mapDisk[i].y;
+		if ((blocked & bit) == 0 && e.w > 0.0 && all(greaterThanEqual(e.xyz, vec3(0.0))) &&
+			(caster == group || FlashlightMaskHit(primitive, surface, e.xy / (e.x + e.y + e.z))))
+			blocked |= bit;
+	}
+	return blocked;
+}
+
+int TraceMapRays(vec3 origin, vec3 ray, int group, bool includeMasked, bool disk, vec3 diskRight, vec3 diskUp, int activeMask)
+{
+	if (nodesRoot < 0) return 0;
 	// All rays for a light start at the same end of the segment. Neighbouring
 	// fragments encounter the same near nodes and register stack entries.
-	vec3 ray = -dir * distance;
-	origin -= ray;
+	vec3 expand = abs(diskRight) + abs(diskUp);
 	bvec3 parallel = equal(ray, vec3(0.0));
 	vec3 invRay = 1.0 / mix(ray, vec3(1.0), parallel);
 	vec3 absInvRay = abs(invRay);
 	int node = nodesRoot;
 	ivec4 front = ivec4(0);
 	int spill[64], depth = 0;
+	int blocked = mapDiskMask ^ activeMask;
 	while (true)
 	{
 		int element = nodes[node].element_index;
 		if (element >= 0)
 		{
 			vec3 weights;
-			if (MapTriangleHit(element, origin, ray, weights))
+			if (disk)
+			{
+				blocked = MapDiskTriangle(element, origin + ray, -ray, diskRight, diskUp, group, blocked);
+				if (blocked == mapDiskMask) return activeMask;
+			}
+			else if (MapTriangleHit(element, origin, ray, weights))
 			{
 				int primitive = element / 3;
 				uint surface = surfaceIndices[primitive];
 				int caster = surfaces[surface].MapShadowGroup;
 				if (caster == group || (includeMasked && caster == -group &&
 					FlashlightMaskHit(primitive, surface, weights.xy / weights.z)))
-					return true;
+					return 1;
 			}
 		}
 		else
 		{
 			int left = nodes[node].left, right = nodes[node].right;
-			float a = MapNodeEntry(left, origin, invRay, absInvRay, parallel);
-			float b = MapNodeEntry(right, origin, invRay, absInvRay, parallel);
+			float a = MapNodeEntry(left, origin, invRay, absInvRay, parallel, expand);
+			float b = MapNodeEntry(right, origin, invRay, absInvRay, parallel, expand);
 			if (min(a, b) <= 1.0)
 			{
 				node = a <= b ? left : right;
@@ -354,7 +424,18 @@ bool TraceMapHit(vec3 origin, vec3 dir, float distance, int group, bool includeM
 		front.xyz = front.yzw;
 		if (--depth >= 4) front.w = spill[depth - 4];
 	}
-	return false;
+	return blocked & activeMask;
+}
+
+bool TraceMapHit(vec3 origin, vec3 dir, float distance, int group, bool includeMasked)
+{
+	vec3 ray = dir * distance;
+	return distance > 0.0 && TraceMapRays(origin + ray, -ray, group, includeMasked, false, vec3(0), vec3(0), 1) != 0;
+}
+
+int TraceMapDisk(vec3 receiver, vec3 lamp, vec3 right, vec3 up, int group, int activeMask)
+{
+	return TraceMapRays(lamp, receiver - lamp, group, true, true, right, up, activeMask);
 }
 
 struct TraceHit

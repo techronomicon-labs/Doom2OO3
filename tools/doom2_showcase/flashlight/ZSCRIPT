@@ -25,7 +25,7 @@ class SDVKLocalFlashlightHandler : EventHandler
 {
     const MAX_BEAMS = 5;
     const DEFAULT_OFFSET_X = 16;
-    const DEFAULT_OFFSET_Y = 16;
+    const DEFAULT_OFFSET_Y = 0;
     const DEFAULT_OFFSET_Z = -12;
     const DEFAULT_AIM_PITCH = 4;
     bool Enabled[MAXPLAYERS];

@@ -34,6 +34,13 @@ bool UseStructuralRelief(DynLightInfo light)
 }
 
 #if !defined(SIMPLE)
+bool MapSegmentBlocked(vec3 start, vec3 end, float bias, int group, bool includeMasked)
+{
+	vec3 ray = end - start;
+	float dist = length(ray);
+	return dist > 2.0 * bias && TraceMapHit(start, ray / dist, dist - bias, group, includeMasked);
+}
+
 float MapLightVisibility(DynLightInfo light, vec3 position, bool flashlight)
 {
 	// Trace from the geometric receiver, before relief/normal mapping.
@@ -44,19 +51,45 @@ float MapLightVisibility(DynLightInfo light, vec3 position, bool flashlight)
 	if (flashlight && dot(normal, light.pos.xyz - position) < 0.0)
 		normal = -normal; // Either face of a masked wall can receive the beam.
 	vec3 origin = position + normal * bias;
-	vec3 toLight = light.pos.xyz - origin;
-	float dist = length(toLight);
+	vec3 lamp = light.pos.xyz;
+	if (!flashlight || uFlashlightMapShadowRadius <= 0.0)
+		return MapSegmentBlocked(origin, lamp, bias, light.shadowIndex, flashlight) ? 0.0 : 1.0;
+
+	// The disk follows the head mount. Aim trims steer the beam lobes within
+	// that frame. All primary rays meet at the receiver, giving a hard contact.
+	mat3 cameraAxes = transpose(mat3(ViewMatrix));
+	vec3 right = normalize(cameraAxes[0]);
+	vec3 up = normalize(cameraAxes[1] - right * dot(cameraAxes[1], right));
+	right *= uFlashlightMapShadowRadius;
+	up *= uFlashlightMapShadowRadius;
+	vec3 ray = lamp - origin;
+	float dist = length(ray);
 	if (dist <= 2.0 * bias) return 1.0;
-	vec3 dir = toLight / dist;
-	return TraceMapHit(origin, dir, dist - bias, light.shadowIndex, flashlight) ? 0.0 : 1.0;
+	// Shorten every ray by the same fraction, preserving the disk and avoiding
+	// coincident light-endpoint hits. The receiver was already biased above.
+	float fraction = 1.0 - bias / dist;
+	vec3 diskCenter = origin + ray * fraction;
+	int activeMask = mapDiskMask, blocked = 0;
+	do
+	{
+		blocked ^= TraceMapDisk(origin, diskCenter, right * fraction, up * fraction, light.shadowIndex, activeMask);
+		if (activeMask != mapDiskMask) break;
+
+		// A mixed edge can include samples on the other side of a wall or
+		// grate from the mount. A second packet folds those samples back to
+		// the centre. It only needs the taps that disagree with the centre.
+		activeMask = (blocked & 1) == 0 ? blocked : (mapDiskMask ^ blocked);
+		origin = diskCenter = lamp;
+		fraction = 1.0;
+	} while (activeMask != 0);
+	return 1.0 - float(bitCount(blocked)) / 13.0;
 }
 #endif
 
 #if !defined(SHADOW_PUPPET_VERTEX_STAGE) && !defined(SIMPLE)
 #include <shaders/scene/shadowpuppet_depth.glsl>
 
-// The beam lobes normally share an optical origin. Trace once per fragment
-// at that origin and keep the sprite silhouette test independent.
+// All lobes at one mount share the aperture visibility for this receiver.
 float cachedMapVisibility = -1.0;
 vec3 cachedMapOrigin;
 int cachedMapGroup;

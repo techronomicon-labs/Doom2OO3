@@ -19,7 +19,8 @@ from gallery import Map, wad
 SIZE = (640, 480)
 MAP = "MAPSHADE"
 CASES = ("closed", "lifting", "opened", "lowering", "offscreen", "far-room",
-         "near-mount", "near-mount-decor", "near-mount-decor-pair", "near-mount-bars", "bars", "blocked-mount")
+         "near-mount", "near-mount-decor", "near-mount-decor-pair", "near-mount-bars", "bars", "blocked-mount",
+         "aperture-wall")
 FAR_X, FAR_Y = 8192, -8192
 
 
@@ -42,6 +43,10 @@ def fixture(path, case, torch, animate=False):
         # The player's collision box ends at x=16. The requested diagonal mount
         # reaches x=22.63 across this freestanding pillar.
         add_first_caster(room, 18, -86, 20, -77, sector)
+    if case == "aperture-wall":
+        # The eye can see past the north end. The mounted lamp touches the west
+        # face, and the right tip of its aperture would sit beyond the east face.
+        add_first_caster(room, 18, -126, 20, -46, sector)
     near_mount = case.startswith("near-mount")
     if near_mount:
         # The lamp is at (16, -82). This opaque sill fits entirely inside
@@ -66,11 +71,12 @@ def fixture(path, case, torch, animate=False):
         corners = [(-128, -128), (-128, 164), (128, 164), (128, -128)]
         for a, b in zip(corners, corners[1:] + corners[:1]):
             room.line(a, b, sector, texture="BRICK7")
-    if not near_mount and case not in ("far-room", "offscreen", "bars", "blocked-mount"):
+    if not near_mount and case not in ("far-room", "offscreen", "bars", "blocked-mount", "aperture-wall"):
         door = room.sector(0, "FLOOR5_4", 100)
         room.rows["sector"][door].update(heightceiling=0, textureceiling="CEIL3_5", id=1)
         room.rect(-24, -28, 24, -20, sector, door, "BIGDOOR2")
-    room.thing(1, 0, -82, angle=45 if case == "blocked-mount" else 90)
+    angled_mount = case in ("blocked-mount", "aperture-wall")
+    room.thing(1, 0, -82, angle=45 if angled_mount else 90)
     room.thing(30121, -40, 76, z=32, arg0=40, arg1=75, arg2=180, arg3=60)
     # Let the real mover reach the open stop before activating the downward motion.
     moving = case in ("lifting", "opened", "lowering")
@@ -82,7 +88,7 @@ def fixture(path, case, torch, animate=False):
             row["y"] += dy
     pose = "level.time >= 24 && z <= 32" if case == "lowering" else f"level.time >= 4 && z >= {height}"
     mount_probe = ""
-    if case == "blocked-mount" and torch:
+    if angled_mount and torch:
         mount_probe = '''if (level.time == 10)
         {
             let it = ThinkerIterator.Create("SDVKLocalFlashlightBeam", Thinker.STAT_DLIGHT);
@@ -163,13 +169,15 @@ def capture(exe, iwad, root, case, enabled, torch, mode, animate=False, sprite_l
             "+gl_levelmesh", "false", "+gl_raytrace", "false", "+lm_dynlights", "false",
             "+gl_ubershaders", "false", "+gl_lightprobe", "false", "+gl_world_relief", "true",
             "+gl_lights", "true", "+gl_light_shadows", "0", "+gl_light_sprites", "true", "+gl_spritelight", str(sprite_lighting),
-            "+gl_ssao", "0", "+gl_multisample", "4",
+            "+gl_ssao", "0", "+gl_multisample", "4", "+gl_precache", "false",
             "+gl_emitter_lighting", "false", "+gl_bloom", "false", "+gl_shadow_puppets", str(mode),
-            "+gl_flashlight_map_shadows", str(enabled).lower(), "+r_drawplayersprites", "false",
+            "+gl_flashlight_map_shadows", str(enabled).lower(),
+            "+gl_flashlight_map_shadow_radius", "12" if case == "aperture-wall" else "0",
+            "+r_drawplayersprites", "false",
             "+screenblocks", "12", "+fov", "90", "+crosshair", "0", "+cl_capfps", "true",
             "+con_notifylines", "0", "+show_messages", "false", "+vid_vsync", "false", "+use_mouse", "false",
             "+i_pauseinbackground", "false", "+vid_activeinbackground", "true",
-            "+sdvk_fl_offset_x", "16" if case == "blocked-mount" else "0", "+sdvk_fl_offset_y", "16",
+            "+sdvk_fl_offset_x", "16" if case in ("blocked-mount", "aperture-wall") else "0", "+sdvk_fl_offset_y", "16",
             "+sdvk_fl_offset_z", "16", "+sdvk_fl_aim_pitch", "0", "+sdvk_fl_horizontal", "84",
             "+sdvk_fl_vertical", "84", "+sdvk_fl_range", "640", "+map", MAP]
     if animate:
@@ -182,7 +190,7 @@ def capture(exe, iwad, root, case, enabled, torch, mode, animate=False, sprite_l
     require("Unknown command" not in messages, f"Unsupported setting in {log}")
     match = re.search(r"MAP_SHADOW_CAPTURE ceiling ([\d.]+)", messages)
     require(animate or match is not None, f"Test pose did not freeze in {log}")
-    if case == "blocked-mount" and torch:
+    if case in ("blocked-mount", "aperture-wall") and torch:
         mount = re.search(r"MOUNT_X ([-\d.]+)", messages)
         require(mount is not None and 17 <= float(mount[1]) < 18, f"Mount crossed the pillar in {log}")
     report = json.loads(prefix.with_suffix(".renderer.json").read_text())
@@ -239,6 +247,18 @@ def measure(case, camera, door_z, unshadowed, shadowed, fill):
     shadow_witnesses = {}
     lit_witnesses = {}
 
+    if case == "aperture-wall":
+        # At yaw 45 the horizontal disk projects at most 12/sqrt(2) onto X
+        # and Y. Even the northwestern extreme's ray must pass through the wall.
+        extent = 12 / np.sqrt(2)
+        west, north = 17.5 - extent, -82 + extent
+        y_at_face = north + (18 - west) * (y - north) / np.maximum(x - west, 1e-4)
+        eye_clear = eye[1] + 18 * (y - eye[1]) / np.maximum(x, 1e-4) > -45
+        region = usable & (x > 50) & eye_clear & (y_at_face < -47)
+        count = int(np.sum(region))
+        correct = int(np.sum(region & restored_fill))
+        require(count > 1000 and correct >= .99 * count, f"Aperture leaked across a solid wall: {correct}/{count}")
+        return {"aperture against wall": [correct, count]}
     if case == "blocked-mount":
         # The camera sees beyond the pillar's north edge. A ray from the
         # clipped mount to any of these pixels immediately hits its west face.
