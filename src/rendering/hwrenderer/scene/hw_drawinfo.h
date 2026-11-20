@@ -188,6 +188,11 @@ struct HWDrawInfo
 	FLevelLocals *Level;
 	HWDrawInfo * outer = nullptr;
 	bool ShadowPuppetsEligible = false;
+	bool FlashlightMapShadows = false;
+	bool UsesFlashlightMapShadows() const { return FlashlightMapShadows; }
+	unsigned FlashlightMapShadowLinks = 0;
+	bool DrawingProjectileMapShadows = false;
+	unsigned ProjectileMapShadowLinks = 0;
 	int FullbrightFlags;
 	std::atomic<int> spriteindex;
 	HWPortal *mClipPortal;
@@ -415,8 +420,8 @@ public:
 	void AddOtherFloorPlane(int sector, gl_subsectorrendernode * node, FRenderState& state);
 	void AddOtherCeilingPlane(int sector, gl_subsectorrendernode * node, FRenderState& state);
 
-	void GetDynSpriteLight(AActor *self, sun_trace_cache_t * traceCache, double x, double y, double z, FLightNode *node, int portalgroup, float *out, bool fullbright);
-	void GetDynSpriteLight(AActor *thing, particle_t *particle, sun_trace_cache_t * traceCache, float *out);
+	void GetDynSpriteLight(AActor *self, sun_trace_cache_t * traceCache, double x, double y, double z, FLightNode *node, int portalgroup, float *out, bool fullbright, FDynLightData* flashlight = nullptr);
+	void GetDynSpriteLight(AActor *thing, particle_t *particle, sun_trace_cache_t * traceCache, float *out, FDynLightData* flashlight = nullptr);
 
 	void GetDynSpriteLightList(AActor *self, double x, double y, double z, sun_trace_cache_t * traceCache, FDynLightData &modellightdata, bool isModel, bool flashlightOnly = false, bool emitterReceiver = false);
 	void GetDynSpriteLightList(AActor *thing, particle_t *particle, sun_trace_cache_t * traceCache, FDynLightData &modellightdata, bool isModel, bool emitterReceiver = false);

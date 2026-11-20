@@ -4,6 +4,7 @@
 #include "matrix.h"
 #include "vulkan/descriptorsets/vk_descriptorset.h"
 #include "vulkan/shaders/vk_shadercache.h"
+#include "vulkan/pipelines/vk_renderpass.h"
 #include "vulkan/vk_renderdevice.h"
 #include "vulkan/vk_renderstate.h"
 
@@ -23,36 +24,29 @@ void main()
 )";
 }
 
-bool VkShadowPuppetDepth::CreateResources()
+VkShadowPuppetDepth::~VkShadowPuppetDepth()
 {
-	TriedResources = true;
+	if (TextureIndex)
+		Fb->GetDescriptorSetManager()->FreeBindlessSlot(TextureIndex);
+}
+
+bool VkShadowPuppetDepth::PreparePipeline()
+{
+	if (TriedPipeline) return Pipeline != nullptr;
+	TriedPipeline = true;
 	auto device = Fb->GetDevice();
-	VkFormat format = VK_FORMAT_D32_SFLOAT;
+	DepthFormat = VK_FORMAT_D32_SFLOAT;
 	ImageBuilder image;
 	image.Size(MapSize, MapSize)
 		.Usage(VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)
 		.DebugName("PuppetDepth.Image");
-	if (!image.Format(format).IsFormatSupported(device))
+	if (!image.Format(DepthFormat).IsFormatSupported(device))
 	{
-		format = VK_FORMAT_D16_UNORM;
-		if (!image.Format(format).IsFormatSupported(device)) return false;
+		DepthFormat = VK_FORMAT_D16_UNORM;
+		if (!image.Format(DepthFormat).IsFormatSupported(device)) return false;
 	}
-	Depth.AspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-	Depth.Image = image.Create(device);
-	Depth.View = ImageViewBuilder()
-		.Image(Depth.Image.get(), format, VK_IMAGE_ASPECT_DEPTH_BIT)
-		.DebugName("PuppetDepth.View")
-		.Create(device);
-	Sampler = SamplerBuilder()
-		.AddressMode(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
-		.MinFilter(VK_FILTER_NEAREST)
-		.MagFilter(VK_FILTER_NEAREST)
-		.MaxLod(0)
-		.DebugName("PuppetDepth.Nearest")
-		.Create(device);
-
 	Pass = RenderPassBuilder()
-		.AddDepthStencilAttachment(format, VK_SAMPLE_COUNT_1_BIT,
+		.AddDepthStencilAttachment(DepthFormat, VK_SAMPLE_COUNT_1_BIT,
 			VK_ATTACHMENT_LOAD_OP_CLEAR, VK_ATTACHMENT_STORE_OP_STORE,
 			VK_ATTACHMENT_LOAD_OP_DONT_CARE, VK_ATTACHMENT_STORE_OP_DONT_CARE,
 			VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
@@ -60,17 +54,12 @@ bool VkShadowPuppetDepth::CreateResources()
 		.AddSubpassDepthStencilAttachmentRef(0, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
 		.DebugName("PuppetDepth.Pass")
 		.Create(device);
-	Framebuffer = FramebufferBuilder()
-		.Size(MapSize, MapSize)
-		.RenderPass(Pass.get())
-		.AddAttachment(Depth.View.get())
-		.DebugName("PuppetDepth.Framebuffer")
-		.Create(device);
 	Layout = PipelineLayoutBuilder()
 		.AddPushConstantRange(VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float) * 16)
 		.DebugName("PuppetDepth.Layout")
 		.Create(device);
 	Pipeline = GraphicsPipelineBuilder()
+		.Cache(Fb->GetRenderPassManager()->GetCache())
 		.AddVertexShader(CachedGLSLCompiler().Type(ShaderType::Vertex)
 			.AddSource("puppet_depth.vert", DepthVertexShader).Compile(Fb))
 		.AddVertexBufferBinding(0, sizeof(FVector3))
@@ -85,10 +74,37 @@ bool VkShadowPuppetDepth::CreateResources()
 		.RenderPass(Pass.get())
 		.DebugName("PuppetDepth.Pipeline")
 		.Create(device);
+	return true;
+}
+
+void VkShadowPuppetDepth::CreateTarget()
+{
+	auto device = Fb->GetDevice();
+	Depth.AspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+	Depth.Image = ImageBuilder().Size(MapSize, MapSize).Format(DepthFormat)
+		.Usage(VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)
+		.DebugName("PuppetDepth.Image").Create(device);
+	Depth.View = ImageViewBuilder()
+		.Image(Depth.Image.get(), DepthFormat, VK_IMAGE_ASPECT_DEPTH_BIT)
+		.DebugName("PuppetDepth.View")
+		.Create(device);
+	Sampler = SamplerBuilder()
+		.AddressMode(VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE)
+		.MinFilter(VK_FILTER_NEAREST)
+		.MagFilter(VK_FILTER_NEAREST)
+		.MaxLod(0)
+		.DebugName("PuppetDepth.Nearest")
+		.Create(device);
+
+	Framebuffer = FramebufferBuilder()
+		.Size(MapSize, MapSize)
+		.RenderPass(Pass.get())
+		.AddAttachment(Depth.View.get())
+		.DebugName("PuppetDepth.Framebuffer")
+		.Create(device);
 	auto descriptors = Fb->GetDescriptorSetManager();
 	TextureIndex = descriptors->AllocBindlessSlot(1);
 	descriptors->SetBindlessTexture(TextureIndex, Depth.View.get(), Sampler.get());
-	return true;
 }
 
 int VkShadowPuppetDepth::Render(const TArray<FVector3>& triangles, const VSMatrix& lightProjection)
@@ -96,8 +112,8 @@ int VkShadowPuppetDepth::Render(const TArray<FVector3>& triangles, const VSMatri
 	const auto count = triangles.Size();
 	if (count == 0 || count % 3 != 0)
 		return 0;
-	if (!TriedResources && !CreateResources()) return 0;
-	if (!TextureIndex) return 0;
+	if (!PreparePipeline()) return 0;
+	if (!Depth.Image) CreateTarget();
 
 	Fb->GetRenderState()->EndRenderPass();
 	auto commands = Fb->GetCommands();

@@ -204,7 +204,7 @@ public:
 		mBrightmapEnabled = mGradientEnabled = mFogEnabled = mGlowEnabled = false;
 		mFogColor = 0xffffffff;
 		mSurfaceUniforms.uFogColor = toFVector4(mFogColor);
-		mTextureMode = -1;
+		mTextureMode = TM_NORMAL;
 		mTextureClamp = 0;
 		mTextureModeFlags = 0;
 		mSurfaceUniforms.uDesaturationFactor = 0.0f;

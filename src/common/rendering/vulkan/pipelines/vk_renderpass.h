@@ -110,6 +110,7 @@ public:
 	VkRenderPassSetup(VulkanRenderDevice* fb, const VkRenderPassKey &key);
 
 	VulkanRenderPass *GetRenderPass(int clearTargets);
+	void PrecachePipeline(VkPipelineKey key);
 	VulkanPipeline *GetPipeline(const VkPipelineKey &key, UniformStructHolder &Uniforms);
 
 private:
@@ -195,6 +196,7 @@ public:
 	VulkanPipeline* GetZMinMaxPipeline1() { return ZMinMax.Pipeline[2].get(); }
 
 	void ProcessMainThreadTasks();
+	void FinishPipelinePrecache();
 	void RunOnWorkerThread(std::function<void()> task, bool precache);
 	void RunOnMainThread(std::function<void()> task);
 
@@ -235,6 +237,8 @@ private:
 		std::vector<std::unique_ptr<std::thread>> Threads;
 		std::mutex Mutex;
 		std::condition_variable CondVar;
+		std::condition_variable Idle;
+		unsigned ActivePriority = 0;
 		bool StopFlag = false;
 		std::list<std::function<void()>> PrecacheTasks;
 		std::list<std::function<void()>> PriorityTasks;

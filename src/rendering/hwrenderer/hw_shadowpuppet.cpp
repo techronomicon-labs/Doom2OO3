@@ -12,6 +12,7 @@
 #include "hwrenderer/scene/hw_visualtime.h"
 #include "p_local.h"
 #include "r_state.h"
+#include "r_data/r_sections.h"
 #include "r_visualtime.h"
 #include "texturemanager.h"
 
@@ -24,6 +25,7 @@
 CVAR(Int, gl_shadow_puppets, 0, CVAR_ARCHIVE | CVAR_GLOBALCONFIG);
 CVAR(Int, gl_shadow_puppets_active, 0, 0);
 EXTERN_CVAR(Int, gl_spriteclip);
+EXTERN_CVAR(Bool, gl_render_things);
 
 thread_local HWShadowPuppetLightSet HWShadowPuppetFlashlight;
 
@@ -258,16 +260,16 @@ namespace
 		return true;
 	}
 
-	void AddSpriteMask(const LightSprite& card, const FVector3& light, HWShadowPuppetScene& scene, bool stencil)
+	bool AddSpriteMask(const LightSprite& card, const FVector3& light, HWShadowPuppetScene& scene, bool stencil)
 	{
 		const float threshold = std::clamp(float(gl_mask_sprite_threshold), 0.f, 1.f);
 		const int cutoff = std::max(1, int(std::ceil(255.f * threshold)));
 		const auto& mask = CachedMask(*card.Texture->GetTexture(), cutoff);
-		if (mask.Rectangles.empty()) return;
+		if (mask.Rectangles.empty()) return false;
 		const FVector3 dx = card.Across / float(mask.Width), dy = card.Down / float(mask.Height);
 		const FVector3 origin = card.TopLeft;
 		const float facing = (dx ^ dy) | (light - origin);
-		if (std::abs(facing) < 1e-8f) return;
+		if (std::abs(facing) < 1e-8f) return false;
 		const bool reverse = facing < 0;
 		const auto position = [&](int x, int y) { return origin + dx * float(x) + dy * float(y); };
 
@@ -295,6 +297,7 @@ namespace
 			mesh.StencilBatches.Last() = { mesh.Triangles.Size(), mesh.Edges.Size() };
 		}
 		scene.Casters.insert(card.Actor);
+		return true;
 	}
 
 	FVector3 RenderPosition(const DVector3& point)
@@ -329,7 +332,7 @@ VSMatrix ShadowPuppetVulkanProjection(const VSMatrix& projection, const VSMatrix
 bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene, bool stencil)
 {
 	const auto& view = di.Viewpoint;
-	if (!view.camera || !view.sector || !view.camera->player || view.camera != view.camera->player->mo)
+	if (!gl_render_things || !view.camera || !view.sector || !view.camera->player || view.camera != view.camera->player->mo)
 		return false;
 	auto& level = *view.camera->Level;
 	// A sprite from another portal group does not belong in the root geometry pass.
@@ -358,11 +361,12 @@ bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene, bool ste
 	if (!lights.Count) return false;
 	for (auto& sector : level.sectors)
 	{
-		if (sector.PortalIsLinked(sector_t::floor) || sector.PortalIsLinked(sector_t::ceiling) ||
-			sector.e->XFloor.ffloors.Size() != 0)
+		if (sector.PortalIsLinked(sector_t::floor) || sector.PortalIsLinked(sector_t::ceiling))
 			return false;
+		if (sector.e->XFloor.ffloors.Size() != 0) return false;
 	}
-	const auto* beam = lights.Beams[0];
+	const auto* beam = *std::max_element(lights.Beams.begin(), lights.Beams.begin() + lights.Count,
+		[](const FDynamicLight* a, const FDynamicLight* b) { return a->GetRadius() < b->GetRadius(); });
 	double halfAngle = beam->pSpotOuterAngle->Degrees();
 	if (lights.Count > 1)
 	{
@@ -380,9 +384,41 @@ bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene, bool ste
 		return false;
 
 	const FVector3 origin = RenderPosition(HWLightPosition(beam));
+	scene.Origin = origin;
+
 	const auto* presented = HWPresentedFlashlight(beam);
-	// The submitted sprite is authoritative. A cosmetic floor shadow has
-	// index -1. Opaque wall sprites share the models list with actual models.
+	std::unordered_set<const AActor*> visited;
+	float nearestCaster = radius;
+	const DAngle beamAngle = DAngle::fromDeg(halfAngle);
+	const float aperture = stencil ? 0.f : 3.f * std::clamp(float(gl_shadow_puppet_softness), 0.f, 2.f);
+	const auto addCaster = [&](HWSprite& sprite)
+	{
+		auto* actor = sprite.actor;
+		LightSprite card;
+		if (!ResolveLightSprite(di, sprite, origin, card)) return;
+		const FVector3 span = card.Across + card.Down;
+		const float extent = 0.5f * std::max(span.Length(), (card.Across - card.Down).Length());
+		const FVector3 relative = card.TopLeft + span * 0.5f - origin;
+		const float distance = relative.Length();
+		if (std::none_of(cones.begin(), cones.begin() + lights.Count,
+			[&](const FlashlightCone& cone) { return cone.Reaches(relative, distance, extent + aperture); }))
+			return;
+		const bool visible = presented
+			? P_CheckSightFromRenderPoint(presented->Position, actor, {sprite.x, sprite.y, sprite.z})
+			: P_CheckSight(beam->target.Get(), actor, SF_IGNOREVISIBILITY);
+		if (!visible || !AddSpriteMask(card, origin, scene, stencil)) return;
+		// The nearest corner bounds the axial depth of every opaque texel on the card.
+		const float depth = ((card.TopLeft - origin) | forward) + std::min(0.f, card.Across | forward) +
+			std::min(0.f, card.Down | forward);
+		// A tilted light can put a corner behind its eye even when the visible
+		// card is far ahead. Rays in the cone travel at most d/cos(angle)
+		// by axial depth d, plus their offset on the flashlight aperture.
+		const FVector3 plane = (card.Across ^ card.Down).Unit();
+		const float planeDistance = std::abs((card.TopLeft - origin) | plane);
+		const float inConeDepth = (planeDistance - aperture) * float(beamAngle.Cos());
+		nearestCaster = std::min(nearestCaster, std::max(depth, inConeDepth));
+	};
+
 	for (auto list : {GLDL_TRANSLUCENT, GLDL_MODELS})
 	{
 		for (auto* sprite : di.drawlists[list].sprites)
@@ -391,32 +427,62 @@ bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene, bool ste
 			if (!actor || sprite->index == -1 || !IsFlashlightBlocker(*actor) ||
 				sprite->modelframe || !sprite->texture || !sprite->texture->GetTexture() ||
 				sprite->RenderSurface.throughPortalMode || !actor->Sector || actor->Sector->PortalGroup != 0 ||
-				scene.Casters.count(actor))
+				!visited.insert(actor).second)
 				continue;
-			LightSprite card;
-			if (!ResolveLightSprite(di, *sprite, origin, card)) continue;
-			const FVector3 span = card.Across + card.Down;
-			const float extent = span.Length() * 0.5f;
-			const FVector3 relative = card.TopLeft + span * 0.5f - origin;
-			const float distance = relative.Length();
-			if (std::none_of(cones.begin(), cones.begin() + lights.Count,
-				[&](const FlashlightCone& cone) { return cone.Reaches(relative, distance, extent); }))
-				continue;
-			const bool visible = presented
-				? P_CheckSightFromRenderPoint(presented->Position, actor, {sprite->x, sprite->y, sprite->z})
-				: P_CheckSight(beam->target.Get(), actor, SF_IGNOREVISIBILITY);
-			if (!visible) continue;
-			AddSpriteMask(card, origin, scene, stencil);
+			addCaster(*sprite);
 		}
 	}
-	if (!scene.Mesh.Triangles.Size())
-		return false;
-	const FVector3 aim = origin + forward;
+
+	// A near or offscreen card can cast a large shadow onto visible geometry.
+	// The light's linked sections include those culled from the camera's BSP.
+	std::unordered_set<const sector_t*> sectors;
+	const DVector2 lampXY(origin.X, origin.Z);
+	const double rangeSquared = double(radius + aperture) * (radius + aperture);
+	for (auto* link = beam->touching_sector; link; link = link->nextTarget)
+	{
+		auto* sector = link->targSection->sector;
+		if (!sectors.insert(sector).second) continue;
+		for (auto* node = sector->touching_renderthings; node; node = node->m_snext)
+		{
+			auto* actor = node->m_thing;
+			if (!IsFlashlightBlocker(*actor) || !actor->Sector || actor->Sector->PortalGroup != 0 ||
+				!visited.insert(actor).second)
+				continue;
+			// Every texel of an upright lamp-facing card lies on the plane
+			// perpendicular to lampXY -> anchor. Texture offsets and scale
+			// cannot bring it closer than this horizontal distance.
+			if ((actor->renderflags & (RF_SPRITETYPEMASK | RF_ROLLSPRITE | RF_FORCEXYBILLBOARD)) == RF_FACESPRITE &&
+				!(actor->renderflags2 & (RF2_ISOMETRICSPRITES | RF2_BILLBOARDFACECAMERA)))
+			{
+				const auto anchor = (actor->InterpolatedPosition(view.TicFrac) + actor->WorldOffset).XY();
+				if ((anchor - lampXY).LengthSquared() > rangeSquared) continue;
+			}
+			auto* distanceLimit = actor->GetInfo()->distancecheck;
+			if (distanceLimit && *distanceLimit >= 0)
+			{
+				const double limit = **distanceLimit;
+				if ((actor->Pos() - view.Pos).LengthSquared() >= limit * limit) continue;
+			}
+			HWSprite sprite{};
+			if (sprite.PrepareFlashlightCaster(&di, actor))
+				addCaster(sprite);
+		}
+	}
+	if (scene.Casters.empty()) return false;
+
+	// Keep distant depth precision, but don't clip the card as the mount approaches.
+	const float nearPlane = std::clamp(nearestCaster * 0.5f, 1.f / 1024.f, 1.f);
+	const float farPlane = radius + 32.f;
 	const FVector3 up = std::abs(forward.Y) < 0.98f ? FVector3(0, 1, 0) : FVector3(0, 0, 1);
 	VSMatrix lightView = VSMatrix::identity(), projection = VSMatrix::identity();
+	const FVector3 aim = origin + forward;
 	lightView.lookAt(origin.X, origin.Y, origin.Z, aim.X, aim.Y, aim.Z, up.X, up.Y, up.Z);
-	projection.perspective(float(2.0 * halfAngle), 1.f, 1.f, radius + 32.f);
+	// A disk-source ray can reach a texel outside the central cone. Include
+	// its maximum lateral displacement at the closest shadow-casting depth.
+	const double guardTangent = aperture / std::max(nearestCaster, nearPlane);
+	const double fov = 2.0 * VecToAngle(1.0, beamAngle.Tan() + guardTangent).Degrees();
+	projection.perspective(float(fov), 1.f, nearPlane, farPlane);
 	scene.LightProjection = ShadowPuppetVulkanProjection(projection, lightView);
-	scene.Origin = origin;
+	scene.DepthRange = {std::max(nearPlane, nearestCaster), farPlane * nearPlane / (farPlane - nearPlane)};
 	return true;
 }

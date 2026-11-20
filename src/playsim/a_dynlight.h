@@ -243,6 +243,7 @@ struct FDynamicLight
 	int GetIntensity() const { return pArgs[LIGHT_INTENSITY]; }
 	int GetSecondaryIntensity() const { return pArgs[LIGHT_SECONDARY_INTENSITY]; }
 	double GetLightDefIntensity() const { return lightDefIntensity; }
+	bool IsProjectileLight() const { return projectileLight != ProjectileLight::None; }
 	float GetProjectileLightScale() const;
 
 	bool IsSubtractive() const { return !!((*pLightFlags) & LF_SUBTRACTIVE); }

@@ -6,11 +6,11 @@ struct SurfaceInfo
 	uint PortalIndex;
 	int TextureIndex;
 	float Alpha;
-	float Padding0;
+	int MapShadowGroup; // Positive for opaque, negative for cutout, zero for other surfaces.
 	uint LightStart;
 	uint LightEnd;
-	uint Padding1;
-	uint Padding2;
+	int MaskedTextureIndex;
+	float MaskThreshold;
 };
 
 struct PortalInfo
@@ -158,6 +158,9 @@ struct Fogball
 #define LIGHTINFO_STAGE_B_EMITTER 64
 #define LIGHTINFO_STAGE_B_DIRECTIONAL 128
 #define LIGHTINFO_SHADOW_PUPPET 256
+#define LIGHTINFO_POINT_MAP_SHADOW 512
+#define LIGHTINFO_FLASHLIGHT_MAP_SHADOW 1024
+#define LIGHTINFO_CPU_SPRITE_COLOR 2048
 
 struct DynLightInfo
 {

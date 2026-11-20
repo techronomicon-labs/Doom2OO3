@@ -27,6 +27,9 @@
 #include "vectors.h"
 #include <cstdint>
 
+struct FLevelLocals;
+bool HWHasEmitterLayout(const FLevelLocals* level);
+
 enum FDynLightInfoFlags
 {
 	LIGHTINFO_ATTENUATED = 1,
@@ -38,6 +41,9 @@ enum FDynLightInfoFlags
 	LIGHTINFO_STAGE_B_EMITTER = 64,
 	LIGHTINFO_STAGE_B_DIRECTIONAL = 128,
 	LIGHTINFO_SHADOW_PUPPET = 256,
+	LIGHTINFO_POINT_MAP_SHADOW = 512,
+	LIGHTINFO_FLASHLIGHT_MAP_SHADOW = 1024,
+	LIGHTINFO_CPU_SPRITE_COLOR = 2048,
 };
 
 struct FDynLightInfo

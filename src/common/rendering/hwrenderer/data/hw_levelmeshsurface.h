@@ -30,6 +30,8 @@ struct LevelMeshSurface
 	int PipelineID = 0;
 
 	bool IsSky = false;
+	bool OpaqueMapCaster = false;
+	bool MaskedMapCaster = false;
 	int PortalIndex = 0;
 	int SectorGroup = 0;
 

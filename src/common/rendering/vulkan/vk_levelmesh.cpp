@@ -996,10 +996,27 @@ void VkLevelMeshUploader::UploadSurfaces()
 		{
 			LevelMeshSurface* surface = &Mesh->Mesh->Mesh.Surfaces[range.Start + j];
 
-			SurfaceInfo info;
+			SurfaceInfo info{};
 			info.Normal = FVector3(surface->Plane.X, surface->Plane.Z, surface->Plane.Y);
 			info.PortalIndex = surface->PortalIndex;
 			info.Sky = surface->IsSky;
+			info.MapShadowGroup = surface->OpaqueMapCaster ? surface->SectorGroup : 0;
+			if (surface->MaskedMapCaster && surface->MeshLocation.NumVerts > 0)
+			{
+				// Match the visible cutout, including any clamping and alpha test from its draw.
+				auto& mesh = Mesh->Mesh->Mesh;
+				int uniformIndex = mesh.UniformIndexes[surface->MeshLocation.StartVertIndex];
+				const auto& material = mesh.Materials[uniformIndex];
+				if (material.mMaterial)
+				{
+					info.MapShadowGroup = -surface->SectorGroup;
+					info.MaskedTextureIndex = Mesh->fb->GetBindlessTextureIndex(material.mMaterial, material.mClampMode, material.mTranslation, false);
+					// Non-wrapping midtextures also discard beyond their vertical extent in ProcessBaseTexel.
+					if (material.mClampMode == CLAMP_Y || material.mClampMode == CLAMP_XY)
+						info.MaskedTextureIndex = ~info.MaskedTextureIndex;
+					info.MaskThreshold = mesh.Uniforms[uniformIndex].uAlphaThreshold;
+				}
+			}
 			info.Alpha = surface->Alpha;
 			if (surface->Texture)
 			{

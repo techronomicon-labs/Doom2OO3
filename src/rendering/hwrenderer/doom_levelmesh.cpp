@@ -1862,6 +1862,10 @@ void DoomLevelMesh::CreateWallSurface(side_t* side, HWWallDispatcher& disp, Mesh
 		Sides[sideIndex].FirstSurface = sinfo.Index;
 
 		auto surface = GetSurface(sinfo);
+		surface->OpaqueMapCaster = drawType == LevelMeshDrawType::Opaque;
+		surface->MaskedMapCaster = (drawType == LevelMeshDrawType::Masked || drawType == LevelMeshDrawType::MaskedOffset)
+			&& wallpart.texture && wallpart.texture->isMasked() && !wallpart.texture->GetTranslucency()
+			&& side->linedef->alpha >= 1.0;
 		surface->PipelineID = pipelineID;
 		surface->SectorGroup = sectorGroup[side->sector->Index()];
 		surface->Alpha = float(side->linedef->alpha);
@@ -2081,6 +2085,11 @@ void DoomLevelMesh::CreateFlatSurface(HWFlatDispatcher& disp, MeshBuilder& state
 		info.LightmapPlane = flatpart.lightmapPlane;
 
 		LevelMeshSurface surf;
+		// The mesh builder also puts masked 3D-floor faces in its opaque list.
+		surf.OpaqueMapCaster = drawType == LevelMeshDrawType::Opaque && flatpart.texture &&
+			(!(flatpart.renderflags & SSRF_RENDER3DPLANES) || !flatpart.texture->isMasked());
+		surf.MaskedMapCaster = drawType == LevelMeshDrawType::Opaque && !surf.OpaqueMapCaster &&
+			flatpart.texture && !flatpart.texture->GetTranslucency();
 		surf.SectorGroup = sectorGroup[flatpart.sector->Index()];
 		surf.Alpha = flatpart.alpha;
 		surf.Texture = flatpart.texture;

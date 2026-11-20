@@ -208,6 +208,21 @@ bool Trace(const DVector3 &start, sector_t *sector, const DVector3 &direction, d
 }
 
 
+DVector3 P_ClipFlashlightMount(const DVector3& eye, sector_t* sector, const DVector3& offset)
+{
+	const double distance = offset.Length();
+	if (!(distance > 0.0) || !std::isfinite(distance)) return eye;
+
+	const auto direction = offset / distance;
+	FTraceResults hit;
+	// Include exact endpoint contact. An opening or an actor never shortens the mount.
+	bool blocked = Trace(eye, sector, direction, distance + 1.0 / 65536.0,
+		0, 0, nullptr, hit, TRACE_PortalRestrict);
+	if (hit.Sector->PortalGroup != sector->PortalGroup) return eye;
+	if (!blocked) return eye + offset;
+	return eye + direction * std::max(0.0, hit.Distance - 0.5);
+}
+
 //============================================================================
 //
 // traverses a sector portal
@@ -1063,6 +1078,19 @@ DEFINE_FIELD_X(TraceResults, FTraceResults, CrossedWater)
 DEFINE_FIELD_X(TraceResults, FTraceResults, CrossedWaterPos)
 DEFINE_FIELD_X(TraceResults, FTraceResults, Crossed3DWater)
 DEFINE_FIELD_X(TraceResults, FTraceResults, Crossed3DWaterPos)
+
+DEFINE_ACTION_FUNCTION(DLineTracer, ClipFlashlightMount)
+{
+	PARAM_PROLOGUE;
+	PARAM_FLOAT(x);
+	PARAM_FLOAT(y);
+	PARAM_FLOAT(z);
+	PARAM_POINTER_NOT_NULL(sector, sector_t);
+	PARAM_FLOAT(dx);
+	PARAM_FLOAT(dy);
+	PARAM_FLOAT(dz);
+	ACTION_RETURN_VEC3(P_ClipFlashlightMount({x, y, z}, sector, {dx, dy, dz}));
+}
 
 DEFINE_ACTION_FUNCTION(DLineTracer, Trace)
 {

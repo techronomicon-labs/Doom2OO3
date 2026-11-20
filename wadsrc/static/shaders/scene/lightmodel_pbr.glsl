@@ -76,6 +76,8 @@ PbrSurface ApplyStructuralRelief(PbrSurface surface, vec4 relief)
 vec3 ProcessLight(const DynLightInfo light, vec3 albedo, float metallic, float roughness, const vec3 F0,
 	PbrSurface baseSurface, PbrSurface reliefSurface, bool hasRelief)
 {
+	if ((light.flags & LIGHTINFO_CPU_SPRITE_COLOR) != 0)
+		return light.color.rgb * WorldLightVisibility(light, pixelpos.xyz, ivec2(gl_FragCoord.xy));
 	if (!UsePackedLight(light))
 		return vec3(0.0);
 	bool directional = (light.flags & LIGHTINFO_STAGE_B_DIRECTIONAL) != 0;
@@ -126,7 +128,7 @@ vec3 ProcessLight(const DynLightInfo light, vec3 albedo, float metallic, float r
 		{
 			attenuation *= shadowAttenuation(light.pos.xyz, light.shadowIndex, light.softShadowRadius, light.flags);
 		}
-		attenuation *= ShadowPuppetVisibility(light, pixelpos.xyz, ivec2(gl_FragCoord.xy));
+		attenuation *= WorldLightVisibility(light, pixelpos.xyz, ivec2(gl_FragCoord.xy));
 		
 		vec3 radiance = light.color.rgb * attenuation * LIGHT_COMPAT_PBR_BRIGHTNESS_SCALE;
 

@@ -32,6 +32,7 @@
 #include "r_sky.h"
 #include "d_player.h"
 #include "g_levellocals.h"
+#include "g_mapinfo.h"
 #include "hw_fakeflat.h"
 #include "hw_portal.h"
 #include "hw_renderstate.h"
@@ -153,6 +154,7 @@ void HWDrawInfo::StartScene(FRenderViewpoint &parentvp, HWViewpointUniforms *uni
 		VPUniforms.SunIntensity = level.SunIntensity;
 	}
 	ShadowPuppetsEligible = false;
+	FlashlightMapShadows = false;
 	VPUniforms.ShadowPuppetMode = 0;
 	VPUniforms.ShadowPuppetTexture = 0;
 	mClipper->SetViewpoint(Viewpoint);
@@ -875,14 +877,15 @@ void HWDrawInfo::RenderScene(FRenderState &state)
 	state.EnableTexture(gl_texture);
 	state.EnableBrightmap(true);
 	const int puppetMode = gl_shadow_puppets;
-	if (ShadowPuppetsEligible && !outer && (puppetMode == 1 || puppetMode == 2))
+	if (ShadowPuppetsEligible && !outer && puppetMode != 0)
 	{
 		auto* device = static_cast<VulkanRenderDevice*>(screen);
 		HWShadowPuppetScene puppet;
-		if ((puppetMode != 1 || device->SupportsShadowPuppetStencil()) && BuildShadowPuppetScene(*this, puppet, puppetMode == 1))
+		const bool stencil = puppetMode == 1 && device->SupportsShadowPuppetStencil();
+		if ((stencil || puppetMode == 2) && BuildShadowPuppetScene(*this, puppet, stencil))
 		{
 			int visibility = 0;
-			if (puppetMode == 1)
+			if (stencil)
 			{
 				// Replay the receiver geometry into the same depth attachment as the main scene.
 				state.SetColorMask(false);
@@ -912,40 +915,50 @@ void HWDrawInfo::RenderScene(FRenderState &state)
 				VPUniforms.ShadowPuppetTexture = visibility;
 				VPUniforms.ShadowPuppetMode = puppetMode;
 				VPUniforms.ShadowPuppetSoftness = gl_shadow_puppet_softness;
-				VPUniforms.ShadowPuppetProjection = puppet.LightProjection;
-				vpIndex = state.SetViewpoint(VPUniforms);
-				HWShadowPuppetFlashlight = puppet.Flashlight;
-				state.SetShadowPuppetReceiver(true);
 				gl_shadow_puppets_active = puppetMode;
 				if (SdvkDiagnostics::StateEnabled())
 					SdvkDiagnostics::Emit("flashlight-shadow", SdvkObservation::Object()
 						.Int("mode", puppetMode).Int("casters", puppet.Casters.size()).Json());
+				VPUniforms.ShadowPuppetProjection = puppet.LightProjection;
+				VPUniforms.ShadowPuppetDepthRange = puppet.DepthRange;
+				vpIndex = state.SetViewpoint(VPUniforms);
+				HWShadowPuppetFlashlight = puppet.Flashlight;
+				state.SetShadowPuppetReceiver(true);
 			}
 		}
 	}
 
 	// To do: replace this with classic light lists
 	/*
-	state.ApplyLevelMesh();
 	state.DrawLevelMeshList(SeenSidesDrawLists.List[static_cast<int>(LevelMeshDrawType::Opaque)], LevelMeshDrawSurface::Side, false, true);
 	state.DrawLevelMeshList(SeenFlatsDrawLists.List[static_cast<int>(LevelMeshDrawType::Opaque)], LevelMeshDrawSurface::Flat, false, true);
 	if (uselevelmesh)
 		state.DispatchLightTiles(VPUniforms.mViewMatrix, VPUniforms.mProjectionMatrix.get()[5]);
 	*/
 
+	// The point-light trace uses the level mesh in ordinary world coordinates.
+	DrawingProjectileMapShadows = gl_projectile_map_shadows && ShadowPuppetsEligible && !outer
+		&& Level->levelMesh && !(Level->flags3 & LEVEL3_NOSHADOWMAP);
+	ProjectileMapShadowLinks = 0;
+	FlashlightMapShadowLinks = 0;
 	RenderWall.Clock();
-	state.ApplyLevelMesh();
 	state.DrawLevelMeshList(SeenSidesDrawLists.List[static_cast<int>(LevelMeshDrawType::Opaque)], LevelMeshDrawSurface::Side, false, false);
 	RenderWall.Unclock();
 
 	drawlists[GLDL_PLAINWALLS].DrawWalls(this, state, false);
 
 	RenderFlat.Clock();
-	state.ApplyLevelMesh();
 	state.DrawLevelMeshList(SeenFlatsDrawLists.List[static_cast<int>(LevelMeshDrawType::Opaque)], LevelMeshDrawSurface::Flat, false, false);
 	RenderFlat.Unclock();
 
 	drawlists[GLDL_PLAINFLATS].DrawFlats(this, state, false);
+	DrawingProjectileMapShadows = false;
+	if (FlashlightMapShadowLinks)
+		SdvkDiagnostics::Emit("flashlight-map-shadows", SdvkObservation::Object()
+			.Int("light_links", FlashlightMapShadowLinks).Json());
+	if (ProjectileMapShadowLinks)
+		SdvkDiagnostics::Emit("projectile-map-shadows", SdvkObservation::Object()
+			.Int("light_links", ProjectileMapShadowLinks).Json());
 	state.SetShadowPuppetReceiver(false);
 	HWShadowPuppetFlashlight.Count = 0;
 
@@ -953,14 +966,12 @@ void HWDrawInfo::RenderScene(FRenderState &state)
 	state.AlphaFunc(Alpha_GEqual, gl_mask_threshold);
 
 	RenderWall.Clock();
-	state.ApplyLevelMesh();
 	state.DrawLevelMeshList(SeenSidesDrawLists.List[static_cast<int>(LevelMeshDrawType::Masked)], LevelMeshDrawSurface::Side, true, false);
 	RenderWall.Unclock();
 
 	drawlists[GLDL_MASKEDWALLS].DrawWalls(this, state, false);
 
 	RenderFlat.Clock();
-	state.ApplyLevelMesh();
 	state.DrawLevelMeshList(SeenFlatsDrawLists.List[static_cast<int>(LevelMeshDrawType::Masked)], LevelMeshDrawSurface::Flat, true, false);
 	RenderFlat.Unclock();
 
@@ -1098,18 +1109,15 @@ void HWDrawInfo::RenderTranslucent(FRenderState &state)
 
 	state.EnableBrightmap(true);
 	drawlists[GLDL_TRANSLUCENTBORDER].Draw(this, state, true);
-	state.ApplyLevelMesh();
 	state.DrawLevelMeshList(SeenSidesDrawLists.List[static_cast<int>(LevelMeshDrawType::TranslucentBorder)], LevelMeshDrawSurface::Side, false, false);
 	state.DrawLevelMeshList(SeenFlatsDrawLists.List[static_cast<int>(LevelMeshDrawType::TranslucentBorder)], LevelMeshDrawSurface::Flat, false, false);
 	state.SetDepthMask(false);
 
 	// To do: this needs to be sorted
 	RenderWall.Clock();
-	state.ApplyLevelMesh();
 	state.DrawLevelMeshList(SeenSidesDrawLists.List[static_cast<int>(LevelMeshDrawType::Translucent)], LevelMeshDrawSurface::Side, false, false);
 	RenderWall.Unclock();
 	RenderFlat.Clock();
-	state.ApplyLevelMesh();
 	state.DrawLevelMeshList(SeenFlatsDrawLists.List[static_cast<int>(LevelMeshDrawType::Translucent)], LevelMeshDrawSurface::Flat, false, false);
 	RenderFlat.Unclock();
 

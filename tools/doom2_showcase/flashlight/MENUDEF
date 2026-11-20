@@ -9,8 +9,9 @@ OptionMenu "SDVKFlashlightOptions"
 {
     Title "Local Flashlight"
     Command "Toggle flashlight (L)", "netevent SDVKFlashlightToggle"
-    Option "Flashlight shadows", "gl_shadow_puppets", "SDVKFlashlightShadowModes"
-    Slider "Depth edge softness", "gl_shadow_puppet_softness", 0.0, 2.0, 0.25, 2
+    Option "Map geometry shadows", "gl_flashlight_map_shadows", "OnOff"
+    Option "Sprite shadows (J)", "gl_shadow_puppets", "SDVKFlashlightShadowModes"
+    Slider "Sprite depth edge softness", "gl_shadow_puppet_softness", 0.0, 2.0, 0.25, 2
     Slider "Power (%)", "sdvk_fl_power", 0, 100, 5, 0
     Slider "Horizontal spread (degrees)", "sdvk_fl_horizontal", 28, 84, 2, 0
     Slider "Vertical spread (degrees)", "sdvk_fl_vertical", 28, 84, 2, 0
@@ -20,7 +21,7 @@ OptionMenu "SDVKFlashlightOptions"
     StaticText "Different H/V spreads use 3 or 5 overlapping soft cones."
     StaticText " "
     Submenu "Position and aim", "SDVKFlashlightMount"
-    Command "Reset flashlight settings", "resetcvar gl_shadow_puppets; resetcvar gl_shadow_puppet_softness; resetcvar sdvk_fl_power; resetcvar sdvk_fl_horizontal; resetcvar sdvk_fl_vertical; resetcvar sdvk_fl_range; resetcvar sdvk_fl_lightactors; resetcvar sdvk_fl_offset_x; resetcvar sdvk_fl_offset_y; resetcvar sdvk_fl_offset_z; resetcvar sdvk_fl_aim_yaw; resetcvar sdvk_fl_aim_pitch"
+    Command "Reset flashlight settings", "resetcvar gl_flashlight_map_shadows; resetcvar gl_shadow_puppets; resetcvar gl_shadow_puppet_softness; resetcvar sdvk_fl_power; resetcvar sdvk_fl_horizontal; resetcvar sdvk_fl_vertical; resetcvar sdvk_fl_range; resetcvar sdvk_fl_lightactors; resetcvar sdvk_fl_offset_x; resetcvar sdvk_fl_offset_y; resetcvar sdvk_fl_offset_z; resetcvar sdvk_fl_aim_yaw; resetcvar sdvk_fl_aim_pitch"
 }
 
 AddOptionMenu "OptionsMenu"

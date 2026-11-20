@@ -201,7 +201,7 @@ void HWFlat::SetupLights(HWFlatDispatcher *di, FRenderState& state, FLightNode *
 
 		p.Set(plane.plane.Normal(), plane.plane.fD());
 		draw_dlightf += GetLight(lightdata, portalgroup, p, light, false,
-			di->di->UsesEmitterLighting() && alpha >= 1.f ? section->sector : nullptr);
+			di->di->UsesEmitterLighting() && alpha >= 1.f ? section->sector : nullptr, di->di, sector);
 		node = node->nextLight;
 	}
 

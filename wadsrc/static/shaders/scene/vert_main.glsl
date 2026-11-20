@@ -5,10 +5,10 @@
 
 	#undef SHADOWMAP_FILTER
 	#define SHADOWMAP_FILTER 0
+	#include <shaders/scene/light_trace.glsl>
 	#define SHADOW_PUPPET_VERTEX_STAGE
 	#include <shaders/scene/lightmodel_shared.glsl>
 	#undef SHADOW_PUPPET_VERTEX_STAGE
-	#include <shaders/scene/light_trace.glsl>
 	#include <shaders/scene/light_spot.glsl>
 	
 	vec3 lightValue(DynLightInfo light)
@@ -53,7 +53,14 @@
 		
 		if (attenuation > 0.0) // Skip shadow map test if possible
 		{
-			if((light.flags & LIGHTINFO_SUN) != 0)
+			if ((light.flags & LIGHTINFO_FLASHLIGHT_MAP_SHADOW) != 0)
+			{
+				// Actor cards can extend below the floor. Match this mode's light
+				// sampling position so clipped corners cannot dim the visible sprite.
+				vec3 receiver = USE_SPRITE_CENTER ? uActorCenter.xyz : pixelpos.xyz;
+				attenuation *= MapLightVisibility(light, receiver, true);
+			}
+			else if((light.flags & LIGHTINFO_SUN) != 0)
 			{
 				attenuation *= traceSun(lightdir);
 			}

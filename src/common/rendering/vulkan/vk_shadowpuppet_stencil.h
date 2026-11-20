@@ -14,6 +14,7 @@ public:
 	explicit VkShadowPuppetStencil(VulkanRenderDevice* device) : Fb(device) {}
 	~VkShadowPuppetStencil();
 	bool Supported() const;
+	void PreparePipelines();
 
 	// The camera matrix produces Vulkan clip coordinates. Scene depth already
 	// contains the opaque receiver prepass. Returns the sampled visibility slot.

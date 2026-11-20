@@ -529,7 +529,8 @@ void HWWall::SetupLights(HWDrawInfo*di, FRenderState& state, FDynLightData &ligh
 				if (outcnt[0]!=4 && outcnt[1]!=4 && outcnt[2]!=4 && outcnt[3]!=4) 
 				{
 					draw_dlight += GetLight(lightdata, seg->frontsector->PortalGroup, p, node->lightsource, true,
-						di->UsesEmitterLighting() && !(flags & HWWall::HWF_TRANSLUCENT) ? seg->frontsector : nullptr);
+						di->UsesEmitterLighting() && !(flags & HWWall::HWF_TRANSLUCENT) ? seg->frontsector : nullptr,
+						di, seg->sidedef->sector);
 				}
 			}
 		}

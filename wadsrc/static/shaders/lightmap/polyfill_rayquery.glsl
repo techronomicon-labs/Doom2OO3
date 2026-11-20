@@ -6,6 +6,20 @@ struct TraceResult
 	int primitiveIndex;
 };
 
+vec2 GetSurfaceUV(int primitiveIndex, vec3 primitiveWeights);
+
+bool FlashlightMaskHit(int primitiveIndex, uint surfaceIndex, vec2 bc)
+{
+	vec2 uv = GetSurfaceUV(primitiveIndex, vec3(bc, 1.0 - bc.x - bc.y));
+	int image = surfaces[surfaceIndex].MaskedTextureIndex;
+	if (image < 0)
+	{
+		if (uv.y < 0.0 || uv.y > 1.0) return false;
+		image = ~image;
+	}
+	return textureLod(textures[nonuniformEXT(image)], uv, 0.0).a > surfaces[surfaceIndex].MaskThreshold;
+}
+
 #if defined(USE_RAYQUERY) || defined(SUPPORTS_RAYQUERY)
 
 TraceResult TraceFirstHit(vec3 origin, float tmin, vec3 dir, float tmax)
@@ -84,6 +98,29 @@ bool TraceAnyHit(vec3 origin, float tmin, vec3 dir, float tmax)
 	rayQueryInitializeEXT(rayQuery, acc, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsCullBackFacingTrianglesEXT, 0xFF, origin, tmin, dir, tmax);
 	while(rayQueryProceedEXT(rayQuery)) { }
 	return rayQueryGetIntersectionTypeEXT(rayQuery, true) != gl_RayQueryCommittedIntersectionNoneEXT;
+}
+
+bool TraceMapHit(vec3 origin, vec3 dir, float distance, int group, bool includeMasked)
+{
+	rayQueryEXT query;
+	// Force candidate reporting even for BLASes built with the opaque flag.
+	// The mesh contains portals and translucent or masked surfaces too.
+	rayQueryInitializeEXT(query, acc, gl_RayFlagsNoOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
+		0xFF, origin, 0.0, dir, distance);
+	while (rayQueryProceedEXT(query))
+	{
+		if (rayQueryGetIntersectionTypeEXT(query, false) == gl_RayQueryCandidateIntersectionTriangleEXT)
+		{
+			int primitive = rayQueryGetIntersectionInstanceCustomIndexEXT(query, false) +
+				rayQueryGetIntersectionPrimitiveIndexEXT(query, false);
+			uint surface = surfaceIndices[primitive];
+			int caster = surfaces[surface].MapShadowGroup;
+			if (caster == group || (includeMasked && caster == -group &&
+				FlashlightMaskHit(primitive, surface, rayQueryGetIntersectionBarycentricsEXT(query, false))))
+				rayQueryConfirmIntersectionEXT(query);
+		}
+	}
+	return rayQueryGetIntersectionTypeEXT(query, true) != gl_RayQueryCommittedIntersectionNoneEXT;
 }
 
 #else
@@ -229,6 +266,94 @@ bool TraceAnyHit(vec3 origin, float tmin, vec3 dir, float tmax)
 			}
 		}
 	} while (stackIndex > 0);
+	return false;
+}
+
+float MapNodeEntry(int node, vec3 origin, vec3 invRay, vec3 absInvRay, bvec3 parallel)
+{
+	vec3 offset = nodes[node].center - origin;
+	vec3 extents = nodes[node].extents;
+	vec3 center = offset * invRay, reach = extents * absInvRay;
+	vec3 lo = center - reach, hi = center + reach;
+	if (any(parallel))
+	{
+		// A ray lying on a slab boundary stays inside that slab throughout.
+		lo = mix(lo, vec3(0.0), parallel);
+		hi = mix(hi, mix(vec3(-1.0), vec3(1.0), lessThanEqual(abs(offset), extents)), parallel);
+	}
+	float enter = max(max(lo.x, lo.y), max(lo.z, 0.0));
+	float leave = min(min(hi.x, hi.y), min(hi.z, 1.0));
+	return enter <= leave ? enter : 2.0;
+}
+
+bool MapTriangleHit(int element, vec3 origin, vec3 ray, out vec3 scaledWeights)
+{
+	vec3 a = vertices[elements[element]].pos;
+	vec3 ab = vertices[elements[element + 1]].pos - a;
+	vec3 ac = vertices[elements[element + 2]].pos - a;
+	vec3 p = cross(ray, ac), t = origin - a;
+	vec3 q = cross(t, ab);
+	float det = dot(ab, p);
+	float side = sign(det);
+	float u = dot(t, p) * side, v = dot(ray, q) * side;
+	float distance = dot(ac, q) * side;
+	float scale = abs(det);
+	scaledWeights = vec3(u, v, scale);
+	return scale >= FLT_EPSILON && min(u, v) >= 0.0 && u + v <= scale &&
+		distance > FLT_EPSILON * scale && distance < scale;
+}
+
+bool TraceMapHit(vec3 origin, vec3 dir, float distance, int group, bool includeMasked)
+{
+	if (distance <= 0.0 || nodesRoot < 0) return false;
+	// All rays for a light start at the same end of the segment. Neighbouring
+	// fragments encounter the same near nodes and register stack entries.
+	vec3 ray = -dir * distance;
+	origin -= ray;
+	bvec3 parallel = equal(ray, vec3(0.0));
+	vec3 invRay = 1.0 / mix(ray, vec3(1.0), parallel);
+	vec3 absInvRay = abs(invRay);
+	int node = nodesRoot;
+	ivec4 front = ivec4(0);
+	int spill[64], depth = 0;
+	while (true)
+	{
+		int element = nodes[node].element_index;
+		if (element >= 0)
+		{
+			vec3 weights;
+			if (MapTriangleHit(element, origin, ray, weights))
+			{
+				int primitive = element / 3;
+				uint surface = surfaceIndices[primitive];
+				int caster = surfaces[surface].MapShadowGroup;
+				if (caster == group || (includeMasked && caster == -group &&
+					FlashlightMaskHit(primitive, surface, weights.xy / weights.z)))
+					return true;
+			}
+		}
+		else
+		{
+			int left = nodes[node].left, right = nodes[node].right;
+			float a = MapNodeEntry(left, origin, invRay, absInvRay, parallel);
+			float b = MapNodeEntry(right, origin, invRay, absInvRay, parallel);
+			if (min(a, b) <= 1.0)
+			{
+				node = a <= b ? left : right;
+				if (max(a, b) <= 1.0)
+				{
+					if (depth >= 4) spill[depth - 4] = front.w;
+					front = ivec4(a <= b ? right : left, front.xyz);
+					++depth;
+				}
+				continue;
+			}
+		}
+		if (depth == 0) break;
+		node = front.x;
+		front.xyz = front.yzw;
+		if (--depth >= 4) front.w = spill[depth - 4];
+	}
 	return false;
 }
 

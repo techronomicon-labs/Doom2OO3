@@ -2,6 +2,8 @@
 #ifndef SIMPLE3D
 	vec3 lightContribution(DynLightInfo light, vec3 normal, vec4 relief)
 	{
+		if ((light.flags & LIGHTINFO_CPU_SPRITE_COLOR) != 0)
+			return light.color.rgb * WorldLightVisibility(light, pixelpos.xyz, ivec2(gl_FragCoord.xy));
 		if (!UsePackedLight(light))
 			return vec3(0.0);
 		bool directional = (light.flags & LIGHTINFO_STAGE_B_DIRECTIONAL) != 0;
@@ -79,7 +81,7 @@
 				attenuation *= shadowAttenuation(light.pos.xyz, light.shadowIndex, light.softShadowRadius, light.flags);
 			}
 			
-			attenuation *= ShadowPuppetVisibility(light, pixelpos.xyz, ivec2(gl_FragCoord.xy));
+			attenuation *= WorldLightVisibility(light, pixelpos.xyz, ivec2(gl_FragCoord.xy));
 			return light.color.rgb * attenuation;
 		}
 		else

@@ -154,8 +154,9 @@ class SDVKShadowLabHandler : EventHandler
 MENUDEF = '''OptionMenu DoomIIShadowPuppetsMenu
 {
     Title "Shadow Puppets"
-    Option "Shadow mode", "gl_shadow_puppets", "SDVKFlashlightShadowModes"
-    Slider "Depth edge softness", "gl_shadow_puppet_softness", 0.0, 2.0, 0.25, 2
+    Option "Map geometry shadows", "gl_flashlight_map_shadows", "OnOff"
+    Option "Sprite shadows (J)", "gl_shadow_puppets", "SDVKFlashlightShadowModes"
+    Slider "Sprite depth edge softness", "gl_shadow_puppet_softness", 0.0, 2.0, 0.25, 2
     Command "Preview soft Depth", "gl_shadow_puppet_softness 1; gl_shadow_puppets 2", 0, 1
     Submenu "Flashlight settings", "SDVKFlashlightOptions"
     Command "Restart comparison room", "map SHPDEMO"
