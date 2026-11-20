@@ -516,8 +516,12 @@ VulkanRenderPass *VkRenderPassSetup::GetRenderPass(int clearTargets)
 	return RenderPasses[clearTargets].get();
 }
 
-void VkRenderPassSetup::PrecachePipeline(const VkPipelineKey& key)
+void VkRenderPassSetup::PrecachePipeline(VkPipelineKey key)
 {
+#ifdef __APPLE__
+	// VkRenderState::DoDraw expands each fan into indexed triangles on MoltenVK.
+	if (key.DrawType == DT_TriangleFan) key.DrawType = DT_Triangles;
+#endif
 	GetSpecializedPipeline(key);
 }
 

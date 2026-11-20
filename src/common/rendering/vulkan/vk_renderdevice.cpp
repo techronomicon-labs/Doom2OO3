@@ -37,6 +37,7 @@
 #include "actor.h"
 #include "g_levellocals.h"
 #include "hw_clock.h"
+#include "hw_dynlightdata.h"
 #include "hw_vrmodes.h"
 #include "hw_cvars.h"
 #include "hw_skydome.h"
@@ -1124,7 +1125,8 @@ void VulkanRenderDevice::PrecacheMapPipelines()
 	const int lightShader = lightMode == ELightMode::DoomSoftware ? 2 : lightMode == ELightMode::Build ? 3 :
 		lightMode == ELightMode::ZDoomSoftware ? 1 : 0;
 	const bool flashlight = PClass::FindClass("SDVKLocalFlashlightBeam") != nullptr;
-	const bool emitters = !gl_levelmesh && !gl_raytrace && !gl_ubershaders && !lm_dynlights && (level.flags3 & LEVEL3_STAGEBLAYOUT) && !(level.flags3 & LEVEL3_NOSHADOWMAP);
+	const bool emitters = !gl_levelmesh && !gl_raytrace && !gl_ubershaders && !lm_dynlights &&
+		!(level.flags3 & LEVEL3_NOSHADOWMAP) && HWHasEmitterLayout(&level);
 	const int immediateVertex = GetBufferManager()->GetRSBuffers()->Flatbuffer.VertexFormat;
 	std::set<VkPipelineKey> opaque, translucent;
 
