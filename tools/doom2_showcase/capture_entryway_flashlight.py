@@ -22,7 +22,7 @@ DISTANCES = {"near": 32, "far": 96}
 DEFAULT_RADIUS = 12
 
 
-def capture(pack, exe, folder, pose, beam, shadows, radius=None):
+def capture(pack, exe, folder, pose, beam, shadows, radius=None, spread=None):
     folder.mkdir(parents=True)
     x, y, yaw, pitch = pose
     fixture = folder / "pose.pk3"
@@ -80,12 +80,17 @@ class EntrywayLampPose : EventHandler
     # Exercise a fresh player's installed lateral offset and aperture with the reported beam settings.
     if radius is not None:
         args.extend(["+gl_flashlight_map_shadow_radius", str(radius)])
+    if spread is not None:
+        args.extend(["+gl_flashlight_map_shadow_spread", str(spread)])
     log = folder / "engine.log"
     with log.open("wb") as stream:
         subprocess.run(list(map(str, args)), cwd=exe.parent, stdout=stream, stderr=subprocess.STDOUT,
                        timeout=120, check=True)
     messages = log.read_text(errors="replace")
     require("Unknown command" not in messages, f"Unsupported setting in {log}")
+    if spread is not None:
+        saved = re.search(r"^gl_flashlight_map_shadow_spread=([^\n]+)$", cfg.read_text(), re.MULTILINE)
+        require(saved and float(saved[1]) == spread, f"Spread {spread}% did not save in {cfg}")
     source = re.search(r"ENTRYWAY_MOUNT ([-.\d]+) ([-.\d]+) ([-.\d]+)", messages)
     report = json.loads(prefix.with_suffix(".renderer.json").read_text())
     frame, = [row["data"] for row in report["records"] if row["kind"] == "frame"]
@@ -97,7 +102,7 @@ class EntrywayLampPose : EventHandler
             tuple(map(float, source.groups())) if source else None)
 
 
-def measure(pack, exe, root, edge_x, outward, distance):
+def measure(pack, exe, root, edge_x, outward, distance, check_spread=False):
     pose = (edge_x, 960 - distance, 90, 14)
     fill, fill_camera, _ = capture(pack, exe, root / "ambient", pose, False, True)
     clear, camera, lamp = capture(pack, exe, root / "unshadowed", pose, True, False)
@@ -108,6 +113,11 @@ def measure(pack, exe, root, edge_x, outward, distance):
                 for key in ("position", "angles", "hardware_angles", "fov")) and lamp == hard_lamp == soft_lamp,
             "Lamp or camera moved between exposures")
     require(abs(lamp[0] - edge_x) < .02, f"Fresh profile did not center the lamp: {lamp}")
+    if check_spread:
+        for percent, reference in ((0, hard), (100, soft)):
+            adjusted, _, _ = capture(pack, exe, root / f"spread-{percent}", pose, True, True, DEFAULT_RADIUS, percent)
+            require(np.max(abs(adjusted - reference)) <= 1, f"{root.name}: unexpected {percent}% spread")
+        boosted, _, _ = capture(pack, exe, root / "spread-200", pose, True, True, DEFAULT_RADIUS, 200)
 
     eye = camera["position"]
     dx, dy, dz = camera_rays(camera, SIZE)
@@ -161,6 +171,13 @@ def measure(pack, exe, root, edge_x, outward, distance):
         dim = region & dimmed
         normalized_width = np.broadcast_to(outside * 90 / (y - 960), region.shape)
         result[kind] = float(np.percentile(normalized_width[dim], 95))
+        if check_spread and kind == "floor":
+            wider = region & (np.max(clear - boosted, axis=2) >= 3) & (np.max(boosted - fill, axis=2) >= .25 * lit)
+            wide_width = float(np.percentile(normalized_width[wider], 95))
+            require(1.7 < wide_width / result[kind] < 2.3,
+                    f"{root.name}: 200% spread changed floor width from {result[kind]:.2f} to {wide_width:.2f}")
+            print(f"{root.name} floor spread at 100% and 200%: {result[kind]:.2f} and {wide_width:.2f} units",
+                  flush=True)
         print(root.name, kind, f"{partial.sum()} partial receivers, {result[kind]:.2f} map-unit spread",
               flush=True)
     # The illuminated south face must never cast a shadow onto itself.
@@ -181,7 +198,8 @@ def main():
     pack, out = args.pack.resolve(), args.out.resolve()
     exe = (args.exe or pack / "runtime/vkdoom.exe").resolve()
     for side, (edge_x, outward) in PILLAR_SIDES.items():
-        widths = {label: measure(pack, exe, out / f"{side}-{label}", edge_x, outward, distance)
+        widths = {label: measure(pack, exe, out / f"{side}-{label}", edge_x, outward, distance,
+                                 check_spread=side == "column-right" and label == "far")
                   for label, distance in DISTANCES.items()}
         require(widths["near"]["floor"] > 2 * widths["far"]["floor"],
                 f"{side}: floor penumbra failed to widen closer to the pillar: {widths}")

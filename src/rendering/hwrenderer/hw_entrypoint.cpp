@@ -270,7 +270,8 @@ sector_t* RenderViewpoint(FRenderViewpoint& mainvp, AActor* camera, IntRect* bou
 		di->ShadowPuppetsEligible = localShadowView && RenderState.GetPassType() == NORMAL_PASS;
 		di->FlashlightMapShadows = localShadowView && gl_flashlight_map_shadows && !di->outer &&
 			di->Level->levelMesh && !(di->Level->flags3 & LEVEL3_NOSHADOWMAP);
-		di->VPUniforms.FlashlightMapShadowRadius = di->FlashlightMapShadows ? float(gl_flashlight_map_shadow_radius) : 0.f;
+		di->VPUniforms.FlashlightMapShadowRadius = di->FlashlightMapShadows
+			? gl_flashlight_map_shadow_radius * (gl_flashlight_map_shadow_spread / 100.f) : 0.f;
 		if (emitterLighting && !di->isFullbrightScene())
 		{
 			di->VPUniforms.mPalLightLevels |= HWViewpointUniforms::EmitterLighting;
