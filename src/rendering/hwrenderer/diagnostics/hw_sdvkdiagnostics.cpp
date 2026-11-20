@@ -26,6 +26,7 @@
 #include "hw_levelmesh.h"
 #include "flatvertices.h"
 #include "r_utility.h"
+#include "hwrenderer/hw_flashlight.h"
 #include "hwrenderer/scene/hw_drawinfo.h"
 #include "hwrenderer/scene/hw_drawcontext.h"
 #include "hwrenderer/scene/hw_portal.h"
@@ -51,6 +52,8 @@ EXTERN_CVAR(Bool, screenshot_quiet)
 EXTERN_CVAR(Int, con_notifylines)
 EXTERN_CVAR(Bool, vk_rayquery)
 EXTERN_CVAR(Bool, cl_capfps)
+EXTERN_CVAR(Int, gl_shadow_puppets)
+EXTERN_CVAR(Int, gl_shadow_puppets_active)
 CVAR(Bool, sdvk_gameplay_pending, false, 0)
 EXTERN_CVAR(Int, vid_maxfps)
 EXTERN_CVAR(Bool, vid_vsync)
@@ -899,6 +902,8 @@ void EndFrame()
             .Raw("stage_b", Object().Bool("requested", bool(gl_emitter_lighting))
                 .Num("ambient", float(gl_emitter_ambient)).Num("intensity", float(gl_emitter_intensity))
                 .Num("ambient_specular", float(gl_emitter_ambient_specular)).Json())
+            .Raw("shadow_puppets", Object().Int("requested", int(gl_shadow_puppets)).Int("active", int(gl_shadow_puppets_active))
+                .Num("depth_softness", float(gl_shadow_puppet_softness)).Json())
             .Str("cpu_scope", "RenderView steady-clock interval; excludes later finish/presentation")
             .Bool("state_instrumentation", observer.StateMode).Bool("hardware_renderer", V_IsHardwareRenderer())
             .Int("width", screen->GetWidth()).Int("height", screen->GetHeight())
@@ -1122,7 +1127,11 @@ void LightDecision(const HWDrawInfo* di, const AActor* actor, const FDynamicLigh
     try
     {
         const std::string query = '[' + Number(x) + ',' + Number(y) + ',' + Number(z) + ']';
-        Emit("light-query", Object().Raw("context", Context(di)).Str("path", path)
+        Object record;
+        if (const auto* pose = HWPresentedFlashlight(light))
+            record.Raw("presented_flashlight", Object().Raw("position", Vector(pose->Position))
+                .Raw("direction", Vector(pose->Direction)).Json());
+        Emit("light-query", record.Raw("context", Context(di)).Str("path", path)
             .Int("actor_tid", actor ? actor->tid : 0).Str("actor_class", actor ? actor->GetClass()->TypeName.GetChars() : "particle")
             .Raw("query_position", query).Int("portal_group", group).Str("candidate_source", source)
             .Str("decision", decision).Raw("light", light ? LightIdentity(light) : Unavailable("empty query has no light candidate")).Json(), true);

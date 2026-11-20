@@ -5,7 +5,9 @@
 
 	#undef SHADOWMAP_FILTER
 	#define SHADOWMAP_FILTER 0
+	#define SHADOW_PUPPET_VERTEX_STAGE
 	#include <shaders/scene/lightmodel_shared.glsl>
+	#undef SHADOW_PUPPET_VERTEX_STAGE
 	#include <shaders/scene/light_trace.glsl>
 	#include <shaders/scene/light_spot.glsl>
 	

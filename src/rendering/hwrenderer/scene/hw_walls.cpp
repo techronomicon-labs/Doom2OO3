@@ -33,6 +33,7 @@
 #include "actorinlines.h"
 #include "texturemanager.h"
 #include "hw_dynlightdata.h"
+#include "hwrenderer/hw_flashlight.h"
 #include "hw_material.h"
 #include "hw_cvars.h"
 #include "hw_clock.h"
@@ -482,7 +483,7 @@ void HWWall::SetupLights(HWDrawInfo*di, FRenderState& state, FDynLightData &ligh
 		{
 			iter_dlight++;
 
-			DVector3 posrel = node->lightsource->PosRelative(seg->frontsector->PortalGroup);
+			DVector3 posrel = HWLightPositionRelative(light, seg->frontsector->PortalGroup);
 			float x = posrel.X;
 			float y = posrel.Y;
 			float z = posrel.Z;

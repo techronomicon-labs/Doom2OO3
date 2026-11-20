@@ -22,7 +22,10 @@ param(
 
     [switch]$EmitterLighting,
 
-    [switch]$DesktopShortcut
+    [switch]$ShadowPuppets,
+
+    [switch]$DesktopShortcut,
+    [string]$ProfileDirectory = $Packages
 )
 
 $ErrorActionPreference = 'Stop'
@@ -31,25 +34,24 @@ $iwad = (Get-Item -LiteralPath $Doom2).FullName
 $root = (Get-Item -LiteralPath $Packages).FullName
 $gameFiles = @()
 $map = 'MAP01'
-$uber = 'true'
 $weapon = 'true'
 $width = '1280'
-$spritePreview = $Game -eq 'DoomII' -and $SpriteRelief -and !$ReliefStock -and !$EmitterLighting
-$preview = $Game -eq 'DoomII' -and $Relief -and !$ReliefStock -and !$spritePreview -and !$EmitterLighting
+$spritePreview = $Game -eq 'DoomII' -and $SpriteRelief -and !$ReliefStock -and !$EmitterLighting -and !$ShadowPuppets
+$preview = $Game -eq 'DoomII' -and $Relief -and !$ReliefStock -and !$spritePreview -and !$EmitterLighting -and !$ShadowPuppets
 
 if ($EmitterLighting -and $Game -ne 'DoomII') { throw 'The authored emitter evaluation requires -Game DoomII.' }
+if ($ShadowPuppets -and $Game -ne 'DoomII') { throw 'The shadow puppet evaluation requires -Game DoomII.' }
 if ($ReliefStock -and !$Relief -and !$SpriteRelief) { throw '-ReliefStock requires -Relief or -SpriteRelief.' }
 if ($Relief -or $SpriteRelief) {
     if ($Game -notin 'DoomII', 'DBP50') { throw 'Relief requires -Game DoomII or -Game DBP50.' }
-    $uber = 'false'
     if ($preview -or $spritePreview) {
         $map = if ($spritePreview) { 'RSP001' } else { 'RPV001' }
         $weapon = 'false'
         $width = '960'
     }
 }
-if ($EmitterLighting) {
-    $uber = 'false'
+if ($ShadowPuppets) {
+    $map = 'SHPDEMO'
 }
 
 switch ($Game) {
@@ -59,7 +61,6 @@ switch ($Game) {
     }
     'Gallery' {
         $map = 'SGSHOW'
-        $uber = 'false'
         $weapon = 'false'
     }
 }
@@ -81,20 +82,24 @@ if ($spritePreview) {
 if ($EmitterLighting) {
     $gameFiles += Join-Path $root 'DoomII-Emitter-Lighting.pk3'
 }
+if ($ShadowPuppets) {
+    $gameFiles += Join-Path $root 'DoomII-Shadow-Puppets.pk3'
+}
 foreach ($file in $gameFiles) {
     if (!(Test-Path -LiteralPath $file -PathType Leaf)) { throw "Package missing: $file" }
 }
 
-$profile = if ($EmitterLighting) { 'DoomII-Emitter-Lighting' } elseif ($spritePreview) { 'DoomII-Sprite-Relief-Preview' } elseif ($preview) { 'DoomII-Relief-Preview' } elseif ($Relief -or $SpriteRelief) { "$Game-Relief" } else { $Game }
-$config = Join-Path $root "$profile.ini"
-$save = Join-Path $root "$profile-saves"
+$profile = if ($ShadowPuppets) { 'DoomII-Shadow-Puppets' } elseif ($EmitterLighting) { 'DoomII-Emitter-Lighting' } elseif ($spritePreview) { 'DoomII-Sprite-Relief-Preview' } elseif ($preview) { 'DoomII-Relief-Preview' } elseif ($Relief -or $SpriteRelief) { "$Game-Relief" } else { $Game }
+$profileRoot = (Get-Item -LiteralPath $ProfileDirectory).FullName
+$config = Join-Path $profileRoot "$profile.ini"
+$save = Join-Path $profileRoot "$profile-saves"
 New-Item -ItemType Directory -Force -Path $save | Out-Null
 $argv = @('-iwad', $iwad, '-noautoload', '-noautoexec', '-file') + $gameFiles + @(
     '-config', $config, '-savedir', $save, '-window', '-width', $width, '-height', '720',
     '+vid_rendermode', '4', '+gl_viewmodel_lighting', '2',
     '+gl_spritelight', '2', '+gl_lights', 'true', '+gl_light_sprites', 'true',
     '+gl_light_particles', 'true', '+gl_lightprobe', 'true', '+gl_customshader', 'true',
-    '+gl_ubershaders', $uber, '+r_drawplayersprites', $weapon, '+gl_levelmesh', 'false',
+    '+gl_ubershaders', 'false', '+r_drawplayersprites', $weapon, '+gl_levelmesh', 'false',
     '+gl_light_shadows', '0', '+vk_rayquery', 'false', '+cl_capfps', 'true', '+gl_precache', 'true',
     '+map', $map
 )
@@ -104,12 +109,19 @@ if ($Game -eq 'Gallery') {
 if ($Game -eq 'DBP50') {
     $argv += @('+bind', 'F1', 'openmenu PBRMaterialMenu')
 }
-if ($Relief -or $SpriteRelief -or $EmitterLighting) {
+if ($Relief -or $SpriteRelief -or $EmitterLighting -or $ShadowPuppets) {
     $argv += @('+bind', 'L', 'netevent SDVKFlashlightToggle')
 }
 if ($EmitterLighting) {
     $argv += @('+gl_emitter_lighting', 'false', '+gl_ssao', '0',
               '+bind', 'B', 'toggle gl_emitter_lighting', '+bind', 'F1', 'openmenu DoomIIEmitterLightingMenu')
+}
+if ($ShadowPuppets) {
+    $argv += @('+r_actorspriteshadow', '0', '+gl_ssao', '0', '+gl_multisample', '4', '+crosshair', '2',
+              '+bind', 'F1', 'openmenu DoomIIShadowPuppetsMenu')
+    if (!(Test-Path -LiteralPath $config)) {
+        $argv += @('+sdvk_fl_offset_z', '12')
+    }
 }
 if ($Relief) {
     $argv += @('+gl_world_relief', 'true', '+gl_world_relief_depth', '5',
@@ -143,7 +155,7 @@ if ($DesktopShortcut) {
     }
     $desktop = [Environment]::GetFolderPath('Desktop')
     $gameLabel = if ($Game -eq 'DoomII') { 'Doom II' } else { $Game }
-    $name = if ($EmitterLighting) { 'Doom II Emitter Lighting' } elseif ($spritePreview) { 'Doom II Sprite Relief Rooms' } elseif ($preview) { 'Doom II Relief Preview Rooms' } elseif ($Relief -or $SpriteRelief) { "$gameLabel Relief Evaluation" } else { $names[$Game] }
+    $name = if ($ShadowPuppets) { 'Doom II Shadow Puppets' } elseif ($EmitterLighting) { 'Doom II Emitter Lighting' } elseif ($spritePreview) { 'Doom II Sprite Relief Rooms' } elseif ($preview) { 'Doom II Relief Preview Rooms' } elseif ($Relief -or $SpriteRelief) { "$gameLabel Relief Evaluation" } else { $names[$Game] }
     $path = Join-Path $desktop "ShadeDoomVK - $name (Hardware).lnk"
     $shell = New-Object -ComObject WScript.Shell
     $link = $shell.CreateShortcut($path)

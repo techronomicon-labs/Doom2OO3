@@ -752,6 +752,8 @@ set( FASTMATH_SOURCES
 #Vulkan stuff must go into a separate list because it needs to be disabled for some platforms
 set (VULKAN_SOURCES
 	common/rendering/vulkan/vk_renderdevice.cpp
+	common/rendering/vulkan/vk_shadowpuppet_depth.cpp
+	common/rendering/vulkan/vk_shadowpuppet_stencil.cpp
 	common/rendering/vulkan/vk_renderstate.cpp
 	common/rendering/vulkan/vk_postprocess.cpp
 	common/rendering/vulkan/vk_pprenderstate.cpp
@@ -906,6 +908,7 @@ set (PCH_SOURCES
 	g_statusbar/shared_sbar.cpp
 	rendering/2d/v_blend.cpp
 	rendering/hwrenderer/hw_entrypoint.cpp
+	rendering/hwrenderer/hw_shadowpuppet.cpp
 	rendering/hwrenderer/hw_vertexbuilder.cpp
 	rendering/hwrenderer/doom_aabbtree.cpp
 	rendering/hwrenderer/doom_levelmesh.cpp

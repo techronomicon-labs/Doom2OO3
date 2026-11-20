@@ -372,6 +372,7 @@ public:
 	GraphicsPipelineBuilder& DepthClampEnable(bool value);
 	GraphicsPipelineBuilder& DepthBias(bool enable, float biasConstantFactor, float biasClamp, float biasSlopeFactor);
 	GraphicsPipelineBuilder& Stencil(VkStencilOp failOp, VkStencilOp passOp, VkStencilOp depthFailOp, VkCompareOp compareOp, uint32_t compareMask, uint32_t writeMask, uint32_t reference);
+	GraphicsPipelineBuilder& Stencil(const VkStencilOpState& front, const VkStencilOpState& back);
 
 	GraphicsPipelineBuilder& AddColorBlendAttachment(VkPipelineColorBlendAttachmentState state);
 
@@ -486,6 +487,8 @@ public:
 
 	RenderPassBuilder& AddSubpass();
 	RenderPassBuilder& AddSubpassColorAttachmentRef(uint32_t index, VkImageLayout layout);
+	// Supply one resolve entry per color attachment, using VK_ATTACHMENT_UNUSED where needed.
+	RenderPassBuilder& AddSubpassResolveAttachmentRef(uint32_t index, VkImageLayout layout);
 	RenderPassBuilder& AddSubpassDepthStencilAttachmentRef(uint32_t index, VkImageLayout layout);
 
 	RenderPassBuilder& DebugName(const char* name) { debugName = name; return *this; }
@@ -502,6 +505,7 @@ private:
 	struct SubpassData
 	{
 		std::vector<VkAttachmentReference> colorRefs;
+		std::vector<VkAttachmentReference> resolveRefs;
 		VkAttachmentReference depthRef = { };
 	};
 

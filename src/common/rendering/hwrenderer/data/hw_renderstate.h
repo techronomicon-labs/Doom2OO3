@@ -224,6 +224,7 @@ public:
 		mSurfaceUniforms.uDepthFadeThreshold = 0.0f;
 		mSurfaceUniforms.uHeightTextureIndex = -1;
 		mSurfaceUniforms.uStageBWorld = 0;
+		mSurfaceUniforms.uShadowPuppetReceiver = 0;
 		ClearWorldRelief();
 		ClearSpriteTangentBasis();
 		ClearSpriteRelief();
@@ -313,6 +314,11 @@ public:
 		if (!enabled || mPaletteMode) return;
 		const int shader = getShaderIndex();
 		mSurfaceUniforms.uStageBWorld = shader == SHADER_Default || shader == SHADER_PBR || shader == SHADER_Specular;
+	}
+
+	void SetShadowPuppetReceiver(bool enabled)
+	{
+		mSurfaceUniforms.uShadowPuppetReceiver = enabled;
 	}
 
 	bool EnableSpriteLightingRelief(bool viewmodel = false, bool fullbright = false)

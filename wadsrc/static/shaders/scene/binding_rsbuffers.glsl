@@ -27,6 +27,10 @@ layout(set = 1, binding = 0, std140) uniform readonly ViewpointUBO
 	vec3 uCameraNormal;
 	float uStageBIntensity;
 	float uStageBAmbientSpecular;
+	int uShadowPuppetTexture;
+	int uShadowPuppetMode;
+	float uShadowPuppetSoftness;
+	mat4 ShadowPuppetProjection;
 };
 
 layout(set = 1, binding = 1, std140) uniform readonly MatricesUBO

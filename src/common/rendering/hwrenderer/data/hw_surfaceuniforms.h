@@ -56,7 +56,7 @@ struct SurfaceUniforms
 	int uHeightTextureIndex = -1;
 	int uStageBWorld = 0;
 	float uPBRReliefDepth = 1.0f;
-	int uMaterialSemanticPad2;
+	int uShadowPuppetReceiver = 0;
 
 	// SDVK-007/v1: per-draw sprite-only world TBN. Normal.W = 1 iff
 	// explicit; tangent.W = +/-1 handedness. Appended after SDVK-005.

@@ -8,6 +8,7 @@
 #include "vk_lighttilepolicy.h"
 
 struct FRenderViewpoint;
+struct HWShadowPuppetMesh;
 class VkSamplerManager;
 class VkBufferManager;
 class VkTextureManager;
@@ -28,6 +29,8 @@ class VkPostprocess;
 class VkPipelineKey;
 class VkRenderPassSetup;
 class VkShaderCache;
+class VkShadowPuppetDepth;
+class VkShadowPuppetStencil;
 
 class VulkanRenderDevice : public SystemBaseFrameBuffer
 {
@@ -83,6 +86,10 @@ public:
 	void SetSaveBuffers(bool yes) override;
 	void ImageTransitionScene(bool unknown) override;
 	void SetActiveRenderTarget() override;
+	bool SupportsShadowPuppetStencil();
+	int RenderShadowPuppetStencil(const HWShadowPuppetMesh& mesh, FVector3 origin,
+		const VSMatrix& cameraProjection, const IntRect& viewport);
+	int RenderShadowPuppetDepth(const TArray<FVector3>& triangles, const VSMatrix& lightProjection);
 
 	IHardwareTexture *CreateHardwareTexture(int numchannels) override;
 	FMaterial* CreateMaterial(FGameTexture* tex, int scaleflags) override;
@@ -150,6 +157,8 @@ private:
 	std::unique_ptr<VkLightmapper> mLightmapper;
 	std::unique_ptr<VkLightprober> mLightprober;
 	std::unique_ptr<VkRenderState> mRenderState;
+	std::unique_ptr<VkShadowPuppetDepth> mShadowPuppetDepth;
+	std::unique_ptr<VkShadowPuppetStencil> mShadowPuppetStencil;
 
 	VkRenderBuffers *mActiveRenderBuffers = nullptr;
 

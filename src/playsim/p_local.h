@@ -271,6 +271,7 @@ bool	P_BounceWall (AActor *mo);
 bool	P_BounceActor (AActor *mo, AActor *BlockingMobj, bool ontop);
 bool    P_ReflectOffActor(AActor* mo, AActor* blocking);
 int	P_CheckSight (AActor *t1, AActor *t2, int flags=0);
+bool P_CheckSightFromRenderPoint(const DVector3& origin, AActor* target, const DVector3& feet);
 
 enum ESightFlags
 {
