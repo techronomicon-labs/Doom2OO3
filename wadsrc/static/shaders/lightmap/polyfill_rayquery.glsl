@@ -662,8 +662,10 @@ float AreaMapVisibility(vec3 receiver, vec3 lamp, vec3 right, vec3 up, float fra
 			if (crossOnly)
 			{
 				crossLit = ~covered[0];
-				if (all(equal(crossLit, uvec4(0)))) return 0.0;
-				if (all(equal(crossLit, uvec4(~0u)))) return 1.0;
+				// If no bins are reachable from the mount, the centre decides.
+				// A unanimous first pass can skip that test only when they agree.
+				if (foldToDark && all(equal(crossLit, uvec4(0)))) return 0.0;
+				if (!foldToDark && all(equal(crossLit, uvec4(~0u)))) return 1.0;
 				covered[0] = uvec4(0);
 			}
 			else
