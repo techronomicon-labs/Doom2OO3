@@ -8,6 +8,8 @@ Press **L** to turn on the flashlight. **O → Map geometry shadows** switches f
 
 **Map shadow edge** changes how the edge looks. **Smooth** is the default and grades the flashlight’s contribution across the edge. **Single shade** gives the projected footprint one shade, including the part that spreads beyond a nearby pillar. **Stepped** keeps the previous bands.
 
+**Soft cross** estimates how much of the lamp is visible along four directions. Partially blocked areas stay darker than in Smooth. **Dithered** samples the lamp at a different position per screen pixel, producing a fine stipple along the shadow edge. To compare them in a corridor, try radius 12 with horizontal spread at 240% and vertical spread at 100%.
+
 **Shadow darkness (%)** adjusts how much flashlight light a map or sprite shadow removes. At 0% the beam shines through, at 50% a fully blocked area keeps half its flashlight light, and at 100% a solid blocker removes all of it. Values up to 200% deepen partially shaded edges. Ambient light and other light sources keep their own intensity.
 
 **J** cycles **Off → Stencil → Depth** for sprite shadows. **O** also lets you set **Sprite depth edge softness**. A fresh campaign profile starts in Depth. Each game's profile remembers both shadow settings and the softness.
@@ -18,7 +20,7 @@ With **Map geometry shadows** on, the renderer traces the segment from the mount
 
 With per-pixel sprite lighting, a crossing shadow can cover part of a monster. CPU sprite lighting keeps the beam brightness calculated at the actor’s centre and masks it per pixel. Vertex sprite lighting tests visibility at the actor’s centre, so the part of a standing sprite drawn below the floor cannot dim the rest. Vertex-lit particles use their own corners.
 
-Enemies and solid scenery cast from their current sprite frame. Doom selects the directional artwork and mirror as seen from the flashlight, then projects its opaque texels onto map geometry. The silhouette follows animation, scale, patch offsets and floor clipping. DBP50 uses its own replacements and effective actor flags. An exploding barrel stops blocking when it loses solidity. Flying enemies and ceiling-hung decorations cast from their actual heights. Pickups, projectiles and non-solid scenery let the beam through.
+Enemies, solid scenery and visible pickups cast from their current sprite frame. Doom selects the directional artwork and mirror as seen from the flashlight, then projects its opaque texels onto map geometry. The silhouette follows animation, scale, patch offsets and floor clipping. DBP50 uses its own replacements and effective actor flags. An exploding barrel stops blocking when it loses solidity. Flying enemies and ceiling-hung decorations cast from their actual heights. A dropped weapon casts as soon as it appears in the world. Collecting it removes its shadow.
 
 | Backend | Integration in the immediate Vulkan renderer | Main risks |
 | --- | --- | --- |

@@ -46,6 +46,20 @@ bool MapSegmentBlocked(vec3 start, vec3 end, float bias, int group, bool include
 	return dist > 2.0 * bias && TraceMapHit(start, ray / dist, dist - bias, group, includeMasked);
 }
 
+#if !defined(SHADOW_PUPPET_VERTEX_STAGE)
+vec3 DitheredLensOffset(vec3 right, vec3 up)
+{
+	// Repeat a stratified 8x8 lens pattern in screen pixels, fixed over time.
+	ivec2 p = ivec2(gl_FragCoord.xy) & 7;
+	int x = p.x ^ p.y;
+	int index = ((x & 1) << 5) | ((p.y & 1) << 4) | ((x & 2) << 2) |
+		((p.y & 2) << 1) | ((x & 4) >> 1) | ((p.y & 4) >> 2);
+	float radius = sqrt((float(index) + 0.5) / 64.0);
+	float angle = float(index) * 2.39996323;
+	return radius * (cos(angle) * right + sin(angle) * up);
+}
+#endif
+
 float MapLightVisibility(DynLightInfo light, vec3 position, bool flashlight)
 {
 	// Trace from the geometric receiver, before relief/normal mapping.
@@ -57,23 +71,56 @@ float MapLightVisibility(DynLightInfo light, vec3 position, bool flashlight)
 		normal = -normal; // Either face of a masked wall can receive the beam.
 	vec3 origin = position + normal * bias;
 	vec3 lamp = light.pos.xyz;
-	if (!flashlight || all(equal(uFlashlightMapShadowRadii, vec2(0.0))))
-		return MapSegmentBlocked(origin, lamp, bias, light.shadowIndex, flashlight) ? 0.0 : 1.0;
-
-	// The disk follows the head mount. Aim trims steer the beam lobes within
-	// that frame. All primary rays meet at the receiver, giving a hard contact.
-	mat3 cameraAxes = transpose(mat3(ViewMatrix));
-	vec3 right = normalize(cameraAxes[0]);
-	vec3 up = normalize(cameraAxes[1] - right * dot(cameraAxes[1], right));
-	right *= uFlashlightMapShadowRadii.x;
-	up *= uFlashlightMapShadowRadii.y;
+	bool spread = flashlight && any(notEqual(uFlashlightMapShadowRadii, vec2(0.0)));
+	vec3 right = vec3(0.0), up = vec3(0.0);
+	if (spread)
+	{
+		// The disk follows the head mount. Aim trims steer the lobes within it.
+		mat3 cameraAxes = transpose(mat3(ViewMatrix));
+		right = normalize(cameraAxes[0]);
+		up = normalize(cameraAxes[1] - right * dot(cameraAxes[1], right));
+		right *= uFlashlightMapShadowRadii.x;
+		up *= uFlashlightMapShadowRadii.y;
+	}
+	if (!spread || uFlashlightMapShadowStyle == 4)
+	{
+		vec3 offset = vec3(0.0);
+		int mountTests = 0;
+#if !defined(SHADOW_PUPPET_VERTEX_STAGE)
+		if (spread)
+		{
+			if (length(lamp - origin) <= 2.0 * bias) return 1.0;
+			offset = DitheredLensOffset(right, up);
+			mountTests = 2;
+		}
+#endif
+		// Share one BVH walk site for the optional mount probes and final
+		// receiver segment. A point source goes straight to the receiver test.
+		for (;;)
+		{
+			vec3 start = mountTests > 0 ? lamp : origin;
+			bool hit = MapSegmentBlocked(start, lamp + offset, bias, light.shadowIndex, flashlight);
+			if (mountTests == 0) return hit ? 0.0 : 1.0;
+			if (hit)
+			{
+				--mountTests;
+				offset = mountTests > 0 ? -offset : vec3(0.0);
+			}
+			else mountTests = 0;
+		}
+	}
 	vec3 ray = lamp - origin;
 	float dist = length(ray);
 	if (dist <= 2.0 * bias) return 1.0;
 	// Shorten every ray by the same fraction, preserving the disk and avoiding
 	// coincident light-endpoint hits. The receiver was already biased above.
 	float fraction = 1.0 - bias / dist;
-	if (uFlashlightMapShadowStyle == 2) return SmoothMapVisibility(origin, lamp, right, up, fraction, light.shadowIndex);
+	if (uFlashlightMapShadowStyle >= 2)
+	{
+		bool crossOnly = uFlashlightMapShadowStyle == 3;
+		float visibility = AreaMapVisibility(origin, lamp, right, up, fraction, light.shadowIndex, crossOnly);
+		return crossOnly ? visibility * visibility : visibility;
+	}
 	vec3 diskCenter = origin + ray * fraction;
 	int activeMask = mapDiskMask, blocked = 0;
 	do

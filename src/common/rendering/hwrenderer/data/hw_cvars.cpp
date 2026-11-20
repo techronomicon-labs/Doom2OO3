@@ -77,7 +77,7 @@ CUSTOM_CVAR(Int, gl_flashlight_map_shadow_spread_vertical, 100, CVAR_ARCHIVE | C
 CUSTOM_CVAR(Int, gl_flashlight_map_shadow_style, 2, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
 	if (self < 0) self = 0;
-	else if (self > 2) self = 2;
+	else if (self > 4) self = 4;
 }
 CVAR(Bool, gl_projectile_map_shadows, true, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 CUSTOM_CVAR(Int, gl_flashlight_shadow_darkness, 100, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
