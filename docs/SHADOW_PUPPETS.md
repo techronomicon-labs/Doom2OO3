@@ -4,7 +4,7 @@ Press **L** to turn on the flashlight. **O → Map geometry shadows** switches f
 
 **O → Map shadow source radius** sets the radius of the flashlight’s emitting area from 0 to 24 map units. At the default of 12, a pillar can hide part of the source. Its shadow stays tight at contact and develops a wider, partially lit edge on surfaces farther behind it. Move closer with the lamp centred to see this on either side of the pillar. Radius 0 gives a hard point-source shadow.
 
-**Horizontal map shadow spread** and **Vertical map shadow spread** each scale the source radius from 0% to 400%. At the default radius of 12 units, horizontal 200% and vertical 50% give the flashlight a source 24 units in radius side to side and 6 units up and down. Set both to 0% for a hard edge. Each profile saves both percentages. An existing profile starts with its previous spread on both axes.
+**Horizontal map shadow spread** and **Vertical map shadow spread** each scale the source radius from 0% to 400%. At the default radius of 12 units, 200% horizontal and 50% vertical give the source a horizontal radius of 24 map units and a vertical radius of 6. Set both to 0% for a hard edge. Each profile saves both percentages. An existing profile starts with its previous spread on both axes.
 
 **Map shadow edge** changes how the edge looks. **Smooth** is the default and grades the flashlight’s contribution across the edge. **Single shade** gives the projected footprint one shade, including the part that spreads beyond a nearby pillar. **Stepped** keeps the previous bands.
 
