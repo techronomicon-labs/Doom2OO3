@@ -118,7 +118,8 @@ def capture(pack, exe, root, case, label, enabled, power, rocket_flight_power=0)
             "+cl_capfps", "true", "+vid_vsync", "false", "+use_mouse", "false", "+con_notifylines", "0",
             "+map", "MAP01" if entryway else "PRJLEDGE"]
     if entryway:
-        args.extend(("+sdvk_fl_power", "100", "+sdvk_fl_offset_x", ".9", "+sdvk_fl_offset_z", "9.5",
+        args.extend(("+sdvk_fl_power", "100", "+sdvk_fl_offset_x", ".9", "+sdvk_fl_offset_y", "0",
+                     "+sdvk_fl_offset_z", "9.5",
                      "+sdvk_fl_aim_pitch", "-7.875", "+sdvk_fl_horizontal", "64.05",
                      "+sdvk_fl_vertical", "71.75", "+sdvk_fl_range", "768"))
     else:

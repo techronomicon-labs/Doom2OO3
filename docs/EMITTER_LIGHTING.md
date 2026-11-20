@@ -8,7 +8,7 @@ For an emitter-only comparison, enable emitter lighting with **B**, set both amb
 
 **Emitter intensity** controls authored surface fixtures and the directional source in the demonstration courtyard. Setting it and both ambient sliders to zero leaves direct dynamic lights and self-emitting materials visible. Flashlight power, spread, and range have independent controls.
 
-The flashlight starts 16 map units forward and 12 below eye level, with a 4Â° upward aim. Open **Position and aim** in **Flashlight settings** to change or reset the mount.
+The flashlight starts 16 map units forward, 16 to the right and 12 below eye level, with a 4° upward aim. The sideways offset lets you see a pillar’s shadow on the surfaces behind it. Adjust the Y offset under **O → Position and aim** to switch shoulders or centre the beam.
 
 Open **Options → Projectile lighting** in Doom II or DBP50 to adjust light output from projectiles in flight and on impact. Plasma, rockets, and the BFG each have separate sliders. Other projectiles and bullet impacts have their own controls. **100%** is the authored intensity, **0%** removes the emitted light, and **1200%** is the maximum. The settings save to the active launcher profile.
 

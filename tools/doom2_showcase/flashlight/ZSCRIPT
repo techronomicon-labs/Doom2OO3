@@ -25,6 +25,7 @@ class SDVKLocalFlashlightHandler : EventHandler
 {
     const MAX_BEAMS = 5;
     const DEFAULT_OFFSET_X = 16;
+    const DEFAULT_OFFSET_Y = 16;
     const DEFAULT_OFFSET_Z = -12;
     const DEFAULT_AIM_PITCH = 4;
     bool Enabled[MAXPLAYERS];
@@ -106,7 +107,7 @@ class SDVKLocalFlashlightHandler : EventHandler
             ReadSetting('sdvk_fl_range',p,360,128,768),
             int(ReadSetting('sdvk_fl_lightactors',p,1,0,1) >= .5), count);
         Console.Printf("SDVK_FLASHLIGHT_MOUNT x=%.3f y=%.3f z=%.3f yaw=%.3f pitch=%.3f",
-            ReadSetting('sdvk_fl_offset_x',p,DEFAULT_OFFSET_X,-16,16), ReadSetting('sdvk_fl_offset_y',p,0,-16,16),
+            ReadSetting('sdvk_fl_offset_x',p,DEFAULT_OFFSET_X,-16,16), ReadSetting('sdvk_fl_offset_y',p,DEFAULT_OFFSET_Y,-16,16),
             ReadSetting('sdvk_fl_offset_z',p,DEFAULT_OFFSET_Z,-16,16), ReadSetting('sdvk_fl_aim_yaw',p,0,-30,30),
             ReadSetting('sdvk_fl_aim_pitch',p,DEFAULT_AIM_PITCH,-30,30));
         for (int k = 0; k < MAX_BEAMS; ++k)
@@ -145,7 +146,7 @@ class SDVKLocalFlashlightHandler : EventHandler
             double minor = min(horizontal,vertical);
             double difference = abs(horizontal-vertical);
             double fore = ReadSetting('sdvk_fl_offset_x',p,DEFAULT_OFFSET_X,-16,16);
-            double side = ReadSetting('sdvk_fl_offset_y',p,0,-16,16);
+            double side = ReadSetting('sdvk_fl_offset_y',p,DEFAULT_OFFSET_Y,-16,16);
             double height = ReadSetting('sdvk_fl_offset_z',p,DEFAULT_OFFSET_Z,-16,16);
             double yawTrim = ReadSetting('sdvk_fl_aim_yaw',p,0,-30,30);
             double pitchTrim = ReadSetting('sdvk_fl_aim_pitch',p,DEFAULT_AIM_PITCH,-30,30);

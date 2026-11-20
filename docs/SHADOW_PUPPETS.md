@@ -52,6 +52,8 @@ The `penumbra` case aims the flashlight down to light the feet and the stairs in
 
 To measure shadow growth, run `py tools/doom2_showcase/capture_shadow_magnification.py --pack build/flashlight-map-shadows-playtest/DoomII --out build/shadow-growth`. It keeps the camera, sprite and wall fixed while it moves the flashlight mount. It also checks a caster crossing the camera and one within a unit of the lamp.
 
+To check the campaign mount in Entryway, run `py tools/doom2_showcase/capture_entryway_flashlight.py --pack build/flashlight-map-shadows-playtest/DoomII --out build/entryway-pillar`. It compares the centred and default mounts from two views beside the bronze pillar and checks the light on the floor against a flashlight-off capture.
+
 To check shader preloading, run `py tools/doom2_showcase/check_map_shader_preload.py --pack build/flashlight-map-shadows-playtest/DoomII --output build/map-shader-check`. The test starts with empty caches and records any shader or pipeline builds during a short MAP01 encounter. Use the DBP50 kit path to test The Passage.
 
 ```powershell
