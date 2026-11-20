@@ -20,6 +20,7 @@ from capture_relief import require
 PILLAR_SIDES = {"column-left": (-192, 1), "column-right": (-256, -1)}
 DISTANCES = {"near": 32, "far": 96}
 DEFAULT_RADIUS = 12
+SPREAD_AXES = ("gl_flashlight_map_shadow_spread_horizontal", "gl_flashlight_map_shadow_spread_vertical")
 
 
 def capture(pack, exe, folder, pose, beam, shadows, radius=None, spread=None, style=None, darkness=None):
@@ -81,7 +82,8 @@ class EntrywayLampPose : EventHandler
     if radius is not None:
         args.extend(["+gl_flashlight_map_shadow_radius", str(radius)])
     if spread is not None:
-        args.extend(["+gl_flashlight_map_shadow_spread", str(spread)])
+        for axis in SPREAD_AXES:
+            args.extend(["+" + axis, str(spread)])
     if style is not None:
         args.extend(["+gl_flashlight_map_shadow_style", str(style)])
     if darkness is not None:
@@ -93,8 +95,10 @@ class EntrywayLampPose : EventHandler
     messages = log.read_text(errors="replace")
     require("Unknown command" not in messages, f"Unsupported setting in {log}")
     if spread is not None:
-        saved = re.search(r"^gl_flashlight_map_shadow_spread=([^\n]+)$", cfg.read_text(), re.MULTILINE)
-        require(saved and float(saved[1]) == spread, f"Spread {spread}% did not save in {cfg}")
+        profile = cfg.read_text()
+        for axis in SPREAD_AXES:
+            saved = re.search(rf"^{axis}=([^\n]+)$", profile, re.MULTILINE)
+            require(saved and float(saved[1]) == spread, f"{axis} {spread}% did not save in {cfg}")
     source = re.search(r"ENTRYWAY_MOUNT ([-.\d]+) ([-.\d]+) ([-.\d]+)", messages)
     report = json.loads(prefix.with_suffix(".renderer.json").read_text())
     frame, = [row["data"] for row in report["records"] if row["kind"] == "frame"]

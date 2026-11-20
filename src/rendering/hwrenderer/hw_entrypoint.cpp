@@ -273,8 +273,11 @@ sector_t* RenderViewpoint(FRenderViewpoint& mainvp, AActor* camera, IntRect* bou
 		di->VPUniforms.FlashlightShadowDarkness = gl_flashlight_shadow_darkness / 100.f;
 		di->FlashlightMapShadows = localShadowView && gl_flashlight_map_shadows && !di->outer &&
 			di->Level->levelMesh && !(di->Level->flags3 & LEVEL3_NOSHADOWMAP);
-		di->VPUniforms.FlashlightMapShadowRadius = di->FlashlightMapShadows
-			? gl_flashlight_map_shadow_radius * (gl_flashlight_map_shadow_spread / 100.f) : 0.f;
+		const float sourceRadius = di->FlashlightMapShadows ? float(gl_flashlight_map_shadow_radius) : 0.f;
+		di->VPUniforms.FlashlightMapShadowRadii = {
+			sourceRadius * (gl_flashlight_map_shadow_spread_horizontal / 100.f),
+			sourceRadius * (gl_flashlight_map_shadow_spread_vertical / 100.f)
+		};
 		di->VPUniforms.FlashlightMapShadowStyle = gl_flashlight_map_shadow_style;
 		if (emitterLighting && !di->isFullbrightScene())
 		{

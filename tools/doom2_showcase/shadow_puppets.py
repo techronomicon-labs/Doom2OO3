@@ -157,7 +157,8 @@ MENUDEF = '''OptionMenu DoomIIShadowPuppetsMenu
     Option "Map geometry shadows", "gl_flashlight_map_shadows", "OnOff"
     Option "Map shadow edge", "gl_flashlight_map_shadow_style", "SDVKFlashlightMapEdges"
     Slider "Map shadow source radius (units)", "gl_flashlight_map_shadow_radius", 0, 24, 1, 0
-    Slider "Map shadow spread (%)", "gl_flashlight_map_shadow_spread", 0, 400, 10, 0
+    Slider "Horizontal map shadow spread (%)", "gl_flashlight_map_shadow_spread_horizontal", 0, 400, 10, 0
+    Slider "Vertical map shadow spread (%)", "gl_flashlight_map_shadow_spread_vertical", 0, 400, 10, 0
     Option "Sprite shadows (J)", "gl_shadow_puppets", "SDVKFlashlightShadowModes"
     Slider "Sprite depth edge softness", "gl_shadow_puppet_softness", 0.0, 2.0, 0.25, 2
     Slider "Shadow darkness (%)", "gl_flashlight_shadow_darkness", 0, 200, 5, 0

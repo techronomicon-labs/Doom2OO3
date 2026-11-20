@@ -64,7 +64,12 @@ CUSTOM_CVAR(Float, gl_flashlight_map_shadow_radius, 12.f, CVAR_ARCHIVE | CVAR_GL
 	if (!std::isfinite(float(self)) || self < 0.f) self = 0.f;
 	else if (self > 24.f) self = 24.f;
 }
-CUSTOM_CVAR(Int, gl_flashlight_map_shadow_spread, 100, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+CUSTOM_CVAR(Int, gl_flashlight_map_shadow_spread_horizontal, 100, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
+{
+	if (self < 0) self = 0;
+	else if (self > 400) self = 400;
+}
+CUSTOM_CVAR(Int, gl_flashlight_map_shadow_spread_vertical, 100, CVAR_ARCHIVE | CVAR_GLOBALCONFIG)
 {
 	if (self < 0) self = 0;
 	else if (self > 400) self = 400;

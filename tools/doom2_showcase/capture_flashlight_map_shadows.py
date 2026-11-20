@@ -146,12 +146,14 @@ class MapShadowFixture : EventHandler
         archive.writestr("ZSCRIPT", script)
 
 
-def capture(exe, iwad, root, case, enabled, torch, mode, animate=False, sprite_lighting=2, darkness=100):
+def capture(exe, iwad, root, case, enabled, torch, mode, animate=False, sprite_lighting=2, darkness=100, spread=None):
     label = "moving" if animate else f"{'torch' if torch else 'fill'}-{int(enabled)}-sprites-{mode}"
     if sprite_lighting != 2:
         label += f"-lighting-{sprite_lighting}"
     if darkness != 100:
         label += f"-darkness-{darkness}"
+    if spread is not None:
+        label += f"-spread-{spread[0]}x{spread[1]}"
     folder = root / case / label
     folder.mkdir(parents=True)
     package = folder / "fixture.pk3"
@@ -162,6 +164,9 @@ def capture(exe, iwad, root, case, enabled, torch, mode, animate=False, sprite_l
     cache = folder / "cache"
     cache.mkdir()
     width, height = map(str, SIZE)
+    radius = 12 if case == "aperture-wall" else 0
+    if spread is not None:
+        radius = 6
     args = [exe, "-iwad", iwad, "-file", root / "Local-Flashlight.pk3", package, "-noautoload",
             "-noautoexec", "-stdout", "-nostartup", "-nosound", "-nojoy", "-rngseed", "2002",
             "-config", cfg, "-savedir", folder, "-window", "-width", width, "-height", height,
@@ -175,7 +180,7 @@ def capture(exe, iwad, root, case, enabled, torch, mode, animate=False, sprite_l
             "+gl_emitter_lighting", "false", "+gl_bloom", "false", "+gl_shadow_puppets", str(mode),
             "+gl_flashlight_map_shadows", str(enabled).lower(),
             "+gl_flashlight_shadow_darkness", str(darkness),
-            "+gl_flashlight_map_shadow_radius", "12" if case == "aperture-wall" else "0",
+            "+gl_flashlight_map_shadow_radius", str(radius),
             "+r_drawplayersprites", "false",
             "+screenblocks", "12", "+fov", "90", "+crosshair", "0", "+cl_capfps", "true",
             "+con_notifylines", "0", "+show_messages", "false", "+vid_vsync", "false", "+use_mouse", "false",
@@ -183,6 +188,9 @@ def capture(exe, iwad, root, case, enabled, torch, mode, animate=False, sprite_l
             "+sdvk_fl_offset_x", "16" if case in ("blocked-mount", "aperture-wall") else "0", "+sdvk_fl_offset_y", "16",
             "+sdvk_fl_offset_z", "16", "+sdvk_fl_aim_pitch", "0", "+sdvk_fl_horizontal", "84",
             "+sdvk_fl_vertical", "84", "+sdvk_fl_range", "640", "+map", MAP]
+    if spread is not None:
+        args.extend(("+gl_flashlight_map_shadow_spread_horizontal", str(spread[0]),
+                     "+gl_flashlight_map_shadow_spread_vertical", str(spread[1])))
     if animate:
         args.extend(("-sdvkobservepngs", "+screenshot_quiet", "true", "+screenshot_type", "png"))
     log = folder / "engine.log"
@@ -218,7 +226,7 @@ def capture(exe, iwad, root, case, enabled, torch, mode, animate=False, sprite_l
         return np.asarray(image.convert("RGB"), dtype=np.int16), frame["camera"], float(match[1])
 
 
-def measure(case, camera, door_z, unshadowed, shadowed, fill):
+def measure(case, camera, door_z, unshadowed, shadowed, fill, spread_views=None):
     # Project pixel centres onto floor and back wall, then evaluate the obstruction
     # from both the camera (visible receiver) and flashlight (expected shadow).
     if case == "far-room":
@@ -333,6 +341,30 @@ def measure(case, camera, door_z, unshadowed, shadowed, fill):
         visible, _ = clearance(eye[0], eye[2])
         usable &= visible
         lit, dark = clearance(16, eye[2] + 16)
+        if spread_views:
+            point, horizontal, vertical, circle = spread_views
+            require(np.max(abs(point - shadowed)) <= 1, "Zero spread differs from a point source")
+            # Isolate the jamb above the lintel and the lintel between the jambs.
+            # At both faces, even the extreme six-unit source offsets on the
+            # orthogonal axis must stay on the same side of the door.
+            jamb, lintel = usable.copy(), usable.copy()
+            for t in (front, back):
+                x_at_door = 16 + t * (x - 16)
+                z_at_door = eye[2] + 16 + t * (z - eye[2] - 16)
+                margin = 6 * (1 - t) + 1
+                jamb &= z_at_door > door_z + margin
+                lintel &= abs(x_at_door) < 24 - margin
+            softened = np.max(abs(circle - point), axis=2) >= 8
+            for name, region, across, along in (("horizontal", jamb, horizontal, vertical),
+                                                ("vertical", lintel, vertical, horizontal)):
+                mask = softened & region
+                count = int(mask.sum())
+                require(count >= 100, f"Too few receivers in the {name} penumbra: {count}")
+                require((np.max(abs(across - circle), axis=2)[mask] <= 2).mean() > .98,
+                        f"{name} spread failed to reproduce the circular penumbra")
+                require((np.max(abs(along - point), axis=2)[mask] <= 2).mean() > .98,
+                        f"The other axis changed the {name} edge")
+                print(f"{name} axis isolated on {count} door-shadow receivers", flush=True)
         if case in ("lifting", "lowering"):
             # Both rays pass within the width of the door. Only its height
             # determines whether the beam can reach this visible floor.
@@ -402,7 +434,11 @@ def main():
             off, camera, door_z = capture(exe, iwad, root, case, False, True, 0, sprite_lighting=lighting)
             on, _, _ = capture(exe, iwad, root, case, True, True, 0, sprite_lighting=lighting)
             fill, _, _ = capture(exe, iwad, root, case, True, False, 0, sprite_lighting=lighting)
-            results = measure(case, camera, door_z, off, on, fill)
+            spread_views = None
+            if case == "lifting":
+                spread_views = [capture(exe, iwad, root, case, True, True, 0, spread=spread)[0]
+                                for spread in ((0, 0), (100, 0), (0, 100), (100, 100))]
+            results = measure(case, camera, door_z, off, on, fill, spread_views)
             print(f"{case}, ceiling {door_z:g}, sprite lighting {lighting}, {results}", flush=True)
         if case == "lifting":
             control, _, _ = capture(exe, iwad, root, case, False, False, 0)

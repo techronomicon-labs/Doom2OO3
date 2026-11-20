@@ -32,7 +32,7 @@ layout(set = 1, binding = 0, std140) uniform readonly ViewpointUBO
 	float uShadowPuppetSoftness;
 	mat4 ShadowPuppetProjection;
 	vec2 uShadowPuppetDepthRange;
-	float uFlashlightMapShadowRadius;
+	vec2 uFlashlightMapShadowRadii;
 	int uFlashlightMapShadowStyle;
 	float uFlashlightShadowDarkness;
 	vec4 uFlashlightLensRight;

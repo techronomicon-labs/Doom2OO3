@@ -57,7 +57,7 @@ float MapLightVisibility(DynLightInfo light, vec3 position, bool flashlight)
 		normal = -normal; // Either face of a masked wall can receive the beam.
 	vec3 origin = position + normal * bias;
 	vec3 lamp = light.pos.xyz;
-	if (!flashlight || uFlashlightMapShadowRadius <= 0.0)
+	if (!flashlight || all(equal(uFlashlightMapShadowRadii, vec2(0.0))))
 		return MapSegmentBlocked(origin, lamp, bias, light.shadowIndex, flashlight) ? 0.0 : 1.0;
 
 	// The disk follows the head mount. Aim trims steer the beam lobes within
@@ -65,8 +65,8 @@ float MapLightVisibility(DynLightInfo light, vec3 position, bool flashlight)
 	mat3 cameraAxes = transpose(mat3(ViewMatrix));
 	vec3 right = normalize(cameraAxes[0]);
 	vec3 up = normalize(cameraAxes[1] - right * dot(cameraAxes[1], right));
-	right *= uFlashlightMapShadowRadius;
-	up *= uFlashlightMapShadowRadius;
+	right *= uFlashlightMapShadowRadii.x;
+	up *= uFlashlightMapShadowRadii.y;
 	vec3 ray = lamp - origin;
 	float dist = length(ray);
 	if (dist <= 2.0 * bias) return 1.0;
