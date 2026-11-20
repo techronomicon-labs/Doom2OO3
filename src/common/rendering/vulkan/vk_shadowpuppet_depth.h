@@ -12,13 +12,14 @@ class VkShadowPuppetDepth
 public:
 	explicit VkShadowPuppetDepth(VulkanRenderDevice* device) : Fb(device) {}
 	~VkShadowPuppetDepth();
+	bool PreparePipeline();
 
 	// Triangle vertices and projection use Vulkan scene coordinates (X, Z, Y).
 	// Projection must produce depth in [0, w]. Returns the sampled depth slot.
 	int Render(const TArray<FVector3>& triangles, const VSMatrix& lightProjection);
 
 private:
-	bool CreateResources();
+	void CreateTarget();
 
 	VulkanRenderDevice* Fb;
 	VkTextureImage Depth;
@@ -29,5 +30,6 @@ private:
 	std::unique_ptr<VulkanPipeline> Pipeline;
 	std::unique_ptr<VulkanBuffer> Vertices;
 	int TextureIndex = 0;
-	bool TriedResources = false;
+	VkFormat DepthFormat = VK_FORMAT_UNDEFINED;
+	bool TriedPipeline = false;
 };

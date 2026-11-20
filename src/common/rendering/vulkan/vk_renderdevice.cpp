@@ -34,12 +34,15 @@
 #include "version.h"
 #include "v_draw.h"
 
+#include "actor.h"
+#include "g_levellocals.h"
 #include "hw_clock.h"
 #include "hw_vrmodes.h"
 #include "hw_cvars.h"
 #include "hw_skydome.h"
 #include "flatvertices.h"
 #include "hw_meshbuilder.h"
+#include "texturemanager.h"
 
 #include "vk_renderdevice.h"
 #include "vk_shadowpuppet_depth.h"
@@ -78,6 +81,11 @@ EXTERN_CVAR(Int, gl_tonemap)
 EXTERN_CVAR(Int, screenblocks)
 EXTERN_CVAR(Bool, cl_capfps)
 EXTERN_CVAR(Bool, r_skipmats)
+EXTERN_CVAR(Bool, gl_precache)
+EXTERN_CVAR(Bool, gl_levelmesh)
+EXTERN_CVAR(Bool, gl_ubershaders)
+EXTERN_CVAR(Bool, gl_raytrace)
+EXTERN_CVAR(Int, gl_viewmodel_lighting)
 
 // Physical device info
 static std::vector<VulkanCompatibleDevice> SupportedDevices;
@@ -291,6 +299,15 @@ VulkanRenderDevice::~VulkanRenderDevice()
 		mShaderManager->Deinit();
 	if (mCommands)
 		mCommands->DeleteFrameObjects();
+}
+
+void VulkanRenderDevice::PrecacheFlashlightShadowPipelines()
+{
+	if (!mShadowPuppetDepth)
+		mShadowPuppetDepth = std::make_unique<VkShadowPuppetDepth>(this);
+	mShadowPuppetDepth->PreparePipeline();
+	if (SupportsShadowPuppetStencil())
+		mShadowPuppetStencil->PreparePipelines();
 }
 
 bool VulkanRenderDevice::SupportsShadowPuppetStencil()
@@ -521,6 +538,8 @@ void VulkanRenderDevice::SetVSync(bool vsync)
 void VulkanRenderDevice::PrecacheMaterial(FMaterial *mat, int translation)
 {
 	if (mat->Source()->GetUseType() == ETextureType::SWCanvas) return;
+	if (mapPipelinePreloadPending && (mat->Source()->GetUseType() == ETextureType::Sprite || (mat->GetScaleFlags() & CTF_Expand)))
+		mapSpriteShaders.emplace(mat->GetShaderIndex(), mat->GetLayerFlags());
 
 	MaterialLayerInfo* layer;
 
@@ -745,6 +764,12 @@ void VulkanRenderDevice::BeginFrame()
 	mRenderState->BeginFrame();
 	mDescriptorSetManager->BeginFrame();
 	mLightmapper->BeginFrame();
+	if (mapPipelinePreloadPending)
+	{
+		mapPipelinePreloadPending = false;
+		if (gl_precache) PrecacheMapPipelines();
+		mapSpriteShaders.clear();
+	}
 	if (CfxTrace::Enabled())
 	{
 		// Retain warmup extents after allocation, before shadow/world draws. The
@@ -839,6 +864,11 @@ void VulkanRenderDevice::PrintStartupLog()
 void VulkanRenderDevice::SetLevelMesh(LevelMesh* mesh)
 {
 	CfxTrace::Stage cfxStage("startup-map-preparation");
+	if (mesh != levelMesh)
+	{
+		mapPipelinePreloadPending = mesh != nullptr;
+		mapSpriteShaders.clear();
+	}
 	if (!mesh) // Vulkan must have a mesh for its data structures in shaders to remain sane
 	{
 		NullMesh.reset(new LevelMesh()); // we must have a completely new mesh here as the upload ranges needs to reset as well
@@ -1071,4 +1101,276 @@ int VulkanRenderDevice::GetLevelMeshPipelineID(const MeshApplyData& applyData, c
 const VkPipelineKey& VulkanRenderDevice::GetLevelMeshPipelineKey(int id) const
 {
 	return levelMeshPipelineKeys[id];
+}
+
+static int MapMaterialEffect(int effect)
+{
+	if (r_skipmats && (effect == SHADER_PBR || effect == SHADER_Specular)) return SHADER_Default;
+	return effect;
+}
+
+void VulkanRenderDevice::PrecacheMapPipelines()
+{
+	CfxTrace::Stage trace("map-shader-preload");
+	CfxTrace::Mark("map-shader-preload-begin", level.MapName.GetChars());
+	Printf(PRINT_LOG, "Preparing Vulkan shaders for %s...\n", level.MapName.GetChars());
+
+	VkRenderPassKey scene;
+	scene.DrawBufferFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+	scene.DepthStencil = 1;
+	scene.Samples = mScreenBuffers->GetSceneSamples();
+	scene.DrawBuffers = 1;
+	const auto lightMode = level.info ? getRealLightmode(&level, true) : ELightMode::Doom;
+	const int lightShader = lightMode == ELightMode::DoomSoftware ? 2 : lightMode == ELightMode::Build ? 3 :
+		lightMode == ELightMode::ZDoomSoftware ? 1 : 0;
+	const bool flashlight = PClass::FindClass("SDVKLocalFlashlightBeam") != nullptr;
+	const bool emitters = !gl_levelmesh && !gl_raytrace && !gl_ubershaders && !lm_dynlights && (level.flags3 & LEVEL3_STAGEBLAYOUT) && !(level.flags3 & LEVEL3_NOSHADOWMAP);
+	const int immediateVertex = GetBufferManager()->GetRSBuffers()->Flatbuffer.VertexFormat;
+	std::set<VkPipelineKey> opaque, translucent;
+
+	VkPipelineKey common;
+	common.ColorMask = 15;
+	common.DepthTest = common.DepthClamp = common.StencilTest = true;
+	common.DepthFunc = DF_LEqual;
+	common.ShaderKey.SpecialEffect = EFF_NONE;
+	common.ShaderKey.VertexFormat = immediateVertex;
+	common.ShaderKey.SWLightRadial = gl_fogmode == 2;
+	common.ShaderKey.LightMode = lightShader;
+	common.ShaderKey.LightBlendMode = level.info ? static_cast<int>(level.info->lightblendmode) : 0;
+	common.ShaderKey.LightAttenuationMode = level.info ? static_cast<int>(level.info->lightattenuationmode) : 0;
+	auto setShadowMode = [](VkShaderKey& shader, bool receiver)
+	{
+		shader.UseShadowmap = receiver || gl_light_shadows == 1;
+		shader.UseRaytrace = !receiver && gl_light_shadows >= 2;
+		shader.Layout.UseRaytracePrecise = !receiver && gl_light_shadows >= 3;
+		shader.ShadowmapFilter = std::clamp(int(gl_light_shadow_filter), 0, 15);
+	};
+
+	setShadowMode(common.ShaderKey, false);
+
+	// The level mesh records which material shader and texture layers each surface uses.
+	// The regular world renderer submits walls as fans and flats as indexed triangles.
+	for (const auto& surface : levelMesh->Mesh.Surfaces)
+	{
+		if (!surface.MeshLocation.NumElements || !surface.Texture || surface.IsSky || surface.PortalIndex) continue;
+		const auto& material = GetLevelMeshPipelineKey(surface.PipelineID);
+		VkPipelineKey key = common;
+		key.DepthWrite = surface.Alpha >= 1.f;
+		key.ShaderKey = material.ShaderKey;
+		key.RenderStyle = material.RenderStyle;
+		key.DrawType = DT_Triangles;
+		if (gl_levelmesh)
+			key.DepthFunc = material.DepthFunc;
+		else
+		{
+			key.DrawType = surface.Plane.Z == 0 ? DT_TriangleFan : DT_Triangles;
+			key.ShaderKey.VertexFormat = immediateVertex;
+			key.ShaderKey.Layout.UseLevelMesh = false;
+			key.ShaderKey.Layout.AlphaTest = surface.MaskedMapCaster || (surface.Plane.Z == 0 && surface.Texture->isMasked());
+			key.ShaderKey.LightMode = material.ShaderKey.LightMode ? lightShader : 0;
+			key.ShaderKey.LightBlendMode = common.ShaderKey.LightBlendMode;
+			key.ShaderKey.LightAttenuationMode = common.ShaderKey.LightAttenuationMode;
+			if (key.DepthWrite) key.RenderStyle = LegacyRenderStyles[STYLE_Source];
+		}
+		auto addSurface = [&](VkPipelineKey draw, bool receiver)
+		{
+			setShadowMode(draw.ShaderKey, receiver);
+			(draw.DepthWrite ? opaque : translucent).insert(draw);
+			if (flashlight && !gl_levelmesh && draw.DepthWrite && !draw.ShaderKey.Layout.AlphaTest)
+			{
+				draw.ColorMask = 0;
+				draw.ShaderKey.EffectState = SHADER_NoTexture;
+				opaque.insert(draw);
+			}
+		};
+		// Saved-game thumbnails, portals and the legacy comparison draw outside
+		// the main view's emitter lighting, even with that mode enabled in game.
+		addSurface(key, false);
+		if (emitters && key.DepthWrite) addSurface(key, true);
+	}
+
+	// Projectiles can spawn after actor precaching. Restoring a save can also skip
+	// texture precaching altogether, so retain the standard sprite material families.
+	if (mapSpriteShaders.empty() && flashlight && !r_skipmats)
+		mapSpriteShaders.emplace(SHADER_PBR, 0);
+	mapSpriteShaders.emplace(SHADER_Default, 0);
+	const int spriteLighting = get_gl_spritelight();
+	for (const auto& [effect, layers] : mapSpriteShaders)
+	{
+		VkPipelineKey key = common;
+		key.DrawType = DT_TriangleStrip;
+		key.RenderStyle = LegacyRenderStyles[STYLE_Normal];
+		key.ShaderKey.Layout.AlphaTest = true;
+		key.ShaderKey.Layout.ShadeVertex = spriteLighting == 1;
+		key.ShaderKey.EffectState = MapMaterialEffect(effect);
+		key.ShaderKey.Brightmap = (layers & TEXF_Brightmap) != 0;
+		key.ShaderKey.Detailmap = (layers & TEXF_Detailmap) != 0;
+		key.ShaderKey.Glowmap = (layers & TEXF_Glowmap) != 0;
+		key.ShaderKey.LightNoNormals = spriteLighting > 0;
+		key.ShaderKey.UseSpriteCenter = spriteLighting == 1;
+		setShadowMode(key.ShaderKey, false);
+		translucent.insert(key);
+		if (spriteLighting == 2 && emitters)
+		{
+			auto receiver = key;
+			setShadowMode(receiver.ShaderKey, true);
+			translucent.insert(receiver);
+		}
+		if (effect == SHADER_Default)
+		{
+			key.RenderStyle = LegacyRenderStyles[STYLE_Add];
+			translucent.insert(key);
+			key.RenderStyle = LegacyRenderStyles[STYLE_ColorAdd];
+			translucent.insert(key);
+		}
+	}
+
+	auto queue = [&](const std::set<VkPipelineKey>& keys, bool gbuffer)
+	{
+		auto target = scene;
+		target.DrawBuffers = gbuffer ? 3 : 1;
+		auto pass = GetRenderPassManager()->GetRenderPass(target);
+		for (auto key : keys)
+		{
+			key.ShaderKey.Layout.GBufferPass = gbuffer;
+			pass->PrecachePipeline(key);
+		}
+	};
+	try
+	{
+		queue(opaque, false); // Also used by portals when the main view uses SSAO.
+		if (gl_ssao || gl_shownormals) queue(opaque, true);
+		queue(translucent, false);
+		PrecacheMapAuxiliaryPipelines(common, scene);
+		if (flashlight) PrecacheFlashlightShadowPipelines();
+	}
+	catch (...)
+	{
+		// Shader compilation and pipeline preparation can fail synchronously
+		// after other builds have started using the same shader modules.
+		GetRenderPassManager()->FinishPipelinePrecache();
+		throw;
+	}
+	GetRenderPassManager()->FinishPipelinePrecache();
+	CfxTrace::Mark("map-shader-preload-end", level.MapName.GetChars());
+}
+
+void VulkanRenderDevice::PrecacheMapAuxiliaryPipelines(const VkPipelineKey& common, VkRenderPassKey scene)
+{
+	auto scenePass = GetRenderPassManager()->GetRenderPass(scene);
+	VkPipelineKey decal = common;
+	decal.DrawType = DT_TriangleStrip;
+	decal.DepthBias = true;
+	decal.ShaderKey.ClampY = true;
+	decal.ShaderKey.Layout.AlphaTest = true;
+	for (auto style : { STYLE_Shaded, STYLE_Translucent })
+	{
+		decal.RenderStyle = style;
+		decal.ShaderKey.TextureMode = style == STYLE_Shaded ? TM_ALPHATEXTURE : TM_NORMAL;
+		scenePass->PrecachePipeline(decal);
+	}
+
+	// Sky, viewmodel and overlay passes bypass sector lighting.
+	VkPipelineKey unlit = common;
+	unlit.ShaderKey.LightMode = 0;
+	bool hasSky = false;
+	for (const auto& surface : levelMesh->Mesh.Surfaces)
+	{
+		if (surface.IsSky)
+		{
+			hasSky = true;
+			break;
+		}
+	}
+	if (hasSky)
+	{
+		VkPipelineKey portal = unlit;
+		portal.DepthWrite = true;
+		portal.ColorMask = 8; // Sky portals restore depth and mark the alpha channel.
+		portal.RenderStyle = STYLE_Source;
+		portal.ShaderKey.SpecialEffect = EFF_STENCIL;
+		portal.ShaderKey.Layout.Simple = true;
+		for (auto primitive : { DT_TriangleFan, DT_TriangleStrip })
+		{
+			portal.DrawType = primitive;
+			scenePass->PrecachePipeline(portal);
+		}
+		VkPipelineKey sky = unlit;
+		sky.DepthTest = false;
+		sky.RenderStyle = STYLE_Translucent;
+		sky.ShaderKey.VertexFormat = static_cast<VkHardwareVertexBuffer*>(mSkyData->mVertexBuffer)->VertexFormat;
+		sky.ShaderKey.TextureMode = TM_OPAQUE;
+		// A sky drawn first inherits the scene's strict depth function. After
+		// the opaque world pass the portal renderer restores less-or-equal.
+		auto queueSky = [&](VkPipelineKey key)
+		{
+			key.DepthFunc = DF_Less;
+			scenePass->PrecachePipeline(key);
+			key.DepthFunc = DF_LEqual;
+			scenePass->PrecachePipeline(key);
+		};
+		sky.DrawType = DT_TriangleFan;
+		sky.ShaderKey.EffectState = SHADER_NoTexture;
+		queueSky(sky);
+		sky.DrawType = DT_TriangleStrip;
+		for (auto id : { level.skytexture1, level.skytexture2 })
+		{
+			auto *tex = TexMan.GetGameTexture(id);
+			if (!tex || !tex->isValid()) continue;
+			auto *material = FMaterial::ValidateTexture(tex, 0);
+			if (!material) continue;
+			sky.ShaderKey.EffectState = MapMaterialEffect(material->GetShaderIndex());
+			queueSky(sky);
+		}
+	}
+
+	// Both viewmodels and the HUD draw onto the single-sample scene resolve.
+	scene.Samples = VK_SAMPLE_COUNT_1_BIT;
+	auto overlay = GetRenderPassManager()->GetRenderPass(scene);
+	VkPipelineKey weapon = unlit;
+	weapon.DepthTest = weapon.StencilTest = false;
+	weapon.RenderStyle = STYLE_Normal;
+	weapon.DrawType = DT_TriangleStrip;
+	weapon.ShaderKey.Layout.AlphaTest = true;
+	weapon.ShaderKey.UseSpriteCenter = gl_viewmodel_lighting != 0 && get_gl_spritelight() != 0;
+	weapon.ShaderKey.LightNoNormals = weapon.ShaderKey.Layout.ShadeVertex = weapon.ShaderKey.UseSpriteCenter && gl_viewmodel_lighting == 1;
+	for (const auto& [effect, layers] : mapSpriteShaders)
+	{
+		weapon.ShaderKey.EffectState = MapMaterialEffect(effect);
+		weapon.ShaderKey.Brightmap = (layers & TEXF_Brightmap) != 0;
+		weapon.ShaderKey.Glowmap = (layers & TEXF_Glowmap) != 0;
+		weapon.ShaderKey.Detailmap = (layers & TEXF_Detailmap) != 0;
+		overlay->PrecachePipeline(weapon);
+	}
+	VkPipelineKey hud = unlit;
+	hud.DepthTest = hud.StencilTest = false;
+	hud.DrawType = DT_Triangles;
+	hud.ShaderKey.Layout.AlphaTest = true;
+	hud.ShaderKey.Simple2D = hud.ShaderKey.FogAfterLights = hud.ShaderKey.FogRadial = true;
+	F2DVertexBuffer hudVertices;
+	hud.ShaderKey.VertexFormat = static_cast<VkHardwareVertexBuffer*>(hudVertices.GetBufferObjects().first)->VertexFormat;
+	for (auto style : { STYLE_Normal, STYLE_Translucent, STYLE_Shaded })
+	{
+		hud.RenderStyle = style;
+		hud.ShaderKey.TextureMode = style == STYLE_Shaded ? TM_ALPHATEXTURE : TM_NORMAL;
+		hud.ShaderKey.EffectState = SHADER_Default;
+		overlay->PrecachePipeline(hud);
+	}
+	hud.ShaderKey.TextureMode = TM_NORMAL;
+	hud.RenderStyle = STYLE_Normal;
+	for (const auto& material : mapSpriteShaders)
+	{
+		hud.ShaderKey.EffectState = MapMaterialEffect(material.first);
+		overlay->PrecachePipeline(hud);
+	}
+	hud.RenderStyle = STYLE_Translucent;
+	hud.ShaderKey.EffectState = SHADER_NoTexture;
+	overlay->PrecachePipeline(hud);
+
+	// A level transition draws the saved screen as an opaque 2D texture.
+	hud.RenderStyle = STYLE_Normal;
+	hud.ShaderKey.EffectState = SHADER_Default;
+	hud.ShaderKey.TextureMode = TM_OPAQUE;
+	hud.ShaderKey.LightMode = common.ShaderKey.LightMode;
+	overlay->PrecachePipeline(hud);
 }

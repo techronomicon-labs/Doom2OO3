@@ -39,10 +39,13 @@ float ShadowPuppetDepthVisibility(DynLightInfo light, vec3 position, int image)
 	// For perspective depth z = A + B/d, (zReceiver-zBlocker)/-B
 	// is (1/dBlocker - 1/dReceiver). A disk source of world radius R thus
 	// covers R * focalTexels * (zReceiver-zBlocker)/-B shadow texels.
-	float minusB = -(ShadowPuppetProjection * vec4(light.pos.xyz, 1.0)).z;
+	float minusB = uShadowPuppetDepthRange.y;
 	float focalTexels = 0.5 * float(size.x) * length(transpose(ShadowPuppetProjection)[0].xyz);
-	float texelsPerDepth = 3.0 * softness * focalTexels / max(minusB, 1e-4);
-	const float maxRadius = 24.0;
+	float aperture = 3.0 * softness * focalTexels;
+	float texelsPerDepth = aperture / minusB;
+	// Bound the search by the closest submitted card. A fixed texel cap
+	// makes the penumbra stop expanding when a blocker approaches the lamp.
+	float maxRadius = min(length(vec2(size)), aperture * max(1.0 / uShadowPuppetDepthRange.x - 1.0 / clip.w, 0.0));
 	float radius = clamp((projected.z - centerDepth) * texelsPerDepth, 0.0, maxRadius);
 	if (hardVisibility > 0.0)
 	{
@@ -58,10 +61,17 @@ float ShadowPuppetDepthVisibility(DynLightInfo light, vec3 position, int image)
 			vec2(34,14), vec2(14,34), vec2(-14,34), vec2(-34,14));
 		for (int i = 0; i < 20; ++i)
 		{
-			vec2 offset = probes[i] / vec2(size);
+			// Preserve close probes for contact shadows and spread outer rings when
+			// a near caster subtends a large part of the light image.
+			vec2 probe = probes[i];
+			float stretch = max(maxRadius / 24.0 - 1.0, 0.0);
+			probe *= 1.0 + stretch * min(dot(probe, probe) / (34.0 * 34.0), 1.0);
+			vec2 offset = probe / vec2(size);
 			float blocker = min(PuppetNearestDepth(image, uv + offset), PuppetNearestDepth(image, uv - offset));
 			if (blocker >= projected.z) continue;
-			radius = min((projected.z - blocker) * texelsPerDepth, maxRadius);
+			float candidate = min((projected.z - blocker) * texelsPerDepth, maxRadius);
+			if (length(probe) > candidate + 1.5) continue;
+			radius = candidate;
 			break;
 		}
 		if (radius == 0.0) return 1.0;

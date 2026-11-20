@@ -6,6 +6,7 @@
 #include "matrix.h"
 #include "vulkan/descriptorsets/vk_descriptorset.h"
 #include "vulkan/shaders/vk_shadercache.h"
+#include "vulkan/pipelines/vk_renderpass.h"
 #include "vulkan/textures/vk_renderbuffers.h"
 #include "vulkan/vk_renderstate.h"
 
@@ -115,6 +116,18 @@ bool VkShadowPuppetStencil::Supported() const
 		format.Samples(samples).Usage(VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT).IsFormatSupported(device));
 }
 
+void VkShadowPuppetStencil::PreparePipelines()
+{
+	const auto buffers = Fb->GetBuffers();
+	const auto samples = buffers->GetSceneSamples();
+	if (Pass && Samples == samples) return;
+	// Prior commands can still hold the old render pass and its image views.
+	if (Visibility.Image) Fb->WaitForCommands(false);
+	Samples = samples;
+	CreatePipelines();
+	if (Visibility.Image) ResizeVisibility(buffers->GetWidth(), buffers->GetHeight());
+}
+
 void VkShadowPuppetStencil::CreatePipelines()
 {
 	auto device = Fb->GetDevice();
@@ -157,6 +170,7 @@ void VkShadowPuppetStencil::CreatePipelines()
 	const VkStencilOpState back = { VK_STENCIL_OP_KEEP, VK_STENCIL_OP_KEEP, VK_STENCIL_OP_INCREMENT_AND_WRAP,
 		VK_COMPARE_OP_ALWAYS, 0xff, 0xff, 0 };
 	Volume = GraphicsPipelineBuilder()
+		.Cache(Fb->GetRenderPassManager()->GetCache())
 		.AddVertexShader(CachedGLSLCompiler().Type(ShaderType::Vertex)
 			.AddSource("puppet_stencil_volume.vert", VolumeVertexShader).Compile(Fb))
 		.AddFragmentShader(CachedGLSLCompiler().Type(ShaderType::Fragment)
@@ -179,6 +193,7 @@ void VkShadowPuppetStencil::CreatePipelines()
 		.Create(device);
 
 	Resolve = GraphicsPipelineBuilder()
+		.Cache(Fb->GetRenderPassManager()->GetCache())
 		.AddVertexShader(CachedGLSLCompiler().Type(ShaderType::Vertex)
 			.AddSource("puppet_stencil_resolve.vert", ResolveVertexShader).Compile(Fb))
 		.AddFragmentShader(CachedGLSLCompiler().Type(ShaderType::Fragment)
@@ -240,17 +255,10 @@ int VkShadowPuppetStencil::Render(const HWShadowPuppetMesh& mesh, FVector3 light
 		AppendVolume(volume, mesh, light, from, end);
 		from = end;
 	}
-	const auto samples = buffers->GetSceneSamples();
-	const bool newPass = !Pass || Samples != samples;
-	if (newPass || !Visibility.Image || Visibility.Image->width != width || Visibility.Image->height != height)
+	PreparePipelines();
+	if (!Visibility.Image || Visibility.Image->width != width || Visibility.Image->height != height)
 	{
-		// A recorded draw can still hold both the descriptor and the old pass.
 		if (Visibility.Image) Fb->WaitForCommands(false);
-		if (newPass)
-		{
-			Samples = samples;
-			CreatePipelines();
-		}
 		ResizeVisibility(width, height);
 	}
 

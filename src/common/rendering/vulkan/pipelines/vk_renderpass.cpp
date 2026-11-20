@@ -160,11 +160,23 @@ void VkRenderPassManager::ProcessMainThreadTasks()
 	tasks.swap(Worker.MainTasks);
 	lock.unlock();
 
+	std::exception_ptr failure;
 	for (auto& task : tasks)
 	{
-		task();
+		try { task(); }
+		catch (...) { if (!failure) failure = std::current_exception(); }
 		Pf020VulkanDiagnostics::MainTaskCompleted();
 	}
+	if (failure) std::rethrow_exception(failure);
+}
+
+void VkRenderPassManager::FinishPipelinePrecache()
+{
+	{
+		std::unique_lock lock(Worker.Mutex);
+		Worker.Idle.wait(lock, [&] { return Worker.ActivePriority == 0 && Worker.PriorityTasks.empty(); });
+	}
+	ProcessMainThreadTasks(); // Publish completed pipelines before any scene draw can look them up.
 }
 
 void VkRenderPassManager::RunOnWorkerThread(std::function<void()> task, bool precache)
@@ -198,8 +210,8 @@ void VkRenderPassManager::StopWorkerThreads()
 	}
 	lock.lock();
 	Worker.Threads.clear();
-	Worker.PrecacheTasks.clear();
-	Worker.PriorityTasks.clear();
+	// A runtime worker-count change restarts this pool. Keep queued requests
+	// and their reserved pipeline slots paired across that restart.
 	Worker.StopFlag = false;
 }
 
@@ -214,7 +226,8 @@ void VkRenderPassManager::WorkerThreadMain()
 
 		std::function<void()> task;
 
-		if (!Worker.PriorityTasks.empty())
+		const bool priority = !Worker.PriorityTasks.empty();
+		if (priority)
 		{
 			task = std::move(Worker.PriorityTasks.front());
 			Worker.PriorityTasks.pop_front();
@@ -227,6 +240,7 @@ void VkRenderPassManager::WorkerThreadMain()
 
 		if (task)
 		{
+			if (priority) ++Worker.ActivePriority;
 			Pf020VulkanDiagnostics::WorkerStarted();
 			lock.unlock();
 
@@ -244,6 +258,8 @@ void VkRenderPassManager::WorkerThreadMain()
 			Pf020VulkanDiagnostics::WorkerFinished(failed);
 
 			lock.lock();
+			if (priority && --Worker.ActivePriority == 0 && Worker.PriorityTasks.empty())
+				Worker.Idle.notify_all();
 		}
 	}
 }
@@ -500,6 +516,11 @@ VulkanRenderPass *VkRenderPassSetup::GetRenderPass(int clearTargets)
 	return RenderPasses[clearTargets].get();
 }
 
+void VkRenderPassSetup::PrecachePipeline(const VkPipelineKey& key)
+{
+	GetSpecializedPipeline(key);
+}
+
 VulkanPipeline *VkRenderPassSetup::GetPipeline(const VkPipelineKey &key, UniformStructHolder &Uniforms)
 {
 	if (UsePipelineLibrary)
@@ -569,7 +590,17 @@ PipelineData* VkRenderPassSetup::GetSpecializedPipeline(const VkPipelineKey& key
 
 			cycle_t ct;
 			ct.ResetAndClock();
-			data->pipeline = data->builder->Create(fb->GetDevice());
+			try
+			{
+				data->pipeline = data->builder->Create(fb->GetDevice());
+			}
+			catch (...)
+			{
+				// The slot held a pending build. Release it on the owner thread so
+				// recovery from a failed map can request this key again.
+				passManager->RunOnMainThread([this, k]() { SpecializedPipelines.erase(k); });
+				throw;
+			}
 			ct.Unclock();
 			const auto duration = ct.TimeMS();
 
