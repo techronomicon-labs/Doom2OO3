@@ -164,7 +164,8 @@ class SDVKLocalFlashlightHandler : EventHandler
             Vector3 viewLeft = (-sin(pawn.Angle), cos(pawn.Angle), 0);
             Vector3 viewUp = (sin(pawn.Pitch)*cos(pawn.Angle), sin(pawn.Pitch)*sin(pawn.Angle), cos(pawn.Pitch));
             Vector3 eye = (pawn.Pos.X,pawn.Pos.Y,players[p].viewz);
-            Vector3 origin = eye + viewForward*headOffset.X + viewLeft*headOffset.Y + viewUp*headOffset.Z;
+            Vector3 origin = LineTracer.ClipFlashlightMount(eye, pawn.CurSector,
+                viewForward*headOffset.X + viewLeft*headOffset.Y + viewUp*headOffset.Z);
             for (int k = 0; k < MAX_BEAMS; ++k)
             {
                 if (k >= count) { DropBeam(p,k); continue; }

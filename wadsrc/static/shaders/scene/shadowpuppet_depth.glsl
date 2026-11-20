@@ -18,49 +18,6 @@ float PuppetDiskVisibility(int image, vec2 uv, vec2 size, float receiverDepth)
 	return mix(mix(visible.w, visible.z, f.x), mix(visible.x, visible.y, f.x), f.y);
 }
 
-float FlashlightMapVisibility(DynLightInfo light, vec3 position, int image)
-{
-	vec4 clip = ShadowPuppetProjection * vec4(position, 1.0);
-	if (clip.w <= 0.0) return 1.0;
-	vec3 projected = clip.xyz / clip.w;
-	if (any(greaterThanEqual(abs(projected.xy), vec2(1.0))) || projected.z < 0.0 || projected.z > 1.0)
-		return 1.0;
-
-	// The receiver also appears in this depth map. Compare at the centre of
-	// each of the four texels on its geometric plane: a grazing floor has
-	// substantially different depths in neighbouring texels.
-	vec2 size = vec2(textureSize(textures[nonuniformEXT(image)], 0));
-	vec2 uv = 0.5 * projected.xy + 0.5;
-	vec2 texel = uv * size - 0.5;
-	vec2 fraction = fract(texel);
-	vec2 lo = max(floor(texel), vec2(0.0)) - texel;
-	vec2 hi = min(floor(texel) + 1.0, size - 1.0) - texel;
-	vec3 normal = vWorldNormal.xyz;
-	float planeDistance = dot(normal, position - light.pos.xyz);
-	mat4 rows = transpose(ShadowPuppetProjection);
-	float b = dot(rows[2], vec4(light.pos.xyz, 1.0));
-	vec2 slope = vec2(0.0);
-	if (abs(planeDistance) > 1e-4)
-	{
-		vec3 x = rows[0].xyz, y = rows[1].xyz;
-		// For a ray with unit axial depth, 1/d = dot(normal, ray) / planeDistance.
-		// Projected depth is A + B/d and changes linearly across the plane.
-		slope = 2.0 * b / (size * planeDistance) * vec2(dot(normal, x) / dot(x,x), dot(normal, y) / dot(y,y));
-	}
-	// Near the mount, evaluating the same plane once as an interpolated map
-	// depth and once as a projected world position can differ by several ULPs.
-	// Convert a 1/8 map-unit contact tolerance to perspective depth; allow for
-	// subtexel rasterisation rounding on steeply sloped depth surfaces as well.
-	float bias = 1e-6 + 0.125 * abs(b) / (clip.w * clip.w) + (abs(slope.x) + abs(slope.y)) / 128.0;
-	vec4 receiver = vec4(projected.z - bias) +
-		slope.x * vec4(lo.x, hi.x, hi.x, lo.x) + slope.y * vec4(hi.y, hi.y, lo.y, lo.y);
-	// Address the chosen four texels unambiguously even when hardware texture
-	// coordinates round the original UV across a subtexel boundary.
-	vec4 depths = textureGather(textures[nonuniformEXT(image)], (floor(texel) + 1.0) / size);
-	vec4 visible = step(receiver, depths);
-	return mix(mix(visible.w, visible.z, fraction.x), mix(visible.x, visible.y, fraction.x), fraction.y);
-}
-
 float ShadowPuppetDepthVisibility(DynLightInfo light, vec3 position, int image)
 {
 	vec3 toLight = light.pos.xyz - position;

@@ -39,8 +39,8 @@ struct SurfaceInfo
 	int32_t MapShadowGroup;
 	uint32_t LightStart;
 	uint32_t LightEnd;
-	uint32_t Padding1;
-	uint32_t Padding2;
+	int32_t MaskedTextureIndex;
+	float MaskThreshold;
 };
 
 struct PortalInfo

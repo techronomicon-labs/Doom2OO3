@@ -37,7 +37,7 @@ bool VkShadowPuppetDepth::CreateResources()
 	ImageBuilder image;
 	image.Size(MapSize, MapSize)
 		.Usage(VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT)
-		.DebugName(MapGeometry ? "FlashlightMapDepth.Image" : "PuppetDepth.Image");
+		.DebugName("PuppetDepth.Image");
 	if (!image.Format(format).IsFormatSupported(device))
 	{
 		format = VK_FORMAT_D16_UNORM;
@@ -86,9 +86,6 @@ bool VkShadowPuppetDepth::CreateResources()
 		.Scissor(0, 0, MapSize, MapSize)
 		.Cull(VK_CULL_MODE_NONE, VK_FRONT_FACE_COUNTER_CLOCKWISE)
 		.DepthStencilEnable(true, true, false)
-		// The map surfaces also receive shadows. Round the stored depth away
-		// from the light in units of the selected D32 or D16 depth format.
-		.DepthBias(MapGeometry, 2.0f, 0.0f, 0.0f)
 		.DepthFunc(VK_COMPARE_OP_LESS)
 		.Layout(Layout.get())
 		.RenderPass(Pass.get())
@@ -111,7 +108,7 @@ int VkShadowPuppetDepth::Render(const TArray<FVector3>& triangles, const VSMatri
 	Fb->GetRenderState()->EndRenderPass();
 	auto commands = Fb->GetCommands();
 	auto draw = commands->GetDrawCommands();
-	commands->PushGroup(draw, MapGeometry ? "flashlight.map-depth" : "puppet.depth");
+	commands->PushGroup(draw, "puppet.depth");
 
 	UploadShadowPuppetVertices(Fb, draw, Vertices, triangles.Data(), count * sizeof(FVector3), "PuppetDepth.Vertices");
 	VkImageTransition().AddImage(&Depth, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, false).Execute(draw);

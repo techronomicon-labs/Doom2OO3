@@ -33,7 +33,7 @@ struct HWShadowPuppetScene
 	std::unordered_set<const AActor*> Casters;
 };
 
-bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene, bool sprites, bool stencil, bool mapGeometry);
+bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene, bool stencil);
 VSMatrix ShadowPuppetVulkanProjection(const VSMatrix& projection, const VSMatrix& view);
 
 extern thread_local HWShadowPuppetLightSet HWShadowPuppetFlashlight;

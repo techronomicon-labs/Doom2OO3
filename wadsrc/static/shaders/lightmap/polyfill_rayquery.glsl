@@ -6,9 +6,18 @@ struct TraceResult
 	int primitiveIndex;
 };
 
-bool IsOpaqueMapCaster(int primitiveIndex, int group)
+vec2 GetSurfaceUV(int primitiveIndex, vec3 primitiveWeights);
+
+bool FlashlightMaskHit(int primitiveIndex, uint surfaceIndex, vec2 bc)
 {
-	return surfaces[surfaceIndices[primitiveIndex]].MapShadowGroup == group;
+	vec2 uv = GetSurfaceUV(primitiveIndex, vec3(bc, 1.0 - bc.x - bc.y));
+	int image = surfaces[surfaceIndex].MaskedTextureIndex;
+	if (image < 0)
+	{
+		if (uv.y < 0.0 || uv.y > 1.0) return false;
+		image = ~image;
+	}
+	return textureLod(textures[nonuniformEXT(image)], uv, 0.0).a > surfaces[surfaceIndex].MaskThreshold;
 }
 
 #if defined(USE_RAYQUERY) || defined(SUPPORTS_RAYQUERY)
@@ -91,7 +100,7 @@ bool TraceAnyHit(vec3 origin, float tmin, vec3 dir, float tmax)
 	return rayQueryGetIntersectionTypeEXT(rayQuery, true) != gl_RayQueryCommittedIntersectionNoneEXT;
 }
 
-bool TraceOpaqueMapHit(vec3 origin, vec3 dir, float distance, int group)
+bool TraceMapHit(vec3 origin, vec3 dir, float distance, int group, bool includeMasked)
 {
 	rayQueryEXT query;
 	// Force candidate reporting even for BLASes built with the opaque flag.
@@ -104,7 +113,10 @@ bool TraceOpaqueMapHit(vec3 origin, vec3 dir, float distance, int group)
 		{
 			int primitive = rayQueryGetIntersectionInstanceCustomIndexEXT(query, false) +
 				rayQueryGetIntersectionPrimitiveIndexEXT(query, false);
-			if (IsOpaqueMapCaster(primitive, group))
+			uint surface = surfaceIndices[primitive];
+			int caster = surfaces[surface].MapShadowGroup;
+			if (caster == group || (includeMasked && caster == -group &&
+				FlashlightMaskHit(primitive, surface, rayQueryGetIntersectionBarycentricsEXT(query, false))))
 				rayQueryConfirmIntersectionEXT(query);
 		}
 	}
@@ -274,7 +286,7 @@ float MapNodeEntry(int node, vec3 origin, vec3 invRay, vec3 absInvRay, bvec3 par
 	return enter <= leave ? enter : 2.0;
 }
 
-bool MapTriangleHit(int element, vec3 origin, vec3 ray)
+bool MapTriangleHit(int element, vec3 origin, vec3 ray, out vec3 scaledWeights)
 {
 	vec3 a = vertices[elements[element]].pos;
 	vec3 ab = vertices[elements[element + 1]].pos - a;
@@ -286,11 +298,12 @@ bool MapTriangleHit(int element, vec3 origin, vec3 ray)
 	float u = dot(t, p) * side, v = dot(ray, q) * side;
 	float distance = dot(ac, q) * side;
 	float scale = abs(det);
+	scaledWeights = vec3(u, v, scale);
 	return scale >= FLT_EPSILON && min(u, v) >= 0.0 && u + v <= scale &&
 		distance > FLT_EPSILON * scale && distance < scale;
 }
 
-bool TraceOpaqueMapHit(vec3 origin, vec3 dir, float distance, int group)
+bool TraceMapHit(vec3 origin, vec3 dir, float distance, int group, bool includeMasked)
 {
 	if (distance <= 0.0 || nodesRoot < 0) return false;
 	// All rays for a light start at the same end of the segment. Neighbouring
@@ -308,8 +321,16 @@ bool TraceOpaqueMapHit(vec3 origin, vec3 dir, float distance, int group)
 		int element = nodes[node].element_index;
 		if (element >= 0)
 		{
-			if (MapTriangleHit(element, origin, ray) && IsOpaqueMapCaster(element / 3, group))
-				return true;
+			vec3 weights;
+			if (MapTriangleHit(element, origin, ray, weights))
+			{
+				int primitive = element / 3;
+				uint surface = surfaceIndices[primitive];
+				int caster = surfaces[surface].MapShadowGroup;
+				if (caster == group || (includeMasked && caster == -group &&
+					FlashlightMaskHit(primitive, surface, weights.xy / weights.z)))
+					return true;
+			}
 		}
 		else
 		{

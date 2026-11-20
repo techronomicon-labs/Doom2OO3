@@ -213,7 +213,7 @@ float inverseSquareAttenuation(float dist, float radius, float strength, float l
 	return mix(((b * b) / (dist * dist + 1.0f) * strength), clamp((radius - dist) / radius, 0.0f, 1.0f), linearity);
 }
 
-void HWDrawInfo::GetDynSpriteLight(AActor *self, sun_trace_cache_t * traceCache, double x, double y, double z, FLightNode *node, int portalgroup, float *out, bool fullbright)
+void HWDrawInfo::GetDynSpriteLight(AActor *self, sun_trace_cache_t * traceCache, double x, double y, double z, FLightNode *node, int portalgroup, float *out, bool fullbright, FDynLightData* flashlight)
 {
 	if (fullbright || get_gl_spritelight() > 0)
 		return;
@@ -228,6 +228,7 @@ void HWDrawInfo::GetDynSpriteLight(AActor *self, sun_trace_cache_t * traceCache,
 	out[0] = out[1] = out[2] = 0.f;
 
 	ActorTraceStaticLight staticLight(self, portalgroup);
+	const sector_t* mapReceiver = flashlight ? (self ? self->Sector : Level->PointInSector(x, y)) : nullptr;
 
 	if (ActorTraceStaticLight::TraceSunVisibility(x, y, z, traceCache, (self ? staticLight.ActorMoved : traceCache ? traceCache->Pos != DVector3(x, y, z) : false)))
 	{
@@ -275,13 +276,14 @@ void HWDrawInfo::GetDynSpriteLight(AActor *self, sun_trace_cache_t * traceCache,
 
 			if (radius > 0 && dist < radius * radius)
 			{
+				const int mapGroup = mapReceiver ? HWFlashlightMapGroup(this, light, portalgroup, mapReceiver) : 0;
 				if (observing) observationDecision = "visibility-rejected";
 				dist = sqrtf(dist);	// only calculate the square root if we really need it.
 
 				if (light->IsSpot() || light->TraceActors())
 					L *= -1.0f / dist;
 
-				if (staticLight.TraceLightVisbility(node, L, dist, light->updated))
+				if (mapGroup || staticLight.TraceLightVisbility(node, L, dist, light->updated))
 				{
 					if (observing) observationDecision = "attenuation-or-shadow-rejected";
 					if(level.info->lightattenuationmode == ELightAttenuationMode::INVERSE_SQUARE)
@@ -329,9 +331,27 @@ void HWDrawInfo::GetDynSpriteLight(AActor *self, sun_trace_cache_t * traceCache,
 							lb = (bright - lb) * -1;
 						}
 
-						out[0] += lr * frac;
-						out[1] += lg * frac;
-						out[2] += lb * frac;
+						if (mapGroup)
+						{
+							// Keep the CPU mode's centre-sampled RGB. Only the beam's visibility
+							// varies over the card. Its signed RGB already includes the light style.
+							FDynLightInfo beam = {};
+							beam.x = float(origin.X);
+							beam.y = float(origin.Z);
+							beam.z = float(origin.Y);
+							beam.r = lr * frac;
+							beam.g = lg * frac;
+							beam.b = lb * frac;
+							beam.flags = LIGHTINFO_FLASHLIGHT_MAP_SHADOW | LIGHTINFO_CPU_SPRITE_COLOR;
+							beam.shadowIndex = mapGroup;
+							flashlight->arrays[LIGHTARRAY_NORMAL].Push(beam);
+						}
+						else
+						{
+							out[0] += lr * frac;
+							out[1] += lg * frac;
+							out[2] += lb * frac;
+						}
 					}
 				}
 			}
@@ -342,15 +362,15 @@ void HWDrawInfo::GetDynSpriteLight(AActor *self, sun_trace_cache_t * traceCache,
 	}
 }
 
-void HWDrawInfo::GetDynSpriteLight(AActor *thing, particle_t *particle, sun_trace_cache_t * traceCache, float *out)
+void HWDrawInfo::GetDynSpriteLight(AActor *thing, particle_t *particle, sun_trace_cache_t * traceCache, float *out, FDynLightData* flashlight)
 {
 	if (thing)
 	{
-		GetDynSpriteLight(thing, &thing->StaticLightsTraceCache, thing->X(), thing->Y(), thing->Center(), thing->section->lighthead, thing->Sector->PortalGroup, out, (thing->flags5 & MF5_BRIGHT));
+		GetDynSpriteLight(thing, &thing->StaticLightsTraceCache, thing->X(), thing->Y(), thing->Center(), thing->section->lighthead, thing->Sector->PortalGroup, out, (thing->flags5 & MF5_BRIGHT), flashlight);
 	}
 	else if (particle)
 	{
-		GetDynSpriteLight(nullptr, traceCache, particle->Pos.X, particle->Pos.Y, particle->Pos.Z, particle->subsector->section->lighthead, particle->subsector->sector->PortalGroup, out, (particle->flags & SPF_FULLBRIGHT));
+		GetDynSpriteLight(nullptr, traceCache, particle->Pos.X, particle->Pos.Y, particle->Pos.Z, particle->subsector->section->lighthead, particle->subsector->sector->PortalGroup, out, (particle->flags & SPF_FULLBRIGHT), flashlight);
 	}
 }
 
@@ -370,6 +390,10 @@ void HWDrawInfo::GetDynSpriteLightList(AActor *self, double x, double y, double 
 	ActorTraceStaticLight staticLight(flashlightOnly ? nullptr : self, actorPortalGroup);
 
 	int gl_spritelight = get_gl_spritelight();
+	// Weapon draws share this collector but sample lighting at a synthetic HUD position.
+	const sector_t* mapReceiver = nullptr;
+	if (UsesFlashlightMapShadows() && self != Viewpoint.camera)
+		mapReceiver = self ? self->Sector : Level->PointInSector(x, y);
 
 	if(isModel && gl_fakemodellight)
 	{
@@ -453,7 +477,11 @@ void HWDrawInfo::GetDynSpriteLightList(AActor *self, double x, double y, double 
 				if (selections)
 					selections->push_back({ light, group, LightQueryClass(light) });
 				if (output)
-					AddLightToList(*output, group, light, true, gl_spritelight > 0);
+				{
+					const int mapGroup = HWFlashlightMapGroup(this, light, group, mapReceiver);
+					AddLightToList(*output, group, light, true, gl_spritelight > 0,
+						mapGroup ? LIGHTINFO_FLASHLIGHT_MAP_SHADOW : 0, mapGroup);
+				}
 			}
 			else if (countDiagnostics)
 			{

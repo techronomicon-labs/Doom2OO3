@@ -277,7 +277,6 @@ VulkanRenderDevice::~VulkanRenderDevice()
 	delete mSkyData;
 	delete mShadowMap;
 	mShadowPuppetDepth.reset();
-	mFlashlightMapDepth.reset();
 	mShadowPuppetStencil.reset();
 
 	if (mDescriptorSetManager)
@@ -307,13 +306,11 @@ int VulkanRenderDevice::RenderShadowPuppetStencil(const HWShadowPuppetMesh& mesh
 	return mShadowPuppetStencil->Render(mesh, origin, cameraProjection, viewport);
 }
 
-int VulkanRenderDevice::RenderFlashlightDepth(FlashlightDepthCasters casters, const TArray<FVector3>& triangles, const VSMatrix& lightProjection)
+int VulkanRenderDevice::RenderShadowPuppetDepth(const TArray<FVector3>& triangles, const VSMatrix& lightProjection)
 {
-	const bool mapGeometry = casters == FlashlightDepthCasters::MapGeometry;
-	auto& depth = mapGeometry ? mFlashlightMapDepth : mShadowPuppetDepth;
-	if (!depth)
-		depth = std::make_unique<VkShadowPuppetDepth>(this, mapGeometry);
-	return depth->Render(triangles, lightProjection);
+	if (!mShadowPuppetDepth)
+		mShadowPuppetDepth = std::make_unique<VkShadowPuppetDepth>(this);
+	return mShadowPuppetDepth->Render(triangles, lightProjection);
 }
 
 bool VulkanRenderDevice::SupportsRenderTargetFormat(VkFormat format)

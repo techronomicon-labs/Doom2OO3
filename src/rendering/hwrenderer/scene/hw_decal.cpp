@@ -876,7 +876,7 @@ int HWDecalCreateInfo::SetupLights(HWDrawInfo* di, FRenderState& state, FDynLigh
 				}
 				if (outcnt[0] != 4 && outcnt[1] != 4 && outcnt[2] != 4 && outcnt[3] != 4)
 				{
-					draw_dlight += GetLight(lightdata, frontsector->PortalGroup, p, node->lightsource, true);
+					draw_dlight += GetLight(lightdata, frontsector->PortalGroup, p, node->lightsource, true, nullptr, di, frontsector);
 				}
 			}
 		}

@@ -1,5 +1,7 @@
 vec2 lightAttenuation(DynLightInfo light, vec3 normal, vec3 viewdir, float glossiness, float specularLevel)
 {
+	if ((light.flags & LIGHTINFO_CPU_SPRITE_COLOR) != 0)
+		return vec2(WorldLightVisibility(light, pixelpos.xyz, ivec2(gl_FragCoord.xy)), 0.0);
 	if (!UsePackedLight(light))
 		return vec2(0.0);
 	bool directional = (light.flags & LIGHTINFO_STAGE_B_DIRECTIONAL) != 0;

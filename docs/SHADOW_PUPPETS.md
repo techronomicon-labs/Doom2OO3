@@ -4,7 +4,9 @@ Press **L** to turn on the flashlight. **O → Map geometry shadows** switches f
 
 **J** cycles **Off → Stencil → Depth** for sprite shadows. **O** also lets you set **Sprite depth edge softness**. A fresh campaign profile starts in Depth. Each game's profile remembers both shadow settings and the softness.
 
-The flashlight renders opaque level geometry into its own 1024 × 1024 depth image. It looks up nearby triangles in the level mesh from the lamp's position, so an offscreen wall can still cast onto a visible floor. Moving doors and lifts use their current rendered positions. Masked fence textures let the beam through. A shadow blocks the flashlight’s direct diffuse and specular light. Sector light and other sources remain visible in the shadow. The console setting is `gl_flashlight_map_shadows`.
+With **Map geometry shadows** on, the renderer traces the segment from the mounted flashlight to the receiving surface through the level mesh. Walls, steps, moving doors and lifts can block the beam even when the obstruction is offscreen or close to the lamp. The bars of a masked grate cast shadows through their opaque texels and leave the gaps lit. Walls, floors, ceilings, lit actor sprites and lit particles receive these shadows. An object in shadow loses the flashlight’s direct light and keeps its ambient and fixture lighting. The console setting is `gl_flashlight_map_shadows`, and it works with sprite shadows set to Off, Stencil or Depth.
+
+With per-pixel sprite lighting, a crossing shadow can cover part of a monster. CPU sprite lighting keeps the beam brightness calculated at the actor’s centre and masks it per pixel. Vertex sprite lighting tests visibility at the actor’s centre, so the part of a standing sprite drawn below the floor cannot dim the rest. Vertex-lit particles use their own corners.
 
 Enemies and solid scenery cast from their current sprite frame. Doom selects the directional artwork and mirror as seen from the flashlight, then projects its opaque texels onto map geometry. The silhouette follows animation, scale, patch offsets and floor clipping. DBP50 uses its own replacements and effective actor flags. An exploding barrel stops blocking when it loses solidity. Flying enemies and ceiling-hung decorations cast from their actual heights. Pickups, projectiles and non-solid scenery let the beam through.
 
@@ -15,7 +17,7 @@ Enemies and solid scenery cast from their current sprite frame. Doom selects the
 
 `VkRenderBuffers` owns scene depth/stencil. The stencil pass must preserve scene depth and return the attachment in the layout expected by the immediate scene. Each backend owns its visibility image and uses Vulkan's existing command retirement and bindless descriptor mechanisms. A frame with no effective result uses the ordinary flashlight path. Depth only needs the spotlight projection. Stencil resolves at the camera viewport and can increase cost with screen resolution.
 
-`hw_dynlightdata.cpp` marks the spotlights belonging to the player's flashlight. The normal, specular, and PBR fragment shaders evaluate visibility once per receiving fragment and apply it to each marked spotlight's direct attenuation. Ambient, probes, and unrelated lights follow the same shader paths in every mode.
+`hw_dynlightdata.cpp` marks the spotlights belonging to the player's flashlight. The normal, specular and PBR shaders share the map visibility result between beam lobes at the same position. On world surfaces that also receive sprite shadows, the shader combines both visibility results.
 
 ## Play the comparison room
 
@@ -23,9 +25,11 @@ Open **Play Doom II - Shadow Puppets.cmd**. A new profile starts in **Off**, wit
 
 For a hard/soft comparison, choose **F1 → Preview soft Depth**. This selects Depth at softness **1.00** for the current session. Look at the outline beside the Imp’s foot, then follow it back across the stairs. Contact stays sharp in both modes. Farther behind the Imp, Depth gradually lets light around the silhouette while Stencil keeps a hard outline. At zero softness, both modes model a point light and their outlines should closely match. Use **Sprite shadows (J)** and **Sprite depth edge softness** to save a preference.
 
-The flashlight mount tilts with mouselook. **F1 → Flashlight settings → Position and aim** adjusts it relative to your view. With both aim offsets at zero the beam points parallel to the crosshair. An offset mount still produces parallax on nearby surfaces. Positive vertical aim angles tilt the beam above the crosshair.
+The flashlight mount tilts with mouselook. **F1 → Flashlight settings → Position and aim** adjusts it relative to your view. With both aim offsets at zero the beam points parallel to the crosshair. An offset mount still produces parallax on nearby surfaces. When a wall, floor or ceiling comes between your eye and the mount, the lamp stops just before that surface and returns to its saved offset as you move away. Positive vertical aim angles tilt the beam above the crosshair.
 
-The comparison launcher selects true-colour immediate Vulkan rendering, requests 4× MSAA, and disables SSAO and the optional legacy sprite-floor shadows. In normal play a sprite that casts a flashlight shadow skips its duplicate legacy floor shadow for that view. Opaque walls and flats receive projected shadows across the full beam, including the outer lobes of an elliptical spotlight. Masked surfaces, sprites, viewmodels, special vision and portal views use their ordinary lighting. The passes support the single-player main view. Maps with line portals or linked sector portals use the ordinary flashlight. On maps with 3D floors, opaque geometry can cast and sprite shadows use their fallback. Stencil needs depth clamp and a visibility attachment matching the scene's actual sample count.
+The comparison launcher selects true-colour immediate Vulkan rendering, requests 4× MSAA, and disables SSAO and the optional legacy sprite-floor shadows. In normal play a sprite that casts a flashlight shadow skips its duplicate legacy floor shadow for that view. Its silhouette can fall on opaque walls and flats across the full beam, including the outer lobes of an elliptical spotlight. Stencil needs depth clamp and a visibility attachment matching the scene's actual sample count.
+
+Map geometry shadows work in the single-player main view on the immediate Vulkan renderer, including with SSAO enabled. The trace stays within the lamp’s level-mesh group. Transformed portal views, special vision and weapon sprites use their usual lighting. Sprite silhouette rendering additionally requires the normal colour pass and falls back on maps with line portals, linked sector portals or 3D floors.
 
 The renderer considers sprites submitted in the main view that intersect the beam and have line of sight from the flashlight. Directly above or below an upright sprite, its edge presents no area to the light. Depth uses a 1024 × 1024 image (4 MiB D32 or 2 MiB D16) and a 0.30-unit contact bias. **Depth edge softness** ranges from 0 to 2 and defaults to 1. Positive values simulate a flashlight with a finite emitting area. Blocker and receiver depth determine the width of the penumbra. Stencil resolves hard edges with MSAA.
 
@@ -60,7 +64,7 @@ py tools/doom2_showcase/capture_campaign_shadows.py --doom2 build/issue-5-campai
   --dbp50 build/issue-5-dbp50-complete-playtest --out build/campaign-shadow-check
 ```
 
-To check map occlusion, capture the moving door and offscreen pillar with a built Windows runtime. The tool compares rendered pixels against light rays through the test room and checks the independent fill light with the flashlight off.
+To check map occlusion, use the native capture tool with a built Windows runtime. It compares rendered pixels against reference rays through a moving door, an offscreen pillar, a sill next to the lamp and a masked grate. A solid decoration straddles the sill’s shadow so both sides are visible on one sprite. Flashlight-off captures measure the independent room light.
 
 ```powershell
 py tools/doom2_showcase/capture_flashlight_map_shadows.py --exe build/windows/RelWithDebInfo/vkdoom.exe `
