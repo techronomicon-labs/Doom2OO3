@@ -24,7 +24,10 @@ class SDVKLocalFlashlightBeamNoActors : SDVKLocalFlashlightBeam
 class SDVKLocalFlashlightHandler : EventHandler
 {
     const MAX_BEAMS = 5;
+    const MAX_POWER = 400;
+    const MAX_REACH = 2048;
     const DEFAULT_OFFSET_X = 16;
+    const DEFAULT_OFFSET_Y = 0;
     const DEFAULT_OFFSET_Z = -12;
     const DEFAULT_AIM_PITCH = 4;
     bool Enabled[MAXPLAYERS];
@@ -100,13 +103,13 @@ class SDVKLocalFlashlightHandler : EventHandler
             p, int(Enabled[p]), int(count > 0), pawn.Pos.X, pawn.Pos.Y,
             players[p].viewz, pawn.Angle, pawn.Pitch);
         Console.Printf("SDVK_FLASHLIGHT_CONFIG power=%.3f horizontal=%.3f vertical=%.3f range=%.3f lightactors=%d beams=%d",
-            ReadSetting('sdvk_fl_power',p,100,0,100),
+            ReadSetting('sdvk_fl_power',p,100,0,MAX_POWER),
             ReadSetting('sdvk_fl_horizontal',p,56,28,84),
             ReadSetting('sdvk_fl_vertical',p,56,28,84),
-            ReadSetting('sdvk_fl_range',p,360,128,768),
+            ReadSetting('sdvk_fl_range',p,360,128,MAX_REACH),
             int(ReadSetting('sdvk_fl_lightactors',p,1,0,1) >= .5), count);
         Console.Printf("SDVK_FLASHLIGHT_MOUNT x=%.3f y=%.3f z=%.3f yaw=%.3f pitch=%.3f",
-            ReadSetting('sdvk_fl_offset_x',p,DEFAULT_OFFSET_X,-16,16), ReadSetting('sdvk_fl_offset_y',p,0,-16,16),
+            ReadSetting('sdvk_fl_offset_x',p,DEFAULT_OFFSET_X,-16,16), ReadSetting('sdvk_fl_offset_y',p,DEFAULT_OFFSET_Y,-16,16),
             ReadSetting('sdvk_fl_offset_z',p,DEFAULT_OFFSET_Z,-16,16), ReadSetting('sdvk_fl_aim_yaw',p,0,-30,30),
             ReadSetting('sdvk_fl_aim_pitch',p,DEFAULT_AIM_PITCH,-30,30));
         for (int k = 0; k < MAX_BEAMS; ++k)
@@ -131,13 +134,15 @@ class SDVKLocalFlashlightHandler : EventHandler
             { ClearPlayer(p); continue; }
             if (players[p].camera != pawn) { DropAll(p); continue; }
 
-            double power = ReadSetting('sdvk_fl_power',p,100,0,100) / 100;
+            double power = ReadSetting('sdvk_fl_power',p,100,0,MAX_POWER) / 100;
             double horizontal = ReadSetting('sdvk_fl_horizontal',p,56,28,84) / 2;
             double vertical = ReadSetting('sdvk_fl_vertical',p,56,28,84) / 2;
-            double reach = ReadSetting('sdvk_fl_range',p,360,128,768);
+            double reach = ReadSetting('sdvk_fl_range',p,360,128,MAX_REACH);
             bool actors = ReadSetting('sdvk_fl_lightactors',p,1,0,1) >= .5;
             if (ActorMode[p] != actors) { DropAll(p); ActorMode[p] = actors; }
             if (power <= 0) { DropAll(p); continue; }
+            // LIGHTMULTALPHA carries power above 100% in floating point.
+            double colorPower = min(power, 1.0);
 
             int count = 1;
             if (abs(horizontal - vertical) >= .001)
@@ -145,7 +150,7 @@ class SDVKLocalFlashlightHandler : EventHandler
             double minor = min(horizontal,vertical);
             double difference = abs(horizontal-vertical);
             double fore = ReadSetting('sdvk_fl_offset_x',p,DEFAULT_OFFSET_X,-16,16);
-            double side = ReadSetting('sdvk_fl_offset_y',p,0,-16,16);
+            double side = ReadSetting('sdvk_fl_offset_y',p,DEFAULT_OFFSET_Y,-16,16);
             double height = ReadSetting('sdvk_fl_offset_z',p,DEFAULT_OFFSET_Z,-16,16);
             double yawTrim = ReadSetting('sdvk_fl_aim_yaw',p,0,-30,30);
             double pitchTrim = ReadSetting('sdvk_fl_aim_pitch',p,DEFAULT_AIM_PITCH,-30,30);
@@ -189,11 +194,10 @@ class SDVKLocalFlashlightHandler : EventHandler
                 beam.SetOrigin(origin,true);
                 beam.A_SetAngle(atan2(direction.Y,direction.X),SPF_INTERPOLATE);
                 beam.A_SetPitch(-atan2(direction.Z,direction.XY.Length()),SPF_INTERPOLATE);
-                // Power and reach are numerically separate. Divide aggregate color
-                // across up to five overlapping lobes, not an exact ellipse.
-                beam.Args[0] = int(255*power/count);
-                beam.Args[1] = int(240*power/count);
-                beam.Args[2] = int(216*power/count);
+                beam.Args[0] = int(255 * colorPower / count);
+                beam.Args[1] = int(240 * colorPower / count);
+                beam.Args[2] = int(216 * colorPower / count);
+                beam.Alpha = max(power, 1.0);
                 beam.Args[3] = int(reach/2);
                 beam.SpotOuterAngle = minor;
                 beam.SpotInnerAngle = minor * (12.0/28.0);

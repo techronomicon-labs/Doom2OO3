@@ -272,7 +272,7 @@ void HWDrawInfo::GetDynSpriteLight(AActor *self, sun_trace_cache_t * traceCache,
 			}
 
 			dist = (float)L.LengthSquared();
-			radius = light->GetRadius();
+			radius = light->GetViewRadius(UsesEmitterLighting());
 
 			if (radius > 0 && dist < radius * radius)
 			{
@@ -300,6 +300,8 @@ void HWDrawInfo::GetDynSpriteLight(AActor *self, sun_trace_cache_t * traceCache,
 						const auto direction = HWSpotDirection(light);
 						double cosDir = -(L.X * direction.X + L.Y * direction.Y + L.Z * direction.Z);
 						frac *= (float)smoothstep(light->pSpotOuterAngle->Cos(), light->pSpotInnerAngle->Cos(), cosDir);
+						if (const auto* profile = HWFlashlightView::ProfileFor(light))
+							frac *= profile->ProfileGain((-L).ToXZY());
 					}
 
 					if (frac > 0 && (!light->shadowmapped || (self && light->TraceActors()) || screen->mShadowMap->ShadowTest(origin, { x, y, z })))
@@ -438,12 +440,13 @@ void HWDrawInfo::GetDynSpriteLightList(AActor *self, double x, double y, double 
 			}
 
 			DVector3 pos = HWLightPositionRelative(light, group);
-			float radius = (float)(light->GetRadius() + actorradius);
+			const float lightRadius = light->GetViewRadius(UsesEmitterLighting());
+			float radius = (float)(lightRadius + actorradius);
 			double dx = pos.X - x;
 			double dy = pos.Y - y;
 			double dz = pos.Z - z;
 			double distSquared = dx * dx + dy * dy + dz * dz;
-			if (distSquared >= radius * radius)
+			if (lightRadius <= 0 || distSquared >= radius * radius)
 			{
 				if (countDiagnostics) ++filtered;
 				if (countDiagnostics && SdvkDiagnostics::StateEnabled())
@@ -479,7 +482,7 @@ void HWDrawInfo::GetDynSpriteLightList(AActor *self, double x, double y, double 
 				if (output)
 				{
 					const int mapGroup = HWFlashlightMapGroup(this, light, group, mapReceiver);
-					AddLightToList(*output, group, light, true, gl_spritelight > 0,
+					AddLightToList(*output, group, light, lightRadius, true, gl_spritelight > 0,
 						mapGroup ? LIGHTINFO_FLASHLIGHT_MAP_SHADOW : 0, mapGroup);
 				}
 			}

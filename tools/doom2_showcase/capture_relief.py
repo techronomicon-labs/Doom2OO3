@@ -262,7 +262,7 @@ def run_render(args, case, fixture, folder, enabled, source, *, extra_files=(), 
         "+r_drawplayersprites", "false", "+screenblocks", "12", "+crosshair", "0",
         "+fov", "90", "+con_notifytime", "0", "+show_messages", "false", "+use_mouse", "false",
         # The calibrated capture poses measure the beam from the camera eye.
-        "+sdvk_fl_offset_x", "0", "+sdvk_fl_offset_z", "0", "+sdvk_fl_aim_pitch", "0",
+        "+sdvk_fl_offset_x", "0", "+sdvk_fl_offset_y", "0", "+sdvk_fl_offset_z", "0", "+sdvk_fl_aim_pitch", "0",
         "+gl_world_relief", "true" if enabled else "false",
         "+gl_world_relief_depth", str(args.depth), "+gl_world_relief_orientation", str(args.orientation),
         "+gl_world_relief_exaggeration", str(args.exaggeration), "+map", case.map_name,

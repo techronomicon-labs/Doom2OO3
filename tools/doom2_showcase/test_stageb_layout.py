@@ -2,7 +2,7 @@ from pathlib import Path
 import unittest
 
 from material_generator import Wad
-from stageb_layout import MapGeometry, PlaneEmitter, infer_layout, stock_map_lumps
+from stageb_layout import FLAT_FIXTURES, WALL_FIXTURES, MapGeometry, PlaneEmitter, infer_layout, stock_map_lumps
 from stageb_lighting import ENTRYWAY, ENTRYWAY_CHECKSUM, actor_script
 
 
@@ -17,7 +17,7 @@ class StageBLayoutTests(unittest.TestCase):
         for fixture in ENTRYWAY:
             self.assertEqual(script.count(fixture.call()), 1)
         self.assertNotIn("RenderOverlay", script)
-        self.assertNotIn("EnableStageBLayout", script)
+        self.assertEqual(script.count("level.EnableStageBLayout();"), 1)
 
     @unittest.skipUnless(IWAD.is_file(), "requires the local Doom II IWAD")
     def test_stock_campaign_infers_underhalls_fixtures_and_keeps_sewer_dark(self):
@@ -25,21 +25,28 @@ class StageBLayoutTests(unittest.TestCase):
         campaign = infer_layout(wad)
         maps = {name: (checksum, lumps) for name, checksum, lumps in stock_map_lumps(wad)}
         self.assertEqual(maps["MAP01"][0], ENTRYWAY_CHECKSUM)
-        self.assertEqual(set(campaign), set(maps) - {"MAP01"})
+        self.assertEqual(set(campaign), set(maps))
         self.assertEqual(campaign["MAP02"][0], "ab24ae6e2cb13cbdd04600a4d37f9189")
         self.assertEqual(campaign["MAP30"][1], [])
+
+        self.assertEqual([e.call() for e in campaign["MAP01"][1]], [e.call() for e in ENTRYWAY])
+        for _, sources in campaign.values():
+            for emitter in sources:
+                self.assertIsNone(getattr(emitter, "direction", None))
+                self.assertIn(emitter.texture, FLAT_FIXTURES if isinstance(emitter, PlaneEmitter) else WALL_FIXTURES)
 
         script = actor_script(playable=True, campaign=campaign)
         for name, (checksum, _) in campaign.items():
             self.assertIn(f'level.MapName == "{name}" && level.GetChecksum() == "{checksum}"', script)
         self.assertEqual(script.count("level.EnableStageBLayout();"), len(campaign))
-        self.assertIn("if (!CheckedCampaignLayout) LoadCampaignLayout();", script)
+        self.assertIn("if (CampaignLayoutRevision < CurrentCampaignLayout)", script)
         self.assertNotIn("AddThingEmitters", script)
         self.assertEqual(script.count("if (replaceSavedEmitters) ClearSavedCampaignEmitters();"), len(campaign))
 
         fixtures = campaign["MAP02"][1]
         geometry = MapGeometry(maps["MAP02"][1])
-        self.assertEqual({light.sector for light in fixtures}, {17, 60, 61, 62, 73})
+        self.assertEqual({light.sector for light in fixtures}, {17, 23, 39, 60, 61, 62})
+        self.assertEqual({e.texture for e in fixtures}, {"FLAT2", "COMPSTA1", "COMPSTA2", "EXITSIGN"})
         for light in fixtures:
             self.assertTrue(geometry.contains(light.sector, light.x, light.y), light)
             if light.sector in (60, 62):

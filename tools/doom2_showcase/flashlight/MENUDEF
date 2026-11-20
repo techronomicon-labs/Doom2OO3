@@ -5,23 +5,44 @@ OptionValue SDVKFlashlightShadowModes
     2, "Depth"
 }
 
+OptionValue SDVKFlashlightMapEdges
+{
+    0, "Stepped"
+    1, "Single shade"
+    2, "Smooth"
+}
+
 OptionMenu "SDVKFlashlightOptions"
 {
     Title "Local Flashlight"
     Command "Toggle flashlight (L)", "netevent SDVKFlashlightToggle"
     Option "Map geometry shadows", "gl_flashlight_map_shadows", "OnOff"
+    Option "Map shadow edge", "gl_flashlight_map_shadow_style", "SDVKFlashlightMapEdges"
+    Slider "Map shadow source radius (units)", "gl_flashlight_map_shadow_radius", 0, 24, 1, 0
+    Slider "Horizontal map shadow spread (%)", "gl_flashlight_map_shadow_spread_horizontal", 0, 400, 10, 0
+    Slider "Vertical map shadow spread (%)", "gl_flashlight_map_shadow_spread_vertical", 0, 400, 10, 0
     Option "Sprite shadows (J)", "gl_shadow_puppets", "SDVKFlashlightShadowModes"
     Slider "Sprite depth edge softness", "gl_shadow_puppet_softness", 0.0, 2.0, 0.25, 2
-    Slider "Power (%)", "sdvk_fl_power", 0, 100, 5, 0
-    Slider "Horizontal spread (degrees)", "sdvk_fl_horizontal", 28, 84, 2, 0
-    Slider "Vertical spread (degrees)", "sdvk_fl_vertical", 28, 84, 2, 0
-    Slider "Reach (map units)", "sdvk_fl_range", 128, 768, 32, 0
+    Slider "Shadow darkness (%)", "gl_flashlight_shadow_darkness", 0, 200, 5, 0
+    Slider "Power (%)", "sdvk_fl_power", 0, 400, 5, 0
+    Slider "Horizontal beam spread (degrees)", "sdvk_fl_horizontal", 28, 84, 2, 0
+    Slider "Vertical beam spread (degrees)", "sdvk_fl_vertical", 28, 84, 2, 0
+    Slider "Reach (map units)", "sdvk_fl_range", 128, 2048, 32, 0
+    Submenu "Beam profile", "SDVKFlashlightBeamProfile"
     Option "Flashlight on weapon and actors", "sdvk_fl_lightactors", "OnOff"
     StaticText "OFF keeps world surfaces lit, but excludes actor sprites/models."
     StaticText "Different H/V spreads use 3 or 5 overlapping soft cones."
     StaticText " "
     Submenu "Position and aim", "SDVKFlashlightMount"
-    Command "Reset flashlight settings", "resetcvar gl_flashlight_map_shadows; resetcvar gl_shadow_puppets; resetcvar gl_shadow_puppet_softness; resetcvar sdvk_fl_power; resetcvar sdvk_fl_horizontal; resetcvar sdvk_fl_vertical; resetcvar sdvk_fl_range; resetcvar sdvk_fl_lightactors; resetcvar sdvk_fl_offset_x; resetcvar sdvk_fl_offset_y; resetcvar sdvk_fl_offset_z; resetcvar sdvk_fl_aim_yaw; resetcvar sdvk_fl_aim_pitch"
+    Command "Reset flashlight settings", "resetcvar gl_flashlight_map_shadows; resetcvar gl_flashlight_map_shadow_style; resetcvar gl_flashlight_map_shadow_radius; resetcvar gl_flashlight_map_shadow_spread_horizontal; resetcvar gl_flashlight_map_shadow_spread_vertical; resetcvar gl_shadow_puppets; resetcvar gl_shadow_puppet_softness; resetcvar gl_flashlight_shadow_darkness; resetcvar gl_flashlight_hotspot; resetcvar gl_flashlight_unevenness; resetcvar sdvk_fl_power; resetcvar sdvk_fl_horizontal; resetcvar sdvk_fl_vertical; resetcvar sdvk_fl_range; resetcvar sdvk_fl_lightactors; resetcvar sdvk_fl_offset_x; resetcvar sdvk_fl_offset_y; resetcvar sdvk_fl_offset_z; resetcvar sdvk_fl_aim_yaw; resetcvar sdvk_fl_aim_pitch"
+}
+
+OptionMenu "SDVKFlashlightBeamProfile"
+{
+    Title "Flashlight Beam Profile"
+    Slider "Reflector hotspot (%)", "gl_flashlight_hotspot", 0, 100, 5, 0
+    Slider "Beam unevenness (%)", "gl_flashlight_unevenness", 0, 100, 5, 0
+    Command "Reset beam profile", "resetcvar gl_flashlight_hotspot; resetcvar gl_flashlight_unevenness"
 }
 
 AddOptionMenu "OptionsMenu"

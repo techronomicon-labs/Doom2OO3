@@ -20,6 +20,14 @@ bool FlashlightMaskHit(int primitiveIndex, uint surfaceIndex, vec2 bc)
 	return textureLod(textures[nonuniformEXT(image)], uv, 0.0).a > surfaces[surfaceIndex].MaskThreshold;
 }
 
+// One centre and twelve equal-weight disk strata. Both reflection axes are
+// exact, and the offsets along either axis cover seven different depths of edge.
+const vec2 mapDisk[13] = vec2[13](
+	vec2(0), vec2(0.2,0.2), vec2(-0.2,-0.2), vec2(0.2,-0.2), vec2(-0.2,0.2),
+	vec2(0.84,0.44), vec2(-0.84,-0.44), vec2(0.84,-0.44), vec2(-0.84,0.44),
+	vec2(0.44,0.84), vec2(-0.44,-0.84), vec2(0.44,-0.84), vec2(-0.44,0.84));
+const int mapDiskMask = (1 << 13) - 1;
+
 #if defined(USE_RAYQUERY) || defined(SUPPORTS_RAYQUERY)
 
 TraceResult TraceFirstHit(vec3 origin, float tmin, vec3 dir, float tmax)
@@ -121,6 +129,71 @@ bool TraceMapHit(vec3 origin, vec3 dir, float distance, int group, bool includeM
 		}
 	}
 	return rayQueryGetIntersectionTypeEXT(query, true) != gl_RayQueryCommittedIntersectionNoneEXT;
+}
+
+int TraceMapDisk(vec3 receiver, vec3 lamp, vec3 right, vec3 up, int group, int activeMask)
+{
+	int blocked = 0;
+	for (int i = 0; i < 13; ++i)
+	{
+		if ((activeMask & (1 << i)) == 0) continue;
+		vec3 ray = lamp + mapDisk[i].x * right + mapDisk[i].y * up - receiver;
+		// A unit segment parameter lets every sample terminate at its own endpoint.
+		if (TraceMapHit(receiver, ray, 1.0, group, true)) blocked |= 1 << i;
+	}
+	return blocked;
+}
+
+// Twelve equal-angle slices integrate the source in polar coordinates. The
+// second ring bounds each slice at the rim; the first ring can move along it.
+const vec2 mapSpokes[12] = vec2[12](
+	vec2(.965926, .258819), vec2(.707107, .707107), vec2(.258819, .965926),
+	vec2(-.258819, .965926), vec2(-.707107, .707107), vec2(-.965926, .258819),
+	vec2(-.965926, -.258819), vec2(-.707107, -.707107), vec2(-.258819, -.965926),
+	vec2(.258819, -.965926), vec2(.707107, -.707107), vec2(.965926, -.258819));
+
+bool MapRadialSample(vec3 receiver, vec3 lamp, vec3 offset, float fraction, int group, bool centerHit)
+{
+	vec3 ray = (lamp + offset - receiver) * fraction;
+	bool hit = TraceMapHit(receiver, ray, 1.0, group, true);
+	if (hit != centerHit && TraceMapHit(lamp, offset, 1.0, group, true)) return centerHit;
+	return hit;
+}
+
+float SmoothMapVisibility(vec3 receiver, vec3 lamp, vec3 right, vec3 up, float fraction, int group)
+{
+	// Hardware ray queries sample the middle and rim of each polar slice.
+	// Refine only intervals in which visibility changes.
+	bool centerHit = TraceMapHit(receiver, (lamp - receiver) * fraction, 1.0, group, true);
+	float area = 0.0;
+	for (int spoke = 0; spoke < 12; ++spoke)
+	{
+		vec3 offset = right * mapSpokes[spoke].x + up * mapSpokes[spoke].y;
+		bool inner = centerHit;
+		for (int section = 0; section < 2; ++section)
+		{
+			float a = 0.5 * float(section), b = a + 0.5;
+			bool outer = MapRadialSample(receiver, lamp, offset * b, fraction, group, centerHit);
+			if (outer == inner)
+				area += inner ? b * b - a * a : 0.0;
+			else
+			{
+				float lo = a, hi = b;
+				for (int i = 0; i < 5; ++i)
+				{
+					float mid = (lo + hi) * 0.5;
+					if (MapRadialSample(receiver, lamp, offset * mid, fraction, group, centerHit) == inner)
+						lo = mid;
+					else
+						hi = mid;
+				}
+				float boundary = (lo + hi) * 0.5;
+				area += inner ? boundary * boundary - a * a : b * b - boundary * boundary;
+			}
+			inner = outer;
+		}
+	}
+	return clamp(1.0 - area / 12.0, 0.0, 1.0);
 }
 
 #else
@@ -269,10 +342,10 @@ bool TraceAnyHit(vec3 origin, float tmin, vec3 dir, float tmax)
 	return false;
 }
 
-float MapNodeEntry(int node, vec3 origin, vec3 invRay, vec3 absInvRay, bvec3 parallel)
+float MapNodeEntry(int node, vec3 origin, vec3 invRay, vec3 absInvRay, bvec3 parallel, vec3 expand)
 {
 	vec3 offset = nodes[node].center - origin;
-	vec3 extents = nodes[node].extents;
+	vec3 extents = nodes[node].extents + expand;
 	vec3 center = offset * invRay, reach = extents * absInvRay;
 	vec3 lo = center - reach, hi = center + reach;
 	if (any(parallel))
@@ -303,40 +376,175 @@ bool MapTriangleHit(int element, vec3 origin, vec3 ray, out vec3 scaledWeights)
 		distance > FLT_EPSILON * scale && distance < scale;
 }
 
-bool TraceMapHit(vec3 origin, vec3 dir, float distance, int group, bool includeMasked)
+// Barycentric edge and depth tests are affine in the ray endpoint for a fixed
+// receiver. Evaluate their gradients once per triangle for the whole aperture.
+vec4 MapDiskEdges(vec3 direction, vec3 uNormal, vec3 vNormal, vec3 triNormal)
 {
-	if (distance <= 0.0 || nodesRoot < 0) return false;
+	float u = dot(direction, uNormal), v = dot(direction, vNormal), det = dot(direction, triNormal);
+	return vec4(u, v, det - u - v, det);
+}
+
+int MapDiskTriangle(int element, vec3 receiver, vec3 toLamp, vec3 right, vec3 up, int group, int blocked)
+{
+	vec3 a = vertices[elements[element]].pos;
+	vec3 ab = vertices[elements[element + 1]].pos - a;
+	vec3 ac = vertices[elements[element + 2]].pos - a;
+	vec3 t = receiver - a;
+	vec3 vNormal = cross(t, ab);
+	float depth = dot(ac, vNormal);
+	if (depth == 0.0) return blocked;
+	float side = sign(depth);
+	vec3 uNormal = cross(ac, t) * side;
+	vec3 normal = cross(ac, ab) * side;
+	vNormal *= side;
+	vec4 center = MapDiskEdges(toLamp, uNormal, vNormal, normal);
+	center.w -= abs(depth); // segment must reach the triangle before the lamp
+	vec4 dx = MapDiskEdges(right, uNormal, vNormal, normal);
+	vec4 dy = MapDiskEdges(up, uNormal, vNormal, normal);
+	vec4 reach = abs(dx) + abs(dy);
+	if (any(lessThan(center + reach, vec4(0.0)))) return blocked;
+
+	int primitive = element / 3;
+	uint surface = surfaceIndices[primitive];
+	int caster = surfaces[surface].MapShadowGroup;
+	if (caster != group && caster != -group) return blocked;
+	if (caster == group && all(greaterThan(center - reach, vec4(0.0)))) return mapDiskMask;
+	for (int i = 0; i < 13; ++i)
+	{
+		int bit = 1 << i;
+		vec4 e = center + dx * mapDisk[i].x + dy * mapDisk[i].y;
+		if ((blocked & bit) == 0 && e.w > 0.0 && all(greaterThanEqual(e.xyz, vec3(0.0))) &&
+			(caster == group || FlashlightMaskHit(primitive, surface, e.xy / (e.x + e.y + e.z))))
+			blocked |= bit;
+	}
+	return blocked;
+}
+
+// Each spoke carries 32 equal-area bins (uniform steps in radius squared).
+// Projecting a triangle from the receiver gives four affine half-planes on
+// the source: three triangle edges and the finite end of the ray segment.
+// Clip the whole radial interval once, then union it with previous triangles.
+const vec4 mapSpokeX[3] = vec4[3](vec4(.965926,.707107,.258819,-.258819),
+	vec4(-.707107,-.965926,-.965926,-.707107), vec4(-.258819,.258819,.707107,.965926));
+const vec4 mapSpokeY[3] = vec4[3](vec4(.258819,.707107,.965926,.965926),
+	vec4(.707107,.258819,-.258819,-.707107), vec4(-.965926,-.965926,-.707107,-.258819));
+
+bool MapAreaTriangle(int element, vec3 receiver, vec3 toLamp, vec3 right, vec3 up, int group,
+	inout uvec4 covered[3], inout bool centerHit)
+{
+	int primitive = element / 3;
+	uint surface = surfaceIndices[primitive];
+	int caster = surfaces[surface].MapShadowGroup;
+	if (caster != group && caster != -group) return false;
+	vec3 a = vertices[elements[element]].pos;
+	vec3 ab = vertices[elements[element + 1]].pos - a;
+	vec3 ac = vertices[elements[element + 2]].pos - a;
+	vec3 t = receiver - a;
+	vec3 vNormal = cross(t, ab);
+	float depth = dot(ac, vNormal);
+	if (depth == 0.0) return false;
+	float side = sign(depth);
+	vec3 uNormal = cross(ac, t) * side, normal = cross(ac, ab) * side;
+	vNormal *= side;
+	vec4 center = MapDiskEdges(toLamp, uNormal, vNormal, normal);
+	center.w -= abs(depth) * (1.0 + FLT_EPSILON);
+	vec4 dx = MapDiskEdges(right, uNormal, vNormal, normal);
+	vec4 dy = MapDiskEdges(up, uNormal, vNormal, normal);
+	vec4 reach = abs(dx) + abs(dy);
+	if (center.w + reach.w <= 0.0 || any(lessThan(center.xyz + reach.xyz, vec3(0.0)))) return false;
+	if (caster == group && all(greaterThan(center - reach, vec4(0.0))))
+	{
+		centerHit = true;
+		return true;
+	}
+	if (!centerHit && center.w > 0.0 && all(greaterThanEqual(center.xyz, vec3(0.0))))
+		centerHit = caster == group || FlashlightMaskHit(primitive, surface, center.xy / (center.x + center.y + center.z));
+
+	for (int row = 0; row < 3; ++row)
+	{
+		vec4 lo = vec4(0.0), hi = vec4(1.0);
+		for (int plane = 0; plane < 4; ++plane)
+		{
+			if (center[plane] >= reach[plane]) continue;
+			vec4 slope = dx[plane] * mapSpokeX[row] + dy[plane] * mapSpokeY[row];
+			if (center[plane] < 0.0)
+				lo = max(lo, -center[plane] / max(slope, vec4(1e-30)));
+			else
+				hi = min(hi, mix(vec4(1.0), center[plane] / max(-slope, vec4(1e-30)), lessThan(slope, vec4(0.0))));
+		}
+		// The bin centres represent area, so OR also handles overlapping
+		// faces, internal triangulation edges and disjoint blockers.
+		ivec4 first = ivec4(ceil(min(lo, vec4(1.0)) * min(lo, vec4(1.0)) * 32.0 - .5));
+		ivec4 last = ivec4(floor(hi * hi * 32.0 - .5));
+		uvec4 bits = (uvec4(~0u) << clamp(first, 0, 31)) & (uvec4(~0u) >> clamp(31 - last, 0, 31));
+		bits = mix(uvec4(0), bits, lessThanEqual(first, last));
+		if (caster == group)
+			covered[row] |= bits;
+		else for (int lane = 0; lane < 4; ++lane)
+		{
+			uint pending = bits[lane] & ~covered[row][lane];
+			vec4 slope = dx * mapSpokeX[row][lane] + dy * mapSpokeY[row][lane];
+			while (pending != 0u)
+			{
+				int bin = findLSB(pending);
+				float radius = sqrt((float(bin) + 0.5) / 32.0);
+				vec3 e = center.xyz + slope.xyz * radius;
+				if (FlashlightMaskHit(primitive, surface, e.xy / (e.x + e.y + e.z))) covered[row][lane] |= 1u << bin;
+				pending &= pending - 1u;
+			}
+		}
+	}
+	return false;
+}
+
+int TraceMapRays(vec3 origin, vec3 ray, int group, bool includeMasked, bool disk, vec3 diskRight, vec3 diskUp, int activeMask,
+	bool area, inout uvec4 covered[3], inout bool centerHit)
+{
+	if (nodesRoot < 0) return 0;
 	// All rays for a light start at the same end of the segment. Neighbouring
 	// fragments encounter the same near nodes and register stack entries.
-	vec3 ray = -dir * distance;
-	origin -= ray;
+	vec3 expand = abs(diskRight) + abs(diskUp);
 	bvec3 parallel = equal(ray, vec3(0.0));
 	vec3 invRay = 1.0 / mix(ray, vec3(1.0), parallel);
 	vec3 absInvRay = abs(invRay);
 	int node = nodesRoot;
 	ivec4 front = ivec4(0);
 	int spill[64], depth = 0;
+	int blocked = mapDiskMask ^ activeMask;
 	while (true)
 	{
 		int element = nodes[node].element_index;
 		if (element >= 0)
 		{
 			vec3 weights;
-			if (MapTriangleHit(element, origin, ray, weights))
+			if (area)
+			{
+				if (MapAreaTriangle(element, origin + ray, -ray, diskRight, diskUp, group, covered, centerHit))
+				{
+					for (int i = 0; i < 3; ++i) covered[i] = uvec4(~0u);
+					return 0;
+				}
+			}
+			else if (disk)
+			{
+				blocked = MapDiskTriangle(element, origin + ray, -ray, diskRight, diskUp, group, blocked);
+				if (blocked == mapDiskMask) return activeMask;
+			}
+			else if (MapTriangleHit(element, origin, ray, weights))
 			{
 				int primitive = element / 3;
 				uint surface = surfaceIndices[primitive];
 				int caster = surfaces[surface].MapShadowGroup;
 				if (caster == group || (includeMasked && caster == -group &&
 					FlashlightMaskHit(primitive, surface, weights.xy / weights.z)))
-					return true;
+					return 1;
 			}
 		}
 		else
 		{
 			int left = nodes[node].left, right = nodes[node].right;
-			float a = MapNodeEntry(left, origin, invRay, absInvRay, parallel);
-			float b = MapNodeEntry(right, origin, invRay, absInvRay, parallel);
+			float a = MapNodeEntry(left, origin, invRay, absInvRay, parallel, expand);
+			float b = MapNodeEntry(right, origin, invRay, absInvRay, parallel, expand);
 			if (min(a, b) <= 1.0)
 			{
 				node = a <= b ? left : right;
@@ -354,7 +562,47 @@ bool TraceMapHit(vec3 origin, vec3 dir, float distance, int group, bool includeM
 		front.xyz = front.yzw;
 		if (--depth >= 4) front.w = spill[depth - 4];
 	}
-	return false;
+	return blocked & activeMask;
+}
+
+bool TraceMapHit(vec3 origin, vec3 dir, float distance, int group, bool includeMasked)
+{
+	vec3 ray = dir * distance;
+	uvec4 unused[3];
+	bool center = false;
+	return distance > 0.0 && TraceMapRays(origin + ray, -ray, group, includeMasked, false, vec3(0), vec3(0), 1, false, unused, center) != 0;
+}
+
+int TraceMapDisk(vec3 receiver, vec3 lamp, vec3 right, vec3 up, int group, int activeMask)
+{
+	uvec4 unused[3];
+	bool center = false;
+	return TraceMapRays(lamp, receiver - lamp, group, true, true, right, up, activeMask, false, unused, center);
+}
+
+float SmoothMapVisibility(vec3 receiver, vec3 lamp, vec3 right, vec3 up, float fraction, int group)
+{
+	uvec4 covered[3] = uvec4[3](uvec4(0), uvec4(0), uvec4(0));
+	vec3 origin = receiver + (lamp - receiver) * fraction;
+	bool centerHit = false, foldToDark = false;
+	for (int pass = 0; pass < 2; ++pass)
+	{
+		TraceMapRays(origin, receiver - origin, group, true, true, right * fraction, up * fraction, 0, true, covered, centerHit);
+		if (pass == 0)
+		{
+			foldToDark = centerHit;
+			// On the mount-to-rim pass only samples with visibility opposite
+			// the centre can change. Store the rest as already covered.
+			for (int i = 0; i < 3; ++i)
+				if (!foldToDark) covered[i] = ~covered[i];
+			if (all(equal(covered[0] & covered[1] & covered[2], uvec4(~0u)))) return foldToDark ? 0.0 : 1.0;
+			origin = receiver = lamp;
+			fraction = 1.0;
+		}
+	}
+	ivec4 counts = bitCount(covered[0]) + bitCount(covered[1]) + bitCount(covered[2]);
+	float area = float(counts.x + counts.y + counts.z + counts.w) / 384.0;
+	return foldToDark ? 1.0 - area : area;
 }
 
 struct TraceHit

@@ -2,6 +2,14 @@
 
 Press **L** to turn on the flashlight. **O → Map geometry shadows** switches flashlight occlusion by walls, floors and ceilings on or off. Aim past a raised step or under a moving door to see its shadow travel across the floor or wall beyond it. A fresh profile enables map shadows. To compare them while moving, bind **Toggle flashlight map shadows** under **Customize Controls → Local Flashlight**.
 
+**O → Map shadow source radius** sets the radius of the flashlight’s emitting area from 0 to 24 map units. At the default of 12, a pillar can hide part of the source. Its shadow stays tight at contact and develops a wider, partially lit edge on surfaces farther behind it. Move closer with the lamp centred to see this on either side of the pillar. Radius 0 gives a hard point-source shadow.
+
+**Horizontal map shadow spread** and **Vertical map shadow spread** each scale the source radius from 0% to 400%. At the default radius of 12 units, 200% horizontal and 50% vertical give the source a horizontal radius of 24 map units and a vertical radius of 6. Set both to 0% for a hard edge. Each profile saves both percentages. An existing profile starts with its previous spread on both axes.
+
+**Map shadow edge** changes how the edge looks. **Smooth** is the default and grades the flashlight’s contribution across the edge. **Single shade** gives the projected footprint one shade, including the part that spreads beyond a nearby pillar. **Stepped** keeps the previous bands.
+
+**Shadow darkness (%)** adjusts how much flashlight light a map or sprite shadow removes. At 0% the beam shines through, at 50% a fully blocked area keeps half its flashlight light, and at 100% a solid blocker removes all of it. Values up to 200% deepen partially shaded edges. Ambient light and other light sources keep their own intensity.
+
 **J** cycles **Off → Stencil → Depth** for sprite shadows. **O** also lets you set **Sprite depth edge softness**. A fresh campaign profile starts in Depth. Each game's profile remembers both shadow settings and the softness.
 
 Both campaign launchers enable `gl_precache`. At map entry Vulkan prepares the map's material pipelines, common sprite and projectile draws, and both supported flashlight shadow paths before drawing the first scene. The first load with a cold shader cache can take longer. Later levels reuse pipelines already built for the same render settings. Set `gl_precache false` in the console before changing levels to use on-demand loading.
@@ -51,6 +59,8 @@ The `spawn-three` case checks the two Imps from the starting position with horiz
 The `penumbra` case aims the flashlight down to light the feet and the stairs in the same frame. It compares hard Depth and Stencil against the original Imp artwork, then checks soft Depth against rays from across the flashlight aperture.
 
 To measure shadow growth, run `py tools/doom2_showcase/capture_shadow_magnification.py --pack build/flashlight-map-shadows-playtest/DoomII --out build/shadow-growth`. It keeps the camera, sprite and wall fixed while it moves the flashlight mount. It also checks a caster crossing the camera and one within a unit of the lamp.
+
+To check map shadow edges in Entryway, run `py tools/doom2_showcase/capture_entryway_flashlight.py --pack build/flashlight-map-shadows-playtest/DoomII --out build/entryway-pillar`. It compares floor and wall receivers on both sides of the bronze pillar at two distances, using lamp-off, unshadowed and point-source captures as controls.
 
 To check shader preloading, run `py tools/doom2_showcase/check_map_shader_preload.py --pack build/flashlight-map-shadows-playtest/DoomII --output build/map-shader-check`. The test starts with empty caches and records any shader or pipeline builds during a short MAP01 encounter. Use the DBP50 kit path to test The Passage.
 

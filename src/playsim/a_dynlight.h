@@ -84,6 +84,7 @@ public:
 	{
 		shadowMinQuality = quality;
 	}
+	void SetEmitterRadiusScale(float scale) { m_EmitterRadiusScale = scale; }
 	void SetLightDefIntensity(double i) { m_LightDefIntensity = i; }
 	void SetSpot(bool spot) { if (spot) m_lightFlags |= LF_SPOT; else m_lightFlags &= ~LF_SPOT; }
 	void SetSpotInnerAngle(double angle) { m_spotInnerAngle = DAngle::fromDeg(angle); }
@@ -141,6 +142,7 @@ protected:
 	double SoftShadowRadius = 5.0;
 	double Linearity = 0.0;
 	int shadowMinQuality = 1; // default medium, 0 = low, 1 = medium, 2 = high, 3 = ultra
+	float m_EmitterRadiusScale = 1.f;
 	double m_LightDefIntensity = 1.0; // Light over/underbright multiplication for GLDEFS-defined lights
 	
 	friend FSerializer &Serialize(FSerializer &arc, const char *key, FLightDefaults &value, FLightDefaults *def);
@@ -234,6 +236,7 @@ struct FDynamicLight
 
 	bool IsActive() const { return m_active; }
 	float GetRadius() const { return (IsActive() ? m_currentRadius * 2.f : 0.f); }
+	float GetViewRadius(bool emitterLighting) const { return GetRadius() * (emitterLighting ? emitterRadiusScale : 1.f); }
 	float GetSoftShadowRadius() const { return (float)(*pSoftShadowRadius); }
 	float GetLinearity() const { return (float)(*pLinearity); }
 	float GetStrength() const { return lightStrength; }
@@ -325,6 +328,7 @@ public:
 
 	float lightStrength;
 
+	float emitterRadiusScale;
 	double lightDefIntensity;
 
 	TArray<AActor*> ActorList;

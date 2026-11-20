@@ -19,7 +19,8 @@ from gallery import Map, wad
 SIZE = (640, 480)
 MAP = "MAPSHADE"
 CASES = ("closed", "lifting", "opened", "lowering", "offscreen", "far-room",
-         "near-mount", "near-mount-decor", "near-mount-decor-pair", "near-mount-bars", "bars", "blocked-mount")
+         "near-mount", "near-mount-decor", "near-mount-decor-pair", "near-mount-bars", "bars", "blocked-mount",
+         "aperture-wall")
 FAR_X, FAR_Y = 8192, -8192
 
 
@@ -42,6 +43,10 @@ def fixture(path, case, torch, animate=False):
         # The player's collision box ends at x=16. The requested diagonal mount
         # reaches x=22.63 across this freestanding pillar.
         add_first_caster(room, 18, -86, 20, -77, sector)
+    if case == "aperture-wall":
+        # The eye can see past the north end. The mounted lamp touches the west
+        # face, and the right tip of its aperture would sit beyond the east face.
+        add_first_caster(room, 18, -126, 20, -46, sector)
     near_mount = case.startswith("near-mount")
     if near_mount:
         # The lamp is at (16, -82). This opaque sill fits entirely inside
@@ -66,11 +71,12 @@ def fixture(path, case, torch, animate=False):
         corners = [(-128, -128), (-128, 164), (128, 164), (128, -128)]
         for a, b in zip(corners, corners[1:] + corners[:1]):
             room.line(a, b, sector, texture="BRICK7")
-    if not near_mount and case not in ("far-room", "offscreen", "bars", "blocked-mount"):
+    if not near_mount and case not in ("far-room", "offscreen", "bars", "blocked-mount", "aperture-wall"):
         door = room.sector(0, "FLOOR5_4", 100)
         room.rows["sector"][door].update(heightceiling=0, textureceiling="CEIL3_5", id=1)
         room.rect(-24, -28, 24, -20, sector, door, "BIGDOOR2")
-    room.thing(1, 0, -82, angle=45 if case == "blocked-mount" else 90)
+    angled_mount = case in ("blocked-mount", "aperture-wall")
+    room.thing(1, 0, -82, angle=45 if angled_mount else 90)
     room.thing(30121, -40, 76, z=32, arg0=40, arg1=75, arg2=180, arg3=60)
     # Let the real mover reach the open stop before activating the downward motion.
     moving = case in ("lifting", "opened", "lowering")
@@ -82,7 +88,7 @@ def fixture(path, case, torch, animate=False):
             row["y"] += dy
     pose = "level.time >= 24 && z <= 32" if case == "lowering" else f"level.time >= 4 && z >= {height}"
     mount_probe = ""
-    if case == "blocked-mount" and torch:
+    if angled_mount and torch:
         mount_probe = '''if (level.time == 10)
         {
             let it = ThinkerIterator.Create("SDVKLocalFlashlightBeam", Thinker.STAT_DLIGHT);
@@ -140,10 +146,14 @@ class MapShadowFixture : EventHandler
         archive.writestr("ZSCRIPT", script)
 
 
-def capture(exe, iwad, root, case, enabled, torch, mode, animate=False, sprite_lighting=2):
+def capture(exe, iwad, root, case, enabled, torch, mode, animate=False, sprite_lighting=2, darkness=100, spread=None):
     label = "moving" if animate else f"{'torch' if torch else 'fill'}-{int(enabled)}-sprites-{mode}"
     if sprite_lighting != 2:
         label += f"-lighting-{sprite_lighting}"
+    if darkness != 100:
+        label += f"-darkness-{darkness}"
+    if spread is not None:
+        label += f"-spread-{spread[0]}x{spread[1]}"
     folder = root / case / label
     folder.mkdir(parents=True)
     package = folder / "fixture.pk3"
@@ -154,6 +164,9 @@ def capture(exe, iwad, root, case, enabled, torch, mode, animate=False, sprite_l
     cache = folder / "cache"
     cache.mkdir()
     width, height = map(str, SIZE)
+    radius = 12 if case == "aperture-wall" else 0
+    if spread is not None:
+        radius = 6
     args = [exe, "-iwad", iwad, "-file", root / "Local-Flashlight.pk3", package, "-noautoload",
             "-noautoexec", "-stdout", "-nostartup", "-nosound", "-nojoy", "-rngseed", "2002",
             "-config", cfg, "-savedir", folder, "-window", "-width", width, "-height", height,
@@ -163,15 +176,21 @@ def capture(exe, iwad, root, case, enabled, torch, mode, animate=False, sprite_l
             "+gl_levelmesh", "false", "+gl_raytrace", "false", "+lm_dynlights", "false",
             "+gl_ubershaders", "false", "+gl_lightprobe", "false", "+gl_world_relief", "true",
             "+gl_lights", "true", "+gl_light_shadows", "0", "+gl_light_sprites", "true", "+gl_spritelight", str(sprite_lighting),
-            "+gl_ssao", "0", "+gl_multisample", "4",
+            "+gl_ssao", "0", "+gl_multisample", "4", "+gl_precache", "false",
             "+gl_emitter_lighting", "false", "+gl_bloom", "false", "+gl_shadow_puppets", str(mode),
-            "+gl_flashlight_map_shadows", str(enabled).lower(), "+r_drawplayersprites", "false",
+            "+gl_flashlight_map_shadows", str(enabled).lower(),
+            "+gl_flashlight_shadow_darkness", str(darkness),
+            "+gl_flashlight_map_shadow_radius", str(radius),
+            "+r_drawplayersprites", "false",
             "+screenblocks", "12", "+fov", "90", "+crosshair", "0", "+cl_capfps", "true",
             "+con_notifylines", "0", "+show_messages", "false", "+vid_vsync", "false", "+use_mouse", "false",
             "+i_pauseinbackground", "false", "+vid_activeinbackground", "true",
-            "+sdvk_fl_offset_x", "16" if case == "blocked-mount" else "0", "+sdvk_fl_offset_y", "16",
+            "+sdvk_fl_offset_x", "16" if case in ("blocked-mount", "aperture-wall") else "0", "+sdvk_fl_offset_y", "16",
             "+sdvk_fl_offset_z", "16", "+sdvk_fl_aim_pitch", "0", "+sdvk_fl_horizontal", "84",
             "+sdvk_fl_vertical", "84", "+sdvk_fl_range", "640", "+map", MAP]
+    if spread is not None:
+        args.extend(("+gl_flashlight_map_shadow_spread_horizontal", str(spread[0]),
+                     "+gl_flashlight_map_shadow_spread_vertical", str(spread[1])))
     if animate:
         args.extend(("-sdvkobservepngs", "+screenshot_quiet", "true", "+screenshot_type", "png"))
     log = folder / "engine.log"
@@ -182,7 +201,7 @@ def capture(exe, iwad, root, case, enabled, torch, mode, animate=False, sprite_l
     require("Unknown command" not in messages, f"Unsupported setting in {log}")
     match = re.search(r"MAP_SHADOW_CAPTURE ceiling ([\d.]+)", messages)
     require(animate or match is not None, f"Test pose did not freeze in {log}")
-    if case == "blocked-mount" and torch:
+    if case in ("blocked-mount", "aperture-wall") and torch:
         mount = re.search(r"MOUNT_X ([-\d.]+)", messages)
         require(mount is not None and 17 <= float(mount[1]) < 18, f"Mount crossed the pillar in {log}")
     report = json.loads(prefix.with_suffix(".renderer.json").read_text())
@@ -207,7 +226,7 @@ def capture(exe, iwad, root, case, enabled, torch, mode, animate=False, sprite_l
         return np.asarray(image.convert("RGB"), dtype=np.int16), frame["camera"], float(match[1])
 
 
-def measure(case, camera, door_z, unshadowed, shadowed, fill):
+def measure(case, camera, door_z, unshadowed, shadowed, fill, spread_views=None):
     # Project pixel centres onto floor and back wall, then evaluate the obstruction
     # from both the camera (visible receiver) and flashlight (expected shadow).
     if case == "far-room":
@@ -239,6 +258,18 @@ def measure(case, camera, door_z, unshadowed, shadowed, fill):
     shadow_witnesses = {}
     lit_witnesses = {}
 
+    if case == "aperture-wall":
+        # At yaw 45 the horizontal disk projects at most 12/sqrt(2) onto X
+        # and Y. Even the northwestern extreme's ray must pass through the wall.
+        extent = 12 / np.sqrt(2)
+        west, north = 17.5 - extent, -82 + extent
+        y_at_face = north + (18 - west) * (y - north) / np.maximum(x - west, 1e-4)
+        eye_clear = eye[1] + 18 * (y - eye[1]) / np.maximum(x, 1e-4) > -45
+        region = usable & (x > 50) & eye_clear & (y_at_face < -47)
+        count = int(np.sum(region))
+        correct = int(np.sum(region & restored_fill))
+        require(count > 1000 and correct >= .99 * count, f"Aperture leaked across a solid wall: {correct}/{count}")
+        return {"aperture against wall": [correct, count]}
     if case == "blocked-mount":
         # The camera sees beyond the pillar's north edge. A ray from the
         # clipped mount to any of these pixels immediately hits its west face.
@@ -310,6 +341,30 @@ def measure(case, camera, door_z, unshadowed, shadowed, fill):
         visible, _ = clearance(eye[0], eye[2])
         usable &= visible
         lit, dark = clearance(16, eye[2] + 16)
+        if spread_views:
+            point, horizontal, vertical, circle = spread_views
+            require(np.max(abs(point - shadowed)) <= 1, "Zero spread differs from a point source")
+            # Isolate the jamb above the lintel and the lintel between the jambs.
+            # At both faces, even the extreme six-unit source offsets on the
+            # orthogonal axis must stay on the same side of the door.
+            jamb, lintel = usable.copy(), usable.copy()
+            for t in (front, back):
+                x_at_door = 16 + t * (x - 16)
+                z_at_door = eye[2] + 16 + t * (z - eye[2] - 16)
+                margin = 6 * (1 - t) + 1
+                jamb &= z_at_door > door_z + margin
+                lintel &= abs(x_at_door) < 24 - margin
+            softened = np.max(abs(circle - point), axis=2) >= 8
+            for name, region, across, along in (("horizontal", jamb, horizontal, vertical),
+                                                ("vertical", lintel, vertical, horizontal)):
+                mask = softened & region
+                count = int(mask.sum())
+                require(count >= 100, f"Too few receivers in the {name} penumbra: {count}")
+                require((np.max(abs(across - circle), axis=2)[mask] <= 2).mean() > .98,
+                        f"{name} spread failed to reproduce the circular penumbra")
+                require((np.max(abs(along - point), axis=2)[mask] <= 2).mean() > .98,
+                        f"The other axis changed the {name} edge")
+                print(f"{name} axis isolated on {count} door-shadow receivers", flush=True)
         if case in ("lifting", "lowering"):
             # Both rays pass within the width of the door. Only its height
             # determines whether the beam can reach this visible floor.
@@ -379,11 +434,21 @@ def main():
             off, camera, door_z = capture(exe, iwad, root, case, False, True, 0, sprite_lighting=lighting)
             on, _, _ = capture(exe, iwad, root, case, True, True, 0, sprite_lighting=lighting)
             fill, _, _ = capture(exe, iwad, root, case, True, False, 0, sprite_lighting=lighting)
-            results = measure(case, camera, door_z, off, on, fill)
+            spread_views = None
+            if case == "lifting":
+                spread_views = [capture(exe, iwad, root, case, True, True, 0, spread=spread)[0]
+                                for spread in ((0, 0), (100, 0), (0, 100), (100, 100))]
+            results = measure(case, camera, door_z, off, on, fill, spread_views)
             print(f"{case}, ceiling {door_z:g}, sprite lighting {lighting}, {results}", flush=True)
         if case == "lifting":
             control, _, _ = capture(exe, iwad, root, case, False, False, 0)
             require(np.array_equal(control, fill), "Map shadows changed independent lighting with the torch off")
+            zero, _, _ = capture(exe, iwad, root, case, True, True, 0, darkness=0)
+            half, _, _ = capture(exe, iwad, root, case, True, True, 0, darkness=50)
+            require(np.max(abs(zero - off)) <= 1, "Zero darkness still occluded the beam")
+            channel = (off - on) > 32
+            require(channel.sum() > 100 and ((on[channel] < half[channel]) & (half[channel] < off[channel])).mean() > .99,
+                    "Half darkness did not partially restore the beam in the door shadow")
             for mode in (1, 2):
                 same, _, _ = capture(exe, iwad, root, case, True, True, mode)
                 require(np.array_equal(same, on), f"Map shadow changed with sprite shadow mode {mode}")

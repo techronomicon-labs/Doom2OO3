@@ -87,7 +87,28 @@ HWFlashlightView::HWFlashlightView(const FRenderViewpoint* view) : Previous(Curr
 		Poses[Count++] = { light, clippedOrigin, rotation * localDir };
 		if (Count == Poses.size()) break;
 	}
-	if (Count) Current = this;
+	if (!Count) return;
+	Current = this;
+	if (!gl_flashlight_hotspot && !gl_flashlight_unevenness) return;
+
+	// Symmetric outer lobes average to the trimmed optical axis of the lamp.
+	// Use head-local up so rolling or aiming vertically cannot rotate the lens pattern.
+	DVector3 axis(0, 0, 0);
+	for (unsigned i = 0; i < Count; ++i) axis += Poses[i].Direction;
+	const auto right = (axis.Unit() ^ (rotation * DVector3(0, 0, 1))).Unit();
+	const auto up = (right ^ axis).Unit();
+	double halfWidth = 0, halfHeight = 0;
+	for (unsigned i = 0; i < Count; ++i)
+	{
+		const auto& pose = Poses[i];
+		const double cone = pose.Light->pSpotOuterAngle->Radians();
+		halfWidth = std::max(halfWidth, cone + std::asin(std::min(1., std::abs(pose.Direction | right))));
+		halfHeight = std::max(halfHeight, cone + std::asin(std::min(1., std::abs(pose.Direction | up))));
+	}
+	if (!(halfWidth > 0 && halfHeight > 0 && halfWidth < M_PI / 2 && halfHeight < M_PI / 2)) return;
+	const auto horizontal = right / std::sin(halfWidth), vertical = up / std::sin(halfHeight);
+	LensRight = {float(horizontal.X), float(horizontal.Z), float(horizontal.Y), gl_flashlight_hotspot / 100.f};
+	LensUp = {float(vertical.X), float(vertical.Z), float(vertical.Y), gl_flashlight_unevenness / 100.f};
 }
 
 HWFlashlightView::~HWFlashlightView()
@@ -102,6 +123,24 @@ const HWFlashlightPose* HWPresentedFlashlight(const FDynamicLight* light)
 		for (unsigned i = 0; i < view->Count; ++i)
 			if (view->Poses[i].Light == light) return &view->Poses[i];
 	return nullptr;
+}
+
+const HWFlashlightView* HWFlashlightView::ProfileFor(const FDynamicLight* light)
+{
+	if (!Current || (Current->LensRight.W == 0 && Current->LensUp.W == 0)) return nullptr;
+	return HWPresentedFlashlight(light) ? Current : nullptr;
+}
+
+float HWFlashlightView::ProfileGain(const FVector3& fromLamp) const
+{
+	// Keep CPU-lit sprites and the weapon sample consistent with the scene shader.
+	const float u = fromLamp | LensRight.XYZ(), v = fromLamp | LensUp.XYZ();
+	const float core = std::max(0.f, 1.f - 3.f * (u * u + v * v));
+	const FVector2 brightOffset(u + .30f, v - .25f), shadeOffset(u - .41f, v + .18f);
+	const float bright = std::max(0.f, 1.f - 2.5f * brightOffset.X * brightOffset.X - 6.f * brightOffset.Y * brightOffset.Y);
+	const float shade = std::max(0.f, 1.f - 7.f * shadeOffset.X * shadeOffset.X - 2.5f * shadeOffset.Y * shadeOffset.Y);
+	return (1.f + LensRight.W * (1.1f * core * core - .25f)) *
+		(1.f + LensUp.W * (.32f * bright * bright - .48f * shade * shade));
 }
 
 DVector3 HWLightPosition(const FDynamicLight* light)
@@ -167,15 +206,20 @@ bool FDynamicLight::IsStageBDirectional() const
 	return actor && actor->IsKindOf(directionalClass);
 }
 
-bool StageBEmitterAllowed(const FDynLightData& dld, const FDynamicLight* light, const sector_t* receiver)
+bool StageBEmitterAllowed(const FDynLightData& dld, const FDynamicLight* light, const sector_t* receiver, bool traceAcrossSectors)
 {
-	// A receiver shares the emitter's authored sector, even across closed doors.
-	if (!receiver || light->Sector != receiver || !screen->mShadowMap->Enabled() ||
+	if (!receiver || (light->Sector != receiver && !traceAcrossSectors) || !screen->mShadowMap->Enabled() ||
 		light->mShadowmapIndex < 0 || light->mShadowmapIndex >= static_cast<int>(HWShadowMapLightCapacity))
 		return false;
-	unsigned emitters = 0;
+	unsigned emitters = 0, neighboring = 0;
 	for (auto& packed : dld.arrays[LIGHTARRAY_NORMAL])
-		if (packed.flags & LIGHTINFO_STAGE_B_EMITTER) ++emitters;
+	{
+		if (!(packed.flags & LIGHTINFO_STAGE_B_EMITTER)) continue;
+		++emitters;
+		if (packed.flags & LIGHTINFO_POINT_MAP_SHADOW) ++neighboring;
+	}
+	// Reserve room for the receiver's own fixtures and bound the geometry traces per pixel.
+	if (traceAcrossSectors && neighboring >= 4) return false;
 	// A corridor can have nine authored wall strips on the same floor receiver.
 	return emitters < 12;
 }
@@ -188,9 +232,8 @@ bool StageBEmitterAllowed(const FDynLightData& dld, const FDynamicLight* light, 
 bool GetLight(FDynLightData& dld, int group, Plane & p, FDynamicLight * light, bool checkside,
 	const sector_t* emitterReceiver, HWDrawInfo* worldView, const sector_t* mapReceiver)
 {
-	if (light->IsStageBEmitter() && !StageBEmitterAllowed(dld, light, emitterReceiver)) return false;
 	DVector3 pos = HWLightPositionRelative(light, group);
-	float radius = (light->GetRadius());
+	float radius = light->GetViewRadius(worldView && worldView->UsesEmitterLighting());
 
 	auto dist = fabs(p.DistToPoint((float)pos.X, (float)pos.Z, (float)pos.Y));
 
@@ -203,8 +246,12 @@ bool GetLight(FDynLightData& dld, int group, Plane & p, FDynamicLight * light, b
 
 	int mapGroup = HWFlashlightMapGroup(worldView, light, group, mapReceiver);
 	int mapShadowFlag = mapGroup ? LIGHTINFO_FLASHLIGHT_MAP_SHADOW : 0;
-	if (worldView && worldView->DrawingProjectileMapShadows && mapReceiver && light->IsProjectileLight()
-		&& light->Sector->PortalGroup == group && !light->IsSpot() && !light->DontShadowmap())
+	const bool emitter = light->IsStageBEmitter();
+	const bool neighboringFixture = emitter && emitterReceiver && emitterReceiver != light->Sector
+		&& !light->IsStageBDirectional() && (light->Level->flags3 & LEVEL3_STAGEBLAYOUT);
+	if (worldView && worldView->DrawingOpaqueMapShadows && mapReceiver && light->Sector->PortalGroup == group
+		&& !light->IsSpot() && !light->DontShadowmap()
+		&& (neighboringFixture || (gl_projectile_map_shadows && light->IsProjectileLight())))
 	{
 		// Portal links can put a light on a disconnected receiver even when both have portal group zero.
 		const auto& groups = worldView->Level->levelMesh->sectorGroup;
@@ -214,11 +261,12 @@ bool GetLight(FDynLightData& dld, int group, Plane & p, FDynamicLight * light, b
 			mapShadowFlag = LIGHTINFO_POINT_MAP_SHADOW;
 		}
 	}
-	AddLightToList(dld, group, light, false, false, mapShadowFlag, mapGroup);
+	if (emitter && !StageBEmitterAllowed(dld, light, emitterReceiver, mapShadowFlag != 0)) return false;
+	AddLightToList(dld, group, light, radius, false, false, mapShadowFlag, mapGroup);
 	if (mapShadowFlag && SdvkDiagnostics::StateEnabled())
 	{
 		if (mapShadowFlag == LIGHTINFO_FLASHLIGHT_MAP_SHADOW) ++worldView->FlashlightMapShadowLinks;
-		else if (light->GetProjectileLightScale() > 0) ++worldView->ProjectileMapShadowLinks;
+		else if (!emitter && light->GetProjectileLightScale() > 0) ++worldView->ProjectileMapShadowLinks;
 	}
 	return true;
 }
@@ -228,7 +276,7 @@ bool GetLight(FDynLightData& dld, int group, Plane & p, FDynamicLight * light, b
 // Add one dynamic light to the light data list
 //
 //==========================================================================
-void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, bool forceAttenuate, bool doTrace,
+void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, float radius, bool forceAttenuate, bool doTrace,
 	int mapShadowFlag, int mapGroup)
 {
 	FDynLightInfo info = {};
@@ -238,7 +286,7 @@ void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, bool f
 
 	DVector3 pos = HWLightPositionRelative(light, group);
 	
-	info.radius = light->GetRadius();
+	info.radius = radius;
 
 	float cs;
 	if (light->IsAdditive()) 
@@ -257,6 +305,7 @@ void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, bool f
 	cs *= (float)light->GetLightDefIntensity() * light->GetProjectileLightScale();
 	if (emitter)
 	{
+		cs *= light->Sector->StageBFixtureOutput();
 		const int intensity = light->GetSecondaryIntensity();
 		cs *= intensity == 0 ? 1.f : clamp(intensity, 0, 200) * 0.01f;
 		info.radius = std::min(info.radius, 512.f);
@@ -310,6 +359,7 @@ void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, bool f
 	if (light->IsSpot())
 	{
 		info.flags |= LIGHTINFO_SPOT;
+		if (HWFlashlightView::ProfileFor(light)) info.flags |= LIGHTINFO_FLASHLIGHT_PROFILE;
 		if (HWShadowPuppetFlashlight.Contains(light)) info.flags |= LIGHTINFO_SHADOW_PUPPET;
 		if ((gl_world_relief || gl_sprite_lighting_relief || gl_emitter_lighting) && light->IsLocalFlashlight()) info.flags |= LIGHTINFO_FLASHLIGHT;
 

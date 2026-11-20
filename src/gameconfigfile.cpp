@@ -73,6 +73,8 @@ EXTERN_CVAR(Float, m_sensitivity_y)
 EXTERN_CVAR(Int, adl_volume_model)
 EXTERN_CVAR (Int, gl_texture_hqresize_targets)
 EXTERN_CVAR(Int, wipetype)
+EXTERN_CVAR(Int, gl_flashlight_map_shadow_spread_horizontal)
+EXTERN_CVAR(Int, gl_flashlight_map_shadow_spread_vertical)
 EXTERN_CVAR(Bool, i_pauseinbackground)
 EXTERN_CVAR(Bool, i_soundinbackground)
 
@@ -304,8 +306,50 @@ void FGameConfigFile::DoAutoloadSetup (FIWadManager *iwad_man)
 		"# 'doom.doom2.commercial.Autoload' only when playing doom2.wad.\n\n");
 }
 
+// Legacy autoexec and command-line setters run before CVar callbacks are enabled.
+// Forward the assignment itself so subsequent per-axis commands keep their order.
+class FLegacyFlashlightSpread final : public FIntCVar
+{
+public:
+	using FIntCVar::FIntCVar;
+	void DoSet(UCVarValue value, ECVarType type) override
+	{
+		Value = clamp(ToInt(value, type), 0, 400);
+		gl_flashlight_map_shadow_spread_horizontal->MarkUnsafe();
+		gl_flashlight_map_shadow_spread_vertical->MarkUnsafe();
+		gl_flashlight_map_shadow_spread_horizontal = Value;
+		gl_flashlight_map_shadow_spread_vertical = Value;
+	}
+};
+
 void FGameConfigFile::DoGlobalSetup ()
 {
+	// Seed missing axes from a pre-axis profile. Read explicit axis values from
+	// either section first, including ones preserved by an older engine version.
+	const char *uniformKey = "gl_flashlight_map_shadow_spread";
+	if (!FindCVar(uniformKey, nullptr)) new FLegacyFlashlightSpread(uniformKey, 100, 0);
+	const char *horizontalKey = gl_flashlight_map_shadow_spread_horizontal->GetName();
+	const char *verticalKey = gl_flashlight_map_shadow_spread_vertical->GetName();
+	FString uniformSpread;
+	bool hasHorizontal = false, hasVertical = false;
+	for (const char *section : { "GlobalSettings.Unknown", "GlobalSettings" })
+	{
+		if (!SetSection(section)) continue;
+		hasHorizontal |= GetValueForKey(horizontalKey) != nullptr;
+		hasVertical |= GetValueForKey(verticalKey) != nullptr;
+		while (const char *value = GetValueForKey(uniformKey))
+		{
+			uniformSpread = *value ? value : "0";
+			ClearKey(uniformKey);
+		}
+	}
+	if (!uniformSpread.IsEmpty())
+	{
+		SetSection("GlobalSettings", true);
+		if (!hasHorizontal) SetValueForKey(horizontalKey, uniformSpread);
+		if (!hasVertical) SetValueForKey(verticalKey, uniformSpread);
+	}
+
 	if (SetSection ("GlobalSettings.Unknown"))
 	{
 		ReadCVars (CVAR_GLOBALCONFIG);

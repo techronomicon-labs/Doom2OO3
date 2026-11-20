@@ -191,7 +191,7 @@ struct HWDrawInfo
 	bool FlashlightMapShadows = false;
 	bool UsesFlashlightMapShadows() const { return FlashlightMapShadows; }
 	unsigned FlashlightMapShadowLinks = 0;
-	bool DrawingProjectileMapShadows = false;
+	bool DrawingOpaqueMapShadows = false;
 	unsigned ProjectileMapShadowLinks = 0;
 	int FullbrightFlags;
 	std::atomic<int> spriteindex;

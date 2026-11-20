@@ -53,7 +53,8 @@ def fixture_brightmap(row):
     from stageb_layout import FLAT_FIXTURES, WALL_FIXTURES
 
     fixtures = FLAT_FIXTURES if row["kind"] == "flat" else WALL_FIXTURES
-    fixture = fixtures.get(row["name"])
+    name = row["name"]
+    fixture = fixtures.get(name)
     if fixture is None:
         return None
     pixels = row["pixels"]
@@ -61,10 +62,20 @@ def fixture_brightmap(row):
     for x0, y0, x1, y1 in fixture.regions:
         source = pixels[y0:y1, x0:x1]
         red, green, blue, alpha = source.astype(np.int32).transpose(2, 0, 1)
-        if row["name"] == "TEKGREN5":
+        if name in ("TEKGREN5", "METAL6", "METAL7", "TEKBRON2", "BIGBRIK3", "BRONZE4"):
             value = 190 * ((red == 255) & (green == 255) & (blue < 224))
-        elif row["name"] == "EXITSIGN":
+        elif name in ("EXITSIGN", "EXITSTON"):
             value = np.where((red >= 48) & (red > 2 * np.maximum(green, blue)), 72 + red // 4, 0)
+        elif name in ("COMPSTA1", "COMPSTA2"):
+            value = np.where(green > 1.5 * np.maximum(red, blue), np.clip(green - 28, 0, 140), 0)
+        elif name.startswith("CRACKLE") or name == "RROCK02":
+            value = np.where((red > 150) & (green > 95) & (green > 1.5 * blue), green // 2, 0)
+        elif name.startswith(("RROCK", "SLIME")):
+            value = np.where((red >= 60) & (red > 3 * green) & (blue < 24), red // 2, 0)
+        elif name == "SILVER2":
+            value = np.where(blue > 1.5 * np.maximum(red, green), blue // 2, 0)
+        elif name.startswith(("FIREMAG", "FIREWAL", "FIRELAV")):
+            value = np.where(red > 1.4 * blue, np.clip(red - 64, 0, 150), 0)
         else:
             peak = np.maximum(np.maximum(red, green), blue)
             value = np.clip((peak - 104) * 1.12, 0, 154)

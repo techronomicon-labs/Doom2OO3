@@ -82,6 +82,7 @@ FSerializer &Serialize(FSerializer &arc, const char *key, FLightDefaults &value,
 			("spotouter", value.m_spotOuterAngle)
 			("pitch", value.m_pitch)
 			("lightdefintensity", value.m_LightDefIntensity)
+			("emitterradiusscale", value.m_EmitterRadiusScale)
 			("softshadowradius", value.SoftShadowRadius)
 			("linearity", value.Linearity)
 		.EndObject();
@@ -131,6 +132,7 @@ void FLightDefaults::ApplyProperties(FDynamicLight * light) const
 	light->lighttype = m_type;
 	light->specialf1 = m_Param;
 	light->lightDefIntensity = m_LightDefIntensity;
+	light->emitterRadiusScale = m_EmitterRadiusScale;
 	light->pArgs = m_Args;
 	light->pSoftShadowRadius = &SoftShadowRadius;
 

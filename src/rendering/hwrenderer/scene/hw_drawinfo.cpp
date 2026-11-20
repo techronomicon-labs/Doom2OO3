@@ -937,7 +937,7 @@ void HWDrawInfo::RenderScene(FRenderState &state)
 	*/
 
 	// The point-light trace uses the level mesh in ordinary world coordinates.
-	DrawingProjectileMapShadows = gl_projectile_map_shadows && ShadowPuppetsEligible && !outer
+	DrawingOpaqueMapShadows = (gl_projectile_map_shadows || UsesEmitterLighting()) && ShadowPuppetsEligible && !outer
 		&& Level->levelMesh && !(Level->flags3 & LEVEL3_NOSHADOWMAP);
 	ProjectileMapShadowLinks = 0;
 	FlashlightMapShadowLinks = 0;
@@ -952,7 +952,7 @@ void HWDrawInfo::RenderScene(FRenderState &state)
 	RenderFlat.Unclock();
 
 	drawlists[GLDL_PLAINFLATS].DrawFlats(this, state, false);
-	DrawingProjectileMapShadows = false;
+	DrawingOpaqueMapShadows = false;
 	if (FlashlightMapShadowLinks)
 		SdvkDiagnostics::Emit("flashlight-map-shadows", SdvkObservation::Object()
 			.Int("light_links", FlashlightMapShadowLinks).Json());

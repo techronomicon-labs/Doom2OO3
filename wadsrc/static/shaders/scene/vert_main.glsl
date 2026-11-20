@@ -40,6 +40,8 @@
 		if ((light.flags & LIGHTINFO_SPOT) != 0)
 		{
 			attenuation *= spotLightAttenuation(light.pos.xyz, light.spotDir.xyz, light.spotInnerAngle, light.spotOuterAngle);
+			if ((light.flags & LIGHTINFO_FLASHLIGHT_PROFILE) != 0)
+				attenuation *= FlashlightProfileGain(-lightdir);
 		}
 		
 		if (!LIGHT_NONORMALS)
@@ -58,7 +60,8 @@
 				// Actor cards can extend below the floor. Match this mode's light
 				// sampling position so clipped corners cannot dim the visible sprite.
 				vec3 receiver = USE_SPRITE_CENTER ? uActorCenter.xyz : pixelpos.xyz;
-				attenuation *= MapLightVisibility(light, receiver, true);
+				if (uFlashlightShadowDarkness > 0.0)
+					attenuation *= FlashlightShadowVisibility(MapLightVisibility(light, receiver, true));
 			}
 			else if((light.flags & LIGHTINFO_SUN) != 0)
 			{

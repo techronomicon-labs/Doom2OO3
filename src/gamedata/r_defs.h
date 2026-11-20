@@ -707,6 +707,14 @@ struct sector_t
 
 	bool transdoor;							// For transparent door hacks
 	short		lightlevel;
+	uint8_t StageBLightPeak = 0;
+	uint8_t StageBLightDark = 0;
+
+	float StageBFixtureOutput() const
+	{
+		if (StageBLightPeak <= StageBLightDark) return 1.f;
+		return std::clamp((lightlevel - StageBLightDark) / float(StageBLightPeak - StageBLightDark), 0.f, 1.f);
+	}
 	uint16_t MoreFlags;						// [RH] Internal sector flags
 	uint32_t Flags;							// Sector flags
 

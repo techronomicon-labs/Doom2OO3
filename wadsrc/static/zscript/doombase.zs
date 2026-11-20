@@ -543,6 +543,7 @@ struct LevelLocals native
 
 	native String GetChecksum() const;
 	native void EnableStageBLayout();
+	native void SetStageBLightPeak(int sectorIndex, int peak, int darkLevel = 0);
 
 	native void ChangeSky(TextureID sky1, TextureID sky2 );
 	native void ForceLightning(int mode = 0, sound tempSound = "");

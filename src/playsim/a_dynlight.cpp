@@ -194,6 +194,7 @@ void AttachLight(AActor *self)
 	light->pSpotInnerAngle = &self->AngleVar(NAME_SpotInnerAngle);
 	light->pSpotOuterAngle = &self->AngleVar(NAME_SpotOuterAngle);
 	light->lightDefIntensity = 1.0;
+	light->emitterRadiusScale = 1.f;
 	light->pPitch = &self->Angles.Pitch;
 	light->pLightFlags = (LightFlags*)&self->IntVar(NAME_lightflags);
 	light->shadowMinQuality = std::clamp(self->IntVar(NAME_shadowMinQuality), 0, 4);

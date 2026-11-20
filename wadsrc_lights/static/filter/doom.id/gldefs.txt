@@ -321,6 +321,7 @@ object BFGExtra
 // Barrel
 pulselight BARREL
 {
+    emitterradiusscale 0
     color 0.0 0.3 0.0
     size 20
     secondarySize 21
@@ -342,6 +343,7 @@ object ExplosiveBarrel
 // Floor lamp
 pointlight LAMP
 {
+    emitterradiusscale 0.72
     color 1.0 1.0 0.8
     size 84
     offset 0 44 0
@@ -356,6 +358,7 @@ object Column
 // Short tech lamp
 pulselight SMALLLAMP
 {
+    emitterradiusscale 0.72
     color 0.8 0.8 1.0
     size 84
     secondarySize 87
@@ -372,6 +375,7 @@ object TechLamp2
 // Tall tech lamp
 pulselight BIGLAMP
 {
+    emitterradiusscale 0.72
     color 0.8 0.8 1.0
     size 96
     secondarySize 99
@@ -388,6 +392,7 @@ object TechLamp
 // Tall red torch
 flickerlight2 BIGREDTORCH
 {
+    emitterradiusscale 0.62
     color 0.7 0.35 0.14
     size 90
     secondarySize 99
@@ -404,6 +409,7 @@ object RedTorch
 // Tall green torch
 flickerlight2 BIGGREENTORCH
 {
+    emitterradiusscale 0.62
     color 0.2 0.7 0.2
     size 90
     secondarySize 99
@@ -420,6 +426,7 @@ object GreenTorch
 // Tall blue torch
 flickerlight2 BIGBLUETORCH
 {
+    emitterradiusscale 0.62
     color 0.2 0.2 0.7
     size 90
     secondarySize 99
@@ -436,6 +443,7 @@ object BlueTorch
 // Small red torch
 flickerlight2 SMALLREDTORCH
 {
+    emitterradiusscale 0.62
     color 0.7 0.35 0.14
     size 72
     secondarySize 81
@@ -452,6 +460,7 @@ object ShortRedTorch
 // Small green torch
 flickerlight2 SMALLGREENTORCH
 {
+    emitterradiusscale 0.62
     color 0.2 0.7 0.2
     size 72
     secondarySize 81
@@ -468,6 +477,7 @@ object ShortGreenTorch
 // Small blue torch
 flickerlight2 SMALLBLUETORCH
 {
+    emitterradiusscale 0.62
     color 0.2 0.2 0.7
     size 72
     secondarySize 81
@@ -484,6 +494,7 @@ object ShortBlueTorch
 // Burning barrel
 flickerlight2 FIREBARREL
 {
+    emitterradiusscale 0.62
     color 1.0 0.9 0.4
     size 72
     secondarySize 81
@@ -500,6 +511,7 @@ object BurningBarrel
 // Skulls w/candles
 flickerlight2 SKULLCANDLES
 {
+    emitterradiusscale 0.55
     color 1.0 1.0 0.3
     size 48
     secondarySize 51
@@ -516,6 +528,7 @@ object HeadCandles
 // Candle
 pointlight CANDLE
 {
+    emitterradiusscale 0.55
     color 1.0 1.0 0.3
     size 24
     offset 0 16 0
@@ -530,6 +543,7 @@ object Candlestick
 // Candelabra
 pointlight CANDELABRA
 {
+    emitterradiusscale 0.55
     color 1.0 1.0 0.3
     size 67
     offset 0 52 0
@@ -550,6 +564,7 @@ object Candelabra
 // Soul Sphere
 pulselight SOULSPHERE
 {
+    emitterradiusscale 0.32
     color 0.3 0.3 1.0
     size 60
     secondarySize 63
@@ -565,6 +580,7 @@ object SoulSphere
 
 pulselight MEGASPHERE
 {
+    emitterradiusscale 0.32
     color 0.5 0.5 0.4
     size 60
     secondarySize 63
@@ -581,6 +597,7 @@ object MegaSphere
 // Invulnerability Sphere
 pulselight INVULN
 {
+    emitterradiusscale 0.32
     color 0.3 1.0 0.3
     size 60
     secondarySize 63
@@ -597,6 +614,7 @@ object InvulnerabilitySphere
 // Blur Sphere
 pointlight BLURSPHERE1
 {
+    emitterradiusscale 0.32
     color 1.0 0.0 0.0
     size 60
     offset 0 16 0
@@ -605,6 +623,7 @@ pointlight BLURSPHERE1
 
 pointlight BLURSPHERE2
 {
+    emitterradiusscale 0.32
     color 0.0 0.0 1.0
     size 48
     offset 0 16 0
@@ -613,6 +632,7 @@ pointlight BLURSPHERE2
 
 pointlight BLURSPHERE3
 {
+    emitterradiusscale 0.32
     color 0.0 0.0 1.0
     size 36
     offset 0 16 0
@@ -621,6 +641,7 @@ pointlight BLURSPHERE3
 
 pointlight BLURSPHERE4
 {
+    emitterradiusscale 0.32
     color 0.0 0.0 1.0
     size 24
     offset 0 16 0
@@ -629,6 +650,7 @@ pointlight BLURSPHERE4
 
 pointlight BLURSPHERE5
 {
+    emitterradiusscale 0.32
     color 0.0 0.0 1.0
     size 12
     offset 0 16 0
@@ -648,6 +670,7 @@ object BlurSphere
 // Health Potion
 pulselight HEALTHPOTION
 {
+    emitterradiusscale 0
     color 0.0 0.0 0.3
     size 16
     secondarySize 20
@@ -664,6 +687,7 @@ object HealthBonus
 // Armour Helmet
 pulselight ARMORBONUS
 {
+    emitterradiusscale 0
     color 0.1 0.3 0.1
     size 16
     secondarySize 20
@@ -692,6 +716,7 @@ object BlueSkull
 // Yellow Keys
 pulselight YELLOWKEY
 {
+    emitterradiusscale 0
     color 0.6 0.6 0.0
     size 24
     secondarySize 27
@@ -713,6 +738,7 @@ object YellowSkull
 // Red Keys
 pulselight REDKEY
 {
+    emitterradiusscale 0
     color 0.6 0.0 0.0
     size 24
     secondarySize 27
@@ -734,6 +760,7 @@ object RedSkull
 // Green armour
 pointlight GREENARMOR1
 {
+    emitterradiusscale 0
     color 0.0 0.3 0.0
     size 40
 	attenuate 1
@@ -742,6 +769,7 @@ pointlight GREENARMOR1
 
 pointlight GREENARMOR2
 {
+    emitterradiusscale 0
     color 0.0 0.3 0.0
     size 30
 	attenuate 1
@@ -757,6 +785,7 @@ object GreenArmor
 // Blue armour
 pointlight BLUEARMOR1
 {
+    emitterradiusscale 0
     color 0.0 0.0 0.3
     size 40
 	attenuate 1
@@ -765,6 +794,7 @@ pointlight BLUEARMOR1
 
 pointlight BLUEARMOR2
 {
+    emitterradiusscale 0
     color 0.0 0.0 0.3
     size 30
 	attenuate 1

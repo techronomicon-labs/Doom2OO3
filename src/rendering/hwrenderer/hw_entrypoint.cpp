@@ -129,7 +129,7 @@ void CollectLights(FLevelLocals* Level, const DVector3& viewPosition, bool emitt
 	ShadowMap* sm = screen->mShadowMap;
 	std::vector<HWShadowSelectionCandidate<FDynamicLight*>> emitters, dynamicLights;
 	const auto eligible = [emitterLighting, dynamicShadows = gl_light_shadows > 0](const FDynamicLight* light, bool emitter) {
-		return light->IsActive() && (emitter ? emitterLighting : dynamicShadows && light->shadowmapped);
+		return light->GetViewRadius(emitterLighting) > 0 && (emitter ? emitterLighting : dynamicShadows && light->shadowmapped);
 	};
 
 	for (auto light = Level->lights; light; light = light->next)
@@ -261,6 +261,8 @@ sector_t* RenderViewpoint(FRenderViewpoint& mainvp, AActor* camera, IntRect* bou
 		di->IsEnvironmentMapRendering = side != -1;
 
 		di->Set3DViewport(RenderState);
+		di->VPUniforms.FlashlightLensRight = flashlightView.LensRight;
+		di->VPUniforms.FlashlightLensUp = flashlightView.LensUp;
 		di->SetViewArea();
 		auto cm = di->SetFullbrightFlags(mainview ? vp.camera->player : nullptr);
 		const bool localShadowView = contextType == HWRenderContextType::MainView && eyeCount == 1 &&
@@ -268,8 +270,15 @@ sector_t* RenderViewpoint(FRenderViewpoint& mainvp, AActor* camera, IntRect* bou
 			gl_lights && !gl_levelmesh && !gl_raytrace && !gl_ubershaders && !lm_dynlights &&
 			!netgame;
 		di->ShadowPuppetsEligible = localShadowView && RenderState.GetPassType() == NORMAL_PASS;
+		di->VPUniforms.FlashlightShadowDarkness = gl_flashlight_shadow_darkness / 100.f;
 		di->FlashlightMapShadows = localShadowView && gl_flashlight_map_shadows && !di->outer &&
 			di->Level->levelMesh && !(di->Level->flags3 & LEVEL3_NOSHADOWMAP);
+		const float sourceRadius = di->FlashlightMapShadows ? float(gl_flashlight_map_shadow_radius) : 0.f;
+		di->VPUniforms.FlashlightMapShadowRadii = {
+			sourceRadius * (gl_flashlight_map_shadow_spread_horizontal / 100.f),
+			sourceRadius * (gl_flashlight_map_shadow_spread_vertical / 100.f)
+		};
+		di->VPUniforms.FlashlightMapShadowStyle = gl_flashlight_map_shadow_style;
 		if (emitterLighting && !di->isFullbrightScene())
 		{
 			di->VPUniforms.mPalLightLevels |= HWViewpointUniforms::EmitterLighting;

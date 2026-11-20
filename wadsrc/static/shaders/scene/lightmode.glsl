@@ -70,6 +70,13 @@ vec4 getLightColor(Material material)
 	else
 	{
 		bool stageB = STAGE_B_WORLD_LIGHTING;
+	#if !defined LEGACY_USER_SHADER && !defined NO_LAYERS
+		if (stageB)
+		{
+			material.Bright.rgb *= data[uDataIndex].uStageBEmission;
+			material.Glow.a *= data[uDataIndex].uStageBEmission;
+		}
+	#endif
 		float legacyAmbient = stageB ? uStageBAmbient : 1.0;
 		bool sampleAmbient = legacyAmbient > 0.0;
 #ifdef PBR

@@ -1,12 +1,11 @@
 """Build the Doom II Stage B emitter authoring and comparison rooms."""
 
 import argparse
-from dataclasses import dataclass
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from gallery import Map, wad
-from stageb_layout import Emitter, infer_layout
+from stageb_layout import Emitter, FLAT_FIXTURES, PlaneEmitter, WALL_FIXTURES, infer_layout, lit_intensity
 
 
 MENU = "DoomIIEmitterLightingMenu"
@@ -16,91 +15,52 @@ WARM = (255, 187, 128)
 AMBER = (255, 154, 86)
 TEAL = (133, 238, 217)
 SKYLIGHT = (179, 208, 255)
-ENTRYWAY_DAYLIGHT = (244, 234, 217)
-CEILING_LIGHT_COLOURS = {
-    "FLAT2": (235, 238, 241),
-}
 
 
-@dataclass(frozen=True)
-class CeilingFixture:
-    texture: str
-    sector: int
-    x: int
-    y: int
-    below_ceiling: int
-    radius: int
-    intensity: int
-
-    def call(self):
-        rgb = ", ".join(map(str, CEILING_LIGHT_COLOURS[self.texture]))
-        return (f'AddCeilingEmitter("{self.texture}", {self.sector}, ({self.x}, {self.y}), '
-                f"{self.below_ceiling}, {self.radius // 2}, {rgb}, {self.intensity});")
+def entryway_walls(texture, sector, z, sector_light, positions):
+    fixture = WALL_FIXTURES[texture]
+    strength = lit_intensity(fixture.intensity, sector_light)
+    return tuple(Emitter(sector, x, y, z, fixture.radius, fixture.color, strength, texture=texture)
+                 for x, y in positions)
 
 
-@dataclass(frozen=True)
-class WallStrip:
-    line: int
-
-    def call(self):
-        return f"AddWallStripEmitter({self.line});"
-
-
-ENTRYWAY_WALL_STRIPS = tuple(WallStrip(line) for line in (
-    316, 318, 320, 322, 324, 326, 328, 330, 290, 292, 293, 295, 297, 300, 301, 308, 310,
-))
-
-# Actor X, Y, radius argument and intensity from the preceding Entryway release.
-# All of these ceiling points were placed at map Z 114 with the same RGB.
-RETIRED_ENTRYWAY_CEILING = (
-    (370, 968, 82, 68), (398, 1096, 82, 68), (370, 1240, 82, 68),
-    (398, 1384, 82, 68), (370, 1512, 82, 68), (-78, 1336, 88, 88),
-    (-50, 1464, 88, 88), (-50, 1592, 88, 88), (78, 1576, 88, 88),
-    (206, 1560, 90, 88), (398, 1560, 90, 88), (178, 1720, 72, 64),
-)
+def entryway_planes(texture, sector, sector_light, positions, *, ceiling=True, narrow=False):
+    fixture = FLAT_FIXTURES[texture]
+    strength = lit_intensity(fixture.intensity, sector_light)
+    if narrow and len(positions) > 1:
+        strength = round(strength * 0.8)
+    return tuple(PlaneEmitter(texture, sector, x, y, 8, fixture.radius, strength, fixture.color, ceiling)
+                 for x, y in positions)
 
 
 def sky(sector, x, y, radius, intensity):
     return Emitter(sector, x, y, 80, radius, SKYLIGHT, intensity, (315, 44), 1)
 
 
-# The original Entryway has no lamp actors. Leave dark and unlit sectors to
-# legacy fill and the flashlight. Use native sector indices and the original
-# map checksum to keep the layout tied to its light fittings and open sky.
+# The standalone comparison pack can be built without a Doom II IWAD. Cache
+# the resolved fixture positions for its exact MAP01 checksum and share the
+# campaign's material profiles. IWAD builds resolve Entryway from the map.
 ENTRYWAY = (
-    # The overcast sky is shared across exposed terraces.
-    *(Emitter(sector, x, y, 80, radius, ENTRYWAY_DAYLIGHT, intensity, (315, 54), 1)
-      for sector, x, y, radius, intensity in (
-          (10, -486, 768, 300, 58),
-          (11, -755, 712, 490, 80),
-          (11, -860, 982, 440, 62),
-          (12, -1030, 918, 472, 55),
-          (14, 1155, -320, 512, 70),
-          (14, 1376, 198, 512, 69),
-          (15, 1140, -552, 512, 67),
-          (15, 1410, -400, 512, 62),
-          (17, 698, 184, 512, 81),
-          (17, 1070, -72, 512, 71),
-          (24, 842, 414, 460, 82),
-          (26, 943, 376, 284, 69),
-      )),
-    # The yellow strips in TEKGREN5 light the corridor and the bend.
-    *ENTRYWAY_WALL_STRIPS,
-    # FLAT2 fluorescent housings in the two raised computer banks.
-    CeilingFixture("FLAT2", 45, 352, 2208, 12, 184, 78),
-    CeilingFixture("FLAT2", 45, 352, 2336, 12, 184, 78),
-    CeilingFixture("FLAT2", 45, 352, 2464, 12, 184, 78),
-    CeilingFixture("FLAT2", 46, 352, 2272, 12, 108, 57),
-    CeilingFixture("FLAT2", 47, 352, 2400, 12, 108, 57),
-    CeilingFixture("FLAT2", 49, 32, 2208, 12, 184, 78),
-    CeilingFixture("FLAT2", 49, 32, 2336, 12, 184, 78),
-    CeilingFixture("FLAT2", 49, 32, 2464, 12, 184, 78),
-    CeilingFixture("FLAT2", 50, 32, 2400, 12, 108, 57),
-    CeilingFixture("FLAT2", 51, 32, 2272, 12, 108, 57),
-    # The two outdoor door strips and the small red face of the exit sign.
-    Emitter(27, 712, 504, 48, 120, (235, 238, 241), 74),
-    Emitter(27, 888, 504, 48, 120, (235, 238, 241), 74),
-    Emitter(34, 992, 1027, 64, 54, (255, 72, 57), 26),
+    *entryway_walls("TEKGREN5", 1, 64, 160, (
+        (324, 1312), (444, 1056), (444, 1440), (324, 1184),
+        (324, 1446), (324, 1056), (444, 1184), (444, 1312),
+    )),
+    *entryway_planes("CEIL1_3", 20, 176, ((416, 670),)),
+    *entryway_planes("CEIL1_2", 20, 176, ((416, 670),), ceiling=False),
+    *entryway_walls("LITE5", 27, 48, 176, ((708, 504), (892, 504))),
+    *entryway_walls("EXITSIGN", 34, 64, 192, ((992, 1028),)),
+    *entryway_planes("CEIL1_3", 40, 176, ((928, 734),)),
+    *entryway_planes("CEIL1_2", 40, 176, ((928, 734),), ceiling=False),
+    *entryway_planes("FLAT2", 45, 224, ((352, 2335), (288, 2207), (288, 2463), (416, 2207), (416, 2463))),
+    *entryway_planes("FLAT2", 46, 224, ((288, 2271), (352, 2271)), narrow=True),
+    *entryway_planes("FLAT2", 47, 224, ((288, 2399), (352, 2399)), narrow=True),
+    *entryway_planes("FLAT2", 49, 224, ((32, 2335), (-32, 2207), (-32, 2463), (96, 2207), (96, 2463))),
+    *entryway_planes("FLAT2", 50, 224, ((32, 2399), (96, 2399)), narrow=True),
+    *entryway_planes("FLAT2", 51, 224, ((32, 2271), (96, 2271)), narrow=True),
+    *entryway_walls("TEKGREN5", 52, 64, 224, (
+        (96, 1540), (416, 1660), (-124, 1376), (-124, 1632), (32, 1660),
+        (-124, 1504), (224, 1540), (-4, 1376), (-4, 1504),
+    )),
 )
 
 FIXTURE_EMITTERS = {
@@ -170,6 +130,8 @@ def sealed_control():
 ZSCRIPT = '''version "4.10"
 class SDVKStageBPointEmitter : PointLightAttenuated
 {
+    bool AuthoredByLayout;
+
     Default
     {
         +DYNAMICLIGHT.DONTLIGHTMAP
@@ -188,12 +150,8 @@ class SDVKStageBDirectionalEmitter : SDVKStageBPointEmitter
 class SDVKStageBLayout : EventHandler
 {
     String RoomLabel;
-    int EntrywayLayoutRevision;
-    bool TriedEntrywayLayoutUpgrade;
-    bool CheckedCampaignLayout;
     int CampaignLayoutRevision;
-    const CurrentEntrywayLayout = 1;
-    const CurrentCampaignLayout = 1;
+    const CurrentCampaignLayout = 3;
 
     SDVKStageBPointEmitter AddEmitter(int receiver, Vector2 position, double height, int size,
                     int red, int green, int blue, int intensity, double linearity, bool directional,
@@ -211,6 +169,7 @@ class SDVKStageBLayout : EventHandler
         else
             light = SDVKStageBPointEmitter(Actor.Spawn("SDVKStageBPointEmitter", origin, NO_REPLACE));
         if (light == null) return null;
+        light.AuthoredByLayout = true;
         light.Args[0] = red;
         light.Args[1] = green;
         light.Args[2] = blue;
@@ -220,12 +179,6 @@ class SDVKStageBLayout : EventHandler
         light.A_SetAngle(yaw);
         light.A_SetPitch(pitch);
         return light;
-    }
-
-    void AddCeilingEmitter(String texture, int receiver, Vector2 position, int belowCeiling,
-                           int size, int red, int green, int blue, int intensity)
-    {
-        AddPlaneEmitter(texture, receiver, position, belowCeiling, size, red, green, blue, intensity, true);
     }
 
     void AddPlaneEmitter(String texture, int receiver, Vector2 position, int inset,
@@ -242,120 +195,61 @@ class SDVKStageBLayout : EventHandler
         AddEmitter(receiver, position, height, size, red, green, blue, intensity, 0.82, false, 0, 0);
     }
 
+    bool IsLegacyLayoutEmitter(SDVKStageBPointEmitter light)
+    {
+        // Older packs did not mark their runtime-spawned lights. Leave map
+        // things, tagged actors, subclasses and unrelated light colors alone.
+        if (light.TID != 0 || light.SpawnFlags != 0) return false;
+        int rgb = (light.Args[0] << 16) | (light.Args[1] << 8) | light.Args[2];
+        if (light.GetClassName() == 'SDVKStageBDirectionalEmitter')
+            return light.Angle == 315 && light.Pitch == 54 && light.LightLinearity == 1 &&
+                   (rgb == 0xf4ead9 || rgb == 0xf2decc || rgb == 0xf8b38f);
+        if (light.GetClassName() != 'SDVKStageBPointEmitter' ||
+            abs(light.LightLinearity - 0.82) > 0.0001) return false;
+        switch (rgb)
+        {
+        case 0xebeef1: case 0xffc78f: case 0xff4839: case 0x6793ff:
+        case 0xff965e: case 0xfff5cd: case 0x9b69ef: case 0xff6c4f:
+        case 0x87ee73: case 0xdaebd1:
+            return true;
+        }
+        return false;
+    }
+
     void ClearSavedCampaignEmitters()
     {
-        // Pre-upgrade campaign saves also contain duplicate lights at decorations.
-        // Rebuild this pack's derived layout from the checksum-qualified map below.
-        let iterator = ThinkerIterator.Create("SDVKStageBPointEmitter", Thinker.STAT_DLIGHT);
-        Actor light;
-        while ((light = Actor(iterator.Next())))
-        {
-            if (light.GetClassName() == 'SDVKStageBPointEmitter' || light.GetClassName() == 'SDVKStageBDirectionalEmitter')
-                light.Destroy();
-        }
-    }
-
-    SDVKStageBPointEmitter AddWallStripEmitter(int lineIndex)
-    {
-        let line = level.lines[lineIndex];
-        let side = line.sidedef[Line.front];
-        TextureID fixture = TexMan.CheckForTexture("TEKGREN5", TexMan.Type_Wall);
-        if (side == null || line.backsector != null || !fixture.IsValid() ||
-            side.GetTexture(Side.mid) != fixture) return null;
-
-        // The band spans source texels U 4–58 and V 4–11. These checksum-qualified
-        // one-sided walls are ceiling-pegged and have no texture scaling.
-        double along = 31 - side.GetTextureXOffset(Side.mid);
-        double length = line.delta.Length();
-        if (along < 0 || along >= length) return null;
-        Vector2 tangent = line.delta / length;
-        Vector2 face = line.v1.p + tangent * along;
-        Vector2 position = face + (tangent.Y, -tangent.X) * 8;
-        let sector = side.sector;
-        double height = sector.ceilingplane.ZatPoint(face) + side.GetTextureYOffset(Side.mid)
-                      - 8 - sector.floorplane.ZatPoint(position);
-        return AddEmitter(sector.Index(), position, height, 96, 255, 245, 205, 56, 0.82, false, 0, 0);
-    }
-
-    bool IsStockEntryway()
-    {
-        return level.MapName == "MAP01" && level.GetChecksum() == "ENTRYWAY_CHECKSUM";
-    }
-
-    void UpgradeEntrywayLayout()
-    {
-        if (!IsStockEntryway()) return;
-
-        static const int retiredSignatures[] = {RETIRED_SIGNATURES};
-        static const int wallStrips[] = {WALL_STRIP_LINES};
-        Array<SDVKStageBPointEmitter> retired;
-        retired.Resize(retiredSignatures.Size() / 4);
         let iterator = ThinkerIterator.Create("SDVKStageBPointEmitter", Thinker.STAT_DLIGHT);
         SDVKStageBPointEmitter light;
-        int matched = 0;
-        while ((light = SDVKStageBPointEmitter(iterator.Next(true))))
+        while ((light = SDVKStageBPointEmitter(iterator.Next())))
         {
-            if (light.Pos.Z != 114 || light.Args[0] != 218 || light.Args[1] != 235 ||
-                light.Args[2] != 209) continue;
-            for (int i = 0; i < retiredSignatures.Size(); i += 4)
-            {
-                if (light.Pos.X != retiredSignatures[i] || light.Pos.Y != retiredSignatures[i + 1] ||
-                    light.Args[3] != retiredSignatures[i + 2] || light.Args[4] != retiredSignatures[i + 3])
-                    continue;
-                if (retired[i / 4] != null) return;
-                retired[i / 4] = light;
-                matched++;
-                break;
-            }
+            if (light.AuthoredByLayout || (CampaignLayoutRevision < 2 && IsLegacyLayoutEmitter(light)))
+                light.Destroy();
         }
-        // Upgrade only a complete known layout. Preserve other lights and subclasses.
-        if (matched != retired.Size()) return;
-
-        Array<SDVKStageBPointEmitter> installed;
-        for (int i = 0; i < wallStrips.Size(); i++)
-        {
-            light = AddWallStripEmitter(wallStrips[i]);
-            if (light == null)
-            {
-                for (int j = 0; j < installed.Size(); j++) installed[j].Destroy();
-                return;
-            }
-            installed.Push(light);
-        }
-        for (int i = 0; i < retired.Size(); i++) retired[i].Destroy();
-        EntrywayLayoutRevision = CurrentEntrywayLayout;
     }
 
     override void WorldLoaded(WorldEvent e)
     {
         if (e.IsSaveGame || e.IsReopen) return;
-        EntrywayLayoutRevision = 0;
-        CampaignLayoutRevision = CurrentCampaignLayout;
-        TriedEntrywayLayoutUpgrade = false;
         RoomLabel = "";
+        CampaignLayoutRevision = CurrentCampaignLayout;
 EMITTERS
         LoadCampaignLayout();
     }
 
     override void WorldTick()
     {
-        // A serialized EventHandler skips WorldLoaded when restoring a save.
+        // Restored EventHandlers keep their revision and the previous room
+        // label. Only a recognized map with a previously installed layout
+        // needs its saved actors replaced.
         if (CampaignLayoutRevision < CurrentCampaignLayout)
         {
+            LoadCampaignLayout(RoomLabel != "");
             CampaignLayoutRevision = CurrentCampaignLayout;
-            LoadCampaignLayout(CheckedCampaignLayout);
         }
-        else if (!CheckedCampaignLayout) LoadCampaignLayout();
-        if (EntrywayLayoutRevision >= CurrentEntrywayLayout || TriedEntrywayLayoutUpgrade ||
-            RoomLabel != "Entryway") return;
-        TriedEntrywayLayoutUpgrade = true;
-        UpgradeEntrywayLayout();
     }
 
     void LoadCampaignLayout(bool replaceSavedEmitters = false)
     {
-        CheckedCampaignLayout = true;
-        if (RoomLabel != "" && !replaceSavedEmitters) return;
 CAMPAIGN_CASES
     }
 CAMPAIGN_LAYOUTS
@@ -384,27 +278,27 @@ OVERLAY = '''
 
 def actor_script(playable, campaign=None):
     blocks = []
-    for map_name, emitters in (("MAP01", ENTRYWAY), *FIXTURE_EMITTERS.items()):
-        condition = "IsStockEntryway()" if map_name == "MAP01" else f'level.MapName == "{map_name}"'
-        blocks.extend((f"        if ({condition})", "        {", f'            RoomLabel = "{LABELS[map_name]}";'))
+    for map_name, emitters in FIXTURE_EMITTERS.items():
+        blocks.extend((f'        if (level.MapName == "{map_name}")', "        {",
+                       f'            RoomLabel = "{LABELS[map_name]}";'))
         blocks.extend(f"            {emitter.call()}" for emitter in emitters)
-        if map_name == "MAP01":
-            blocks.append("            EntrywayLayoutRevision = CurrentEntrywayLayout;")
         blocks.append("        }")
     cases = []
     layouts = []
-    for map_name, (checksum, emitters) in (campaign or {}).items():
+    layouts_by_map = {"MAP01": (ENTRYWAY_CHECKSUM, ENTRYWAY), **(campaign or {})}
+    for map_name, (checksum, emitters) in layouts_by_map.items():
+        label = f'"{LABELS[map_name]}"' if map_name == "MAP01" else "level.LevelName"
         cases.extend((f'        if (level.MapName == "{map_name}" && level.GetChecksum() == "{checksum}")',
                       "        {", "            if (replaceSavedEmitters) ClearSavedCampaignEmitters();",
-                      "            RoomLabel = level.LevelName;", "            level.EnableStageBLayout();",
+                      f"            RoomLabel = {label};", "            level.EnableStageBLayout();",
                       f"            Load{map_name}();", "            return;", "        }"))
         layouts.extend((f"    void Load{map_name}()", "    {"))
+        cycles = {(emitter.sector, emitter.light_cycle) for emitter in emitters if emitter.light_cycle}
+        layouts.extend(f"        level.SetStageBLightPeak({sector}, {peak}, {dark});"
+                       for sector, (peak, dark) in sorted(cycles))
         layouts.extend(f"        {emitter.call()}" for emitter in emitters)
         layouts.append("    }")
-    return (ZSCRIPT.replace("ENTRYWAY_CHECKSUM", ENTRYWAY_CHECKSUM)
-            .replace("RETIRED_SIGNATURES", ", ".join(str(value) for row in RETIRED_ENTRYWAY_CEILING for value in row))
-            .replace("WALL_STRIP_LINES", ", ".join(str(strip.line) for strip in ENTRYWAY_WALL_STRIPS))
-            .replace("CAMPAIGN_CASES", "\n".join(cases)).replace("CAMPAIGN_LAYOUTS", "\n".join(layouts))
+    return (ZSCRIPT.replace("CAMPAIGN_CASES", "\n".join(cases)).replace("CAMPAIGN_LAYOUTS", "\n".join(layouts))
             .replace("EMITTERS", "\n".join(blocks)).replace("OVERLAY", OVERLAY if playable else ""))
 
 
@@ -426,6 +320,8 @@ def build(path, playable=True, *, iwad=None):
     if playable:
         menu = [f'OptionMenu "{MENU}"', "{", '  Title "Emitter lighting"',
                 '  Option "Emitter lighting (B)", "gl_emitter_lighting", "OnOff"',
+                '  Command "Dark campaign lighting", "gl_emitter_lighting 1; gl_emitter_ambient 0.04; '
+                'gl_emitter_ambient_specular 0.08; gl_emitter_intensity 1"',
                 '  Slider "Legacy ambient fill", "gl_emitter_ambient", 0.0, 1.0, 0.05, 2',
                 '  Slider "PBR ambient reflections", "gl_emitter_ambient_specular", 0.0, 1.0, 0.05, 2',
                 '  Slider "Emitter intensity", "gl_emitter_intensity", 0.0, 2.0, 0.05, 2',

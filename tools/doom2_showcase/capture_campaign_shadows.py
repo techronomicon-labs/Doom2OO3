@@ -95,7 +95,7 @@ def capture(pack, game, map_name, fixture_path, folder, mode):
             "+vid_setsize", "640", "480",
             "+gl_levelmesh", "false", "+gl_ubershaders", "false", "+gl_raytrace", "false",
             "+gl_multisample", "4", "+gl_ssao", "0", "+gl_bloom", "false", "+r_actorspriteshadow", "0",
-            "+gl_light_shadows", "0",
+            "+gl_light_shadows", "0", "+gl_precache", "false",
             "+gl_world_relief", "true", "+gl_sprite_lighting_relief", "true", "+gl_spritelight", "2",
             "+gl_shadow_puppets", str(mode), "+gl_shadow_puppet_softness", "1",
             "+sdvk_fl_horizontal", "84", "+sdvk_fl_vertical", "84", "+sdvk_fl_range", "700",
