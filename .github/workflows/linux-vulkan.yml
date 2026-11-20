@@ -86,10 +86,13 @@ jobs:
           test "${#icds[@]}" -eq 1
           export VK_DRIVER_FILES="${icds[0]}"
           export LD_LIBRARY_PATH="$PWD/runtime/lib"
+          export CFX_TRACE_FILE="$PWD/evidence/startup.tsv"
+          export CFX_RUN_ID="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$SMOKE_MAP"
           nproc
           free -m
-          xvfb-run -a -s '-screen 0 640x480x24 -nolisten tcp' timeout --kill-after=5s 120s \
-            ./runtime/vkdoom -iwad /usr/share/games/doom/freedoom2.wad \
+          # The cold llvmpipe shader cache shares this budget with the capture.
+          xvfb-run -a -s '-screen 0 640x480x24 -nolisten tcp' timeout --kill-after=5s 240s \
+            stdbuf -oL -eL ./runtime/vkdoom -iwad /usr/share/games/doom/freedoom2.wad \
             -stdout -nostartup -noautoload -noautoexec -nosound -nojoy -rngseed 2002 \
             -window -width 640 -height 480 -config "$PWD/evidence/smoke.ini" \
             -sdvkobserve "$PWD/evidence/smoke" -sdvkobservemode state \
