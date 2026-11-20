@@ -383,6 +383,21 @@ float MapNodeEntry(int node, vec3 origin, vec3 invRay, vec3 absInvRay, bvec3 par
 	return enter <= leave ? enter : 2.0;
 }
 
+// From the receiver, all lens rays start at one point. On each axis their
+// positions lie between t * (direction - extent) and t * (direction + extent).
+// Intersect those six linear inequalities with the node's slabs. In particular
+// the box at the receiving wall needs no inflation by the full lens radius.
+float CrossNodeEntry(int node, vec3 receiver, vec3 invPositive, vec3 invNegative, vec3 invFar, vec3 parallelFar)
+{
+	vec3 center = nodes[node].center - receiver;
+	vec3 extent = nodes[node].extents + vec3(1.0 / 256.0);
+	vec3 nearT = max((center - extent) * invPositive, (-center - extent) * invNegative);
+	vec3 farT = center * invFar + extent * abs(invFar) + parallelFar;
+	float enter = max(max(nearT.x, nearT.y), max(nearT.z, 0.0));
+	float leave = min(min(farT.x, farT.y), min(farT.z, 1.0));
+	return enter <= leave ? 1.0 - leave : 2.0; // Visit lamp-side nodes first.
+}
+
 bool MapTriangleHit(int element, vec3 origin, vec3 ray, out vec3 scaledWeights)
 {
 	vec3 a = vertices[elements[element]].pos;
@@ -531,6 +546,21 @@ int TraceMapRays(vec3 origin, vec3 ray, int group, bool includeMasked, bool disk
 	// All rays for a light start at the same end of the segment. Neighbouring
 	// fragments encounter the same near nodes and register stack entries.
 	vec3 expand = abs(diskRight) + abs(diskUp);
+	vec3 receiver = origin + ray;
+	vec3 invPositive = vec3(0), invNegative = vec3(0), invFar = vec3(0), parallelFar = vec3(0);
+	if (areaStyle == 3)
+	{
+		// The opposite pairs give the exact world-axis bounds of the cross.
+		vec3 extent = max(abs(mapCrossX.x * diskRight + mapCrossY.x * diskUp),
+			abs(mapCrossX.y * diskRight + mapCrossY.y * diskUp));
+		vec3 direction = -ray;
+		invPositive = 1.0 / max(direction + extent, vec3(1e-30));
+		invNegative = 1.0 / max(extent - direction, vec3(1e-30));
+		vec3 farDirection = sign(direction) * max(abs(direction) - extent, vec3(0.0));
+		bvec3 unbounded = equal(farDirection, vec3(0.0));
+		parallelFar = mix(vec3(0), vec3(1), unbounded);
+		invFar = mix(1.0 / (farDirection + parallelFar), vec3(0), unbounded);
+	}
 	bvec3 parallel = equal(ray, vec3(0.0));
 	vec3 invRay = 1.0 / mix(ray, vec3(1.0), parallel);
 	vec3 absInvRay = abs(invRay);
@@ -570,8 +600,17 @@ int TraceMapRays(vec3 origin, vec3 ray, int group, bool includeMasked, bool disk
 		else
 		{
 			int left = nodes[node].left, right = nodes[node].right;
-			float a = MapNodeEntry(left, origin, invRay, absInvRay, parallel, expand);
-			float b = MapNodeEntry(right, origin, invRay, absInvRay, parallel, expand);
+			float a, b;
+			if (areaStyle == 3)
+			{
+				a = CrossNodeEntry(left, receiver, invPositive, invNegative, invFar, parallelFar);
+				b = CrossNodeEntry(right, receiver, invPositive, invNegative, invFar, parallelFar);
+			}
+			else
+			{
+				a = MapNodeEntry(left, origin, invRay, absInvRay, parallel, expand);
+				b = MapNodeEntry(right, origin, invRay, absInvRay, parallel, expand);
+			}
 			if (min(a, b) <= 1.0)
 			{
 				node = a <= b ? left : right;
