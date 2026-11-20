@@ -10,6 +10,8 @@ OptionValue SDVKFlashlightMapEdges
     0, "Stepped"
     1, "Single shade"
     2, "Smooth"
+    3, "Soft cross"
+    4, "Dithered"
 }
 
 OptionMenu "SDVKFlashlightOptions"

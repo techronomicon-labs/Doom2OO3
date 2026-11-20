@@ -46,6 +46,31 @@ bool MapSegmentBlocked(vec3 start, vec3 end, float bias, int group, bool include
 	return dist > 2.0 * bias && TraceMapHit(start, ray / dist, dist - bias, group, includeMasked);
 }
 
+float DitheredMapVisibility(vec3 receiver, vec3 lamp, vec3 right, vec3 up, float bias, int group)
+{
+#if defined(SHADOW_PUPPET_VERTEX_STAGE)
+	// Vertex-lit sprites interpolate a single representative sample.
+	return MapSegmentBlocked(receiver, lamp, bias, group, true) ? 0.0 : 1.0;
+#else
+	// Repeat a stratified 8x8 lens pattern in screen pixels, fixed over time.
+	ivec2 p = ivec2(gl_FragCoord.xy) & 7;
+	int x = p.x ^ p.y;
+	int index = ((x & 1) << 5) | ((p.y & 1) << 4) | ((x & 2) << 2) |
+		((p.y & 2) << 1) | ((x & 4) >> 1) | ((p.y & 4) >> 2);
+	float radius = sqrt((float(index) + 0.5) / 64.0);
+	float angle = float(index) * 2.39996323;
+	vec3 offset = radius * (cos(angle) * right + sin(angle) * up);
+	// Reflect a sample that lands behind a wall back across the lens. If
+	// both ends are buried, the physical mount remains a valid source.
+	for (int attempt = 0; attempt < 2; ++attempt)
+	{
+		if (!MapSegmentBlocked(lamp, lamp + offset, bias, group, true)) break;
+		offset = attempt == 0 ? -offset : vec3(0.0);
+	}
+	return MapSegmentBlocked(receiver, lamp + offset, bias, group, true) ? 0.0 : 1.0;
+#endif
+}
+
 float MapLightVisibility(DynLightInfo light, vec3 position, bool flashlight)
 {
 	// Trace from the geometric receiver, before relief/normal mapping.
@@ -73,7 +98,13 @@ float MapLightVisibility(DynLightInfo light, vec3 position, bool flashlight)
 	// Shorten every ray by the same fraction, preserving the disk and avoiding
 	// coincident light-endpoint hits. The receiver was already biased above.
 	float fraction = 1.0 - bias / dist;
-	if (uFlashlightMapShadowStyle == 2) return SmoothMapVisibility(origin, lamp, right, up, fraction, light.shadowIndex);
+	if (uFlashlightMapShadowStyle == 4) return DitheredMapVisibility(origin, lamp, right, up, bias, light.shadowIndex);
+	if (uFlashlightMapShadowStyle >= 2)
+	{
+		bool crossOnly = uFlashlightMapShadowStyle == 3;
+		float visibility = AreaMapVisibility(origin, lamp, right, up, fraction, light.shadowIndex, crossOnly);
+		return crossOnly ? visibility * visibility : visibility;
+	}
 	vec3 diskCenter = origin + ray * fraction;
 	int activeMask = mapDiskMask, blocked = 0;
 	do

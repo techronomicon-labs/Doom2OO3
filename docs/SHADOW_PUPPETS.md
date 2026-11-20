@@ -8,6 +8,8 @@ Press **L** to turn on the flashlight. **O → Map geometry shadows** switches f
 
 **Map shadow edge** changes how the edge looks. **Smooth** is the default and grades the flashlight’s contribution across the edge. **Single shade** gives the projected footprint one shade, including the part that spreads beyond a nearby pillar. **Stepped** keeps the previous bands.
 
+**Soft cross** estimates how much of the lamp is visible along four directions. Partially blocked areas stay darker than in Smooth. **Dithered** samples the lamp at a different position per screen pixel, producing a fine stipple along the shadow edge. To compare them in a corridor, try radius 12 with horizontal spread at 240% and vertical spread at 100%.
+
 **Shadow darkness (%)** adjusts how much flashlight light a map or sprite shadow removes. At 0% the beam shines through, at 50% a fully blocked area keeps half its flashlight light, and at 100% a solid blocker removes all of it. Values up to 200% deepen partially shaded edges. Ambient light and other light sources keep their own intensity.
 
 **J** cycles **Off → Stencil → Depth** for sprite shadows. **O** also lets you set **Sprite depth edge softness**. A fresh campaign profile starts in Depth. Each game's profile remembers both shadow settings and the softness.

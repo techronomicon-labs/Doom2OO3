@@ -28,6 +28,11 @@ const vec2 mapDisk[13] = vec2[13](
 	vec2(0.44,0.84), vec2(-0.44,-0.84), vec2(0.44,-0.84), vec2(-0.44,0.84));
 const int mapDiskMask = (1 << 13) - 1;
 
+// Rotate the four spokes off the lens axes so a straight corridor wall
+// sweeps across their lengths even when only one spread axis is enabled.
+const vec4 mapCrossX = vec4(.923880, -.382683, -.923880, .382683);
+const vec4 mapCrossY = vec4(.382683, .923880, -.382683, -.923880);
+
 #if defined(USE_RAYQUERY) || defined(SUPPORTS_RAYQUERY)
 
 TraceResult TraceFirstHit(vec3 origin, float tmin, vec3 dir, float tmax)
@@ -160,8 +165,27 @@ bool MapRadialSample(vec3 receiver, vec3 lamp, vec3 offset, float fraction, int 
 	return hit;
 }
 
-float SmoothMapVisibility(vec3 receiver, vec3 lamp, vec3 right, vec3 up, float fraction, int group)
+float CrossMapVisibility(vec3 receiver, vec3 lamp, vec3 right, vec3 up, float fraction, int group)
 {
+	int accessible = 0, lit = 0;
+	for (int lane = 0; lane < 4; ++lane)
+	{
+		vec3 spoke = right * mapCrossX[lane] + up * mapCrossY[lane];
+		for (int bin = 0; bin < 4; ++bin)
+		{
+			vec3 offset = spoke * sqrt((float(bin) + 0.5) / 4.0);
+			if (TraceMapHit(lamp, offset, 1.0, group, true)) continue;
+			++accessible;
+			if (!TraceMapHit(receiver, (lamp + offset - receiver) * fraction, 1.0, group, true)) ++lit;
+		}
+	}
+	return accessible > 0 ? float(lit) / float(accessible) :
+		(TraceMapHit(receiver, (lamp - receiver) * fraction, 1.0, group, true) ? 0.0 : 1.0);
+}
+
+float AreaMapVisibility(vec3 receiver, vec3 lamp, vec3 right, vec3 up, float fraction, int group, bool crossOnly)
+{
+	if (crossOnly) return CrossMapVisibility(receiver, lamp, right, up, fraction, group);
 	// Hardware ray queries sample the middle and rim of each polar slice.
 	// Refine only intervals in which visibility changes.
 	bool centerHit = TraceMapHit(receiver, (lamp - receiver) * fraction, 1.0, group, true);
@@ -430,7 +454,7 @@ const vec4 mapSpokeY[3] = vec4[3](vec4(.258819,.707107,.965926,.965926),
 	vec4(.707107,.258819,-.258819,-.707107), vec4(-.965926,-.965926,-.707107,-.258819));
 
 bool MapAreaTriangle(int element, vec3 receiver, vec3 toLamp, vec3 right, vec3 up, int group,
-	inout uvec4 covered[3], inout bool centerHit)
+	bool crossOnly, inout uvec4 covered[3], inout bool centerHit)
 {
 	int primitive = element / 3;
 	uint surface = surfaceIndices[primitive];
@@ -460,13 +484,15 @@ bool MapAreaTriangle(int element, vec3 receiver, vec3 toLamp, vec3 right, vec3 u
 	if (!centerHit && center.w > 0.0 && all(greaterThanEqual(center.xyz, vec3(0.0))))
 		centerHit = caster == group || FlashlightMaskHit(primitive, surface, center.xy / (center.x + center.y + center.z));
 
-	for (int row = 0; row < 3; ++row)
+	for (int row = 0; row < (crossOnly ? 1 : 3); ++row)
 	{
+		vec4 spokeX = crossOnly ? mapCrossX : mapSpokeX[row];
+		vec4 spokeY = crossOnly ? mapCrossY : mapSpokeY[row];
 		vec4 lo = vec4(0.0), hi = vec4(1.0);
 		for (int plane = 0; plane < 4; ++plane)
 		{
 			if (center[plane] >= reach[plane]) continue;
-			vec4 slope = dx[plane] * mapSpokeX[row] + dy[plane] * mapSpokeY[row];
+			vec4 slope = dx[plane] * spokeX + dy[plane] * spokeY;
 			if (center[plane] < 0.0)
 				lo = max(lo, -center[plane] / max(slope, vec4(1e-30)));
 			else
@@ -483,7 +509,7 @@ bool MapAreaTriangle(int element, vec3 receiver, vec3 toLamp, vec3 right, vec3 u
 		else for (int lane = 0; lane < 4; ++lane)
 		{
 			uint pending = bits[lane] & ~covered[row][lane];
-			vec4 slope = dx * mapSpokeX[row][lane] + dy * mapSpokeY[row][lane];
+			vec4 slope = dx * spokeX[lane] + dy * spokeY[lane];
 			while (pending != 0u)
 			{
 				int bin = findLSB(pending);
@@ -498,7 +524,7 @@ bool MapAreaTriangle(int element, vec3 receiver, vec3 toLamp, vec3 right, vec3 u
 }
 
 int TraceMapRays(vec3 origin, vec3 ray, int group, bool includeMasked, bool disk, vec3 diskRight, vec3 diskUp, int activeMask,
-	bool area, inout uvec4 covered[3], inout bool centerHit)
+	int areaStyle, inout uvec4 covered[3], inout bool centerHit)
 {
 	if (nodesRoot < 0) return 0;
 	// All rays for a light start at the same end of the segment. Neighbouring
@@ -517,9 +543,9 @@ int TraceMapRays(vec3 origin, vec3 ray, int group, bool includeMasked, bool disk
 		if (element >= 0)
 		{
 			vec3 weights;
-			if (area)
+			if (areaStyle != 0)
 			{
-				if (MapAreaTriangle(element, origin + ray, -ray, diskRight, diskUp, group, covered, centerHit))
+				if (MapAreaTriangle(element, origin + ray, -ray, diskRight, diskUp, group, areaStyle == 3, covered, centerHit))
 				{
 					for (int i = 0; i < 3; ++i) covered[i] = uvec4(~0u);
 					return 0;
@@ -570,35 +596,56 @@ bool TraceMapHit(vec3 origin, vec3 dir, float distance, int group, bool includeM
 	vec3 ray = dir * distance;
 	uvec4 unused[3];
 	bool center = false;
-	return distance > 0.0 && TraceMapRays(origin + ray, -ray, group, includeMasked, false, vec3(0), vec3(0), 1, false, unused, center) != 0;
+	return distance > 0.0 && TraceMapRays(origin + ray, -ray, group, includeMasked, false, vec3(0), vec3(0), 1, 0, unused, center) != 0;
 }
 
 int TraceMapDisk(vec3 receiver, vec3 lamp, vec3 right, vec3 up, int group, int activeMask)
 {
 	uvec4 unused[3];
 	bool center = false;
-	return TraceMapRays(lamp, receiver - lamp, group, true, true, right, up, activeMask, false, unused, center);
+	return TraceMapRays(lamp, receiver - lamp, group, true, true, right, up, activeMask, 0, unused, center);
 }
 
-float SmoothMapVisibility(vec3 receiver, vec3 lamp, vec3 right, vec3 up, float fraction, int group)
+float AreaMapVisibility(vec3 receiver, vec3 lamp, vec3 right, vec3 up, float fraction, int group, bool crossOnly)
 {
 	uvec4 covered[3] = uvec4[3](uvec4(0), uvec4(0), uvec4(0));
 	vec3 origin = receiver + (lamp - receiver) * fraction;
 	bool centerHit = false, foldToDark = false;
+	uvec4 crossLit = uvec4(0);
 	for (int pass = 0; pass < 2; ++pass)
 	{
-		TraceMapRays(origin, receiver - origin, group, true, true, right * fraction, up * fraction, 0, true, covered, centerHit);
+		TraceMapRays(origin, receiver - origin, group, true, true, right * fraction, up * fraction, 0,
+			crossOnly ? 3 : 2, covered, centerHit);
 		if (pass == 0)
 		{
 			foldToDark = centerHit;
-			// On the mount-to-rim pass only samples with visibility opposite
-			// the centre can change. Store the rest as already covered.
-			for (int i = 0; i < 3; ++i)
-				if (!foldToDark) covered[i] = ~covered[i];
-			if (all(equal(covered[0] & covered[1] & covered[2], uvec4(~0u)))) return foldToDark ? 0.0 : 1.0;
+			if (crossOnly)
+			{
+				crossLit = ~covered[0];
+				if (all(equal(crossLit, uvec4(0)))) return 0.0;
+				if (all(equal(crossLit, uvec4(~0u)))) return 1.0;
+				covered[0] = uvec4(0);
+			}
+			else
+			{
+				// Only samples opposite the centre can change on the fold pass.
+				for (int i = 0; i < 3; ++i)
+					if (!foldToDark) covered[i] = ~covered[i];
+				if (all(equal(covered[0] & covered[1] & covered[2], uvec4(~0u)))) return foldToDark ? 0.0 : 1.0;
+			}
 			origin = receiver = lamp;
 			fraction = 1.0;
 		}
+	}
+	if (crossOnly)
+	{
+		// Exclude lens area on the far side of a nearby wall. Folding those
+		// samples to the centre would switch them all at once at a silhouette.
+		uvec4 accessible = ~covered[0];
+		ivec4 total = bitCount(accessible), visible = bitCount(crossLit & accessible);
+		int count = total.x + total.y + total.z + total.w;
+		return count > 0 ? float(visible.x + visible.y + visible.z + visible.w) / float(count) :
+			(foldToDark ? 0.0 : 1.0);
 	}
 	ivec4 counts = bitCount(covered[0]) + bitCount(covered[1]) + bitCount(covered[2]);
 	float area = float(counts.x + counts.y + counts.z + counts.w) / 384.0;
