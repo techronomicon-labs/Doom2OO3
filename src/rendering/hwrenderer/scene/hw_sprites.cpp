@@ -163,6 +163,7 @@ void HWSprite::DrawSprite(HWDrawInfo *di, FRenderState &state, bool translucent)
 
 	if(!actor && gl_spritelight > 1) gl_spritelight = 1;
 
+	int spriteLightIndex = dynlightindex;
 	state.SetShadeVertex(gl_spritelight == 1);
 	bool additivefog = false;
 	bool foglayer = false;
@@ -273,11 +274,16 @@ void HWSprite::DrawSprite(HWDrawInfo *di, FRenderState &state, bool translucent)
 	{
 		if (di->Level->HasDynamicLights && !di->isFullbrightScene() && !fullbright)
 		{
-			if (dynlightindex == -1)	// only set if we got no light buffer index. This covers all cases where sprite lighting is used.
+			if (spriteLightIndex == -1)
 			{
 				float out[3] = {};
-				di->GetDynSpriteLight(gl_light_sprites ? actor : nullptr, gl_light_particles ? particle : nullptr, (gl_light_particles && spr != nullptr) ? &spr->StaticLightsTraceCache : nullptr, out);
+				const bool separateBeam = gl_spritelight == 0 && !modelframe && di->UsesFlashlightMapShadows();
+				if (separateBeam) lightdata.Clear();
+				di->GetDynSpriteLight(gl_light_sprites ? actor : nullptr, gl_light_particles ? particle : nullptr,
+					(gl_light_particles && spr) ? &spr->StaticLightsTraceCache : nullptr, out, separateBeam ? &lightdata : nullptr);
 				state.SetDynLight(out[0], out[1], out[2]);
+				if (separateBeam && lightdata.arrays[LIGHTARRAY_NORMAL].Size())
+					spriteLightIndex = state.UploadLights(lightdata);
 			}
 		}
 		sector_t *cursec = actor ? actor->Sector : particle ? particle->subsector->sector : nullptr;
@@ -396,10 +402,10 @@ void HWSprite::DrawSprite(HWDrawInfo *di, FRenderState &state, bool translucent)
 		{
 			state.SetNormal(0, 0, 0);
 
-			if(gl_spritelight > 0)
+			if(gl_spritelight > 0 || spriteLightIndex >= 0)
 			{
 				state.SetLightNoNormals(true);
-				if(actor && gl_spritelight < 2)
+				if(actor && gl_spritelight == 1)
 				{
 					state.SetUseSpriteCenter(true);
 				}
@@ -416,7 +422,7 @@ void HWSprite::DrawSprite(HWDrawInfo *di, FRenderState &state, bool translucent)
 				state.SetDepthBias(-1, -128);
 			}
 
-			state.SetLightIndex(fullbright && !relief ? -1 : dynlightindex);
+			state.SetLightIndex(fullbright && !relief ? -1 : spriteLightIndex);
 			state.Draw(DT_TriangleStrip, vertexindex, 4);
 			state.SetLightIndex(-1);
 			state.ClearWorldRelief();

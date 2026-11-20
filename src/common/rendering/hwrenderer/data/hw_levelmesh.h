@@ -417,6 +417,12 @@ inline void LevelMesh::FreeSurface(unsigned int surfaceIndex, int count)
 {
 	if (!FreeLists.Surface.Free((int)surfaceIndex, count))
 		I_FatalError("Invalid LevelMesh surface free: %u+%d", surfaceIndex, count);
+	// A buffer growth may re-upload a retired slot after its draw uniforms were recycled.
+	for (int i = 0; i < count; ++i)
+	{
+		Mesh.Surfaces[surfaceIndex + i].OpaqueMapCaster = false;
+		Mesh.Surfaces[surfaceIndex + i].MaskedMapCaster = false;
+	}
 	if (count > 0) MarkMutation(LevelMeshMutationDomain::Surface | LevelMeshMutationDomain::Query);
 }
 

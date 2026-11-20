@@ -72,7 +72,6 @@ EXTERN_CVAR(Bool, gl_render_walls);
 EXTERN_CVAR(Bool, gl_render_flats);
 EXTERN_CVAR(Int, gl_shadow_puppets);
 EXTERN_CVAR(Int, gl_shadow_puppets_active);
-EXTERN_CVAR(Bool, gl_flashlight_map_shadows);
 
 CVAR(Bool, lm_always_update, false, 0)
 
@@ -155,9 +154,9 @@ void HWDrawInfo::StartScene(FRenderViewpoint &parentvp, HWViewpointUniforms *uni
 		VPUniforms.SunIntensity = level.SunIntensity;
 	}
 	ShadowPuppetsEligible = false;
+	FlashlightMapShadows = false;
 	VPUniforms.ShadowPuppetMode = 0;
 	VPUniforms.ShadowPuppetTexture = 0;
-	VPUniforms.FlashlightMapTexture = 0;
 	mClipper->SetViewpoint(Viewpoint);
 	vClipper->SetViewpoint(Viewpoint);
 	rClipper->SetViewpoint(Viewpoint);
@@ -878,18 +877,15 @@ void HWDrawInfo::RenderScene(FRenderState &state)
 	state.EnableTexture(gl_texture);
 	state.EnableBrightmap(true);
 	const int puppetMode = gl_shadow_puppets;
-	if (ShadowPuppetsEligible && !outer && (puppetMode != 0 || gl_flashlight_map_shadows))
+	if (ShadowPuppetsEligible && !outer && puppetMode != 0)
 	{
 		auto* device = static_cast<VulkanRenderDevice*>(screen);
 		HWShadowPuppetScene puppet;
 		const bool stencil = puppetMode == 1 && device->SupportsShadowPuppetStencil();
-		if (BuildShadowPuppetScene(*this, puppet, stencil || puppetMode == 2, stencil, gl_flashlight_map_shadows))
+		if ((stencil || puppetMode == 2) && BuildShadowPuppetScene(*this, puppet, stencil))
 		{
-			if (puppet.Mesh.MapTriangles.Size())
-				VPUniforms.FlashlightMapTexture = device->RenderFlashlightDepth(FlashlightDepthCasters::MapGeometry,
-					puppet.Mesh.MapTriangles, puppet.LightProjection);
 			int visibility = 0;
-			if (stencil && puppet.Mesh.Triangles.Size())
+			if (stencil)
 			{
 				// Replay the receiver geometry into the same depth attachment as the main scene.
 				state.SetColorMask(false);
@@ -909,10 +905,9 @@ void HWDrawInfo::RenderScene(FRenderState &state)
 				const auto clip = ShadowPuppetVulkanProjection(VPUniforms.mProjectionMatrix, VPUniforms.mViewMatrix);
 				visibility = device->RenderShadowPuppetStencil(puppet.Mesh, puppet.Origin, clip, screen->mSceneViewport);
 			}
-			else if (puppetMode == 2 && puppet.Mesh.Triangles.Size())
+			else
 			{
-				visibility = device->RenderFlashlightDepth(FlashlightDepthCasters::Sprites,
-					puppet.Mesh.Triangles, puppet.LightProjection);
+				visibility = device->RenderShadowPuppetDepth(puppet.Mesh.Triangles, puppet.LightProjection);
 			}
 			if (visibility > 0)
 			{
@@ -924,16 +919,10 @@ void HWDrawInfo::RenderScene(FRenderState &state)
 				if (SdvkDiagnostics::StateEnabled())
 					SdvkDiagnostics::Emit("flashlight-shadow", SdvkObservation::Object()
 						.Int("mode", puppetMode).Int("casters", puppet.Casters.size()).Json());
-			}
-			if (visibility > 0 || VPUniforms.FlashlightMapTexture > 0)
-			{
 				VPUniforms.ShadowPuppetProjection = puppet.LightProjection;
 				vpIndex = state.SetViewpoint(VPUniforms);
 				HWShadowPuppetFlashlight = puppet.Flashlight;
 				state.SetShadowPuppetReceiver(true);
-				if (VPUniforms.FlashlightMapTexture > 0 && SdvkDiagnostics::StateEnabled())
-					SdvkDiagnostics::Emit("flashlight-map-shadow", SdvkObservation::Object()
-						.Int("triangles", puppet.Mesh.MapTriangles.Size() / 3).Json());
 			}
 		}
 	}
@@ -951,6 +940,7 @@ void HWDrawInfo::RenderScene(FRenderState &state)
 	DrawingOpaqueMapShadows = (gl_projectile_map_shadows || UsesEmitterLighting()) && ShadowPuppetsEligible && !outer
 		&& Level->levelMesh && !(Level->flags3 & LEVEL3_NOSHADOWMAP);
 	ProjectileMapShadowLinks = 0;
+	FlashlightMapShadowLinks = 0;
 	RenderWall.Clock();
 	state.ApplyLevelMesh();
 	state.DrawLevelMeshList(SeenSidesDrawLists.List[static_cast<int>(LevelMeshDrawType::Opaque)], LevelMeshDrawSurface::Side, false, false);
@@ -965,6 +955,9 @@ void HWDrawInfo::RenderScene(FRenderState &state)
 
 	drawlists[GLDL_PLAINFLATS].DrawFlats(this, state, false);
 	DrawingOpaqueMapShadows = false;
+	if (FlashlightMapShadowLinks)
+		SdvkDiagnostics::Emit("flashlight-map-shadows", SdvkObservation::Object()
+			.Int("light_links", FlashlightMapShadowLinks).Json());
 	if (ProjectileMapShadowLinks)
 		SdvkDiagnostics::Emit("projectile-map-shadows", SdvkObservation::Object()
 			.Int("light_links", ProjectileMapShadowLinks).Json());

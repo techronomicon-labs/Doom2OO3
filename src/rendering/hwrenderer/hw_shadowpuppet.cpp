@@ -2,7 +2,6 @@
 #include "a_dynlight.h"
 #include "bitmap.h"
 #include "c_cvars.h"
-#include "doom_levelmesh.h"
 #include "g_levellocals.h"
 #include "hw_cvars.h"
 #include "hw_flashlight.h"
@@ -327,7 +326,7 @@ VSMatrix ShadowPuppetVulkanProjection(const VSMatrix& projection, const VSMatrix
 	return clip;
 }
 
-bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene, bool sprites, bool stencil, bool mapGeometry)
+bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene, bool stencil)
 {
 	const auto& view = di.Viewpoint;
 	if (!view.camera || !view.sector || !view.camera->player || view.camera != view.camera->player->mo)
@@ -361,8 +360,7 @@ bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene, bool spr
 	{
 		if (sector.PortalIsLinked(sector_t::floor) || sector.PortalIsLinked(sector_t::ceiling))
 			return false;
-		if (sector.e->XFloor.ffloors.Size() != 0)
-			sprites = false;
+		if (sector.e->XFloor.ffloors.Size() != 0) return false;
 	}
 	const auto* beam = lights.Beams[0];
 	double halfAngle = beam->pSpotOuterAngle->Degrees();
@@ -389,10 +387,6 @@ bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene, bool spr
 	projection.perspective(float(2.0 * halfAngle), 1.f, 1.f, radius + 32.f);
 	scene.LightProjection = ShadowPuppetVulkanProjection(projection, lightView);
 	scene.Origin = origin;
-	if (mapGeometry && level.levelMesh)
-		level.levelMesh->CollectFlashlightCasters(scene.LightProjection, *beam->Sector, scene.Mesh.MapTriangles);
-	if (!sprites)
-		return scene.Mesh.MapTriangles.Size() != 0;
 
 	const auto* presented = HWPresentedFlashlight(beam);
 	// The submitted sprite is authoritative. A cosmetic floor shadow has
@@ -423,5 +417,5 @@ bool BuildShadowPuppetScene(HWDrawInfo& di, HWShadowPuppetScene& scene, bool spr
 			AddSpriteMask(card, origin, scene, stencil);
 		}
 	}
-	return scene.Mesh.Triangles.Size() != 0 || scene.Mesh.MapTriangles.Size() != 0;
+	return scene.Mesh.Triangles.Size() != 0;
 }

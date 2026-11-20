@@ -24,8 +24,6 @@
 
 #include "common/utility/vectors.h"
 #include "flatvertices.h"
-#include <array>
-#include <functional>
 #include <vector>
 #include <cmath>
 #include <memory>
@@ -108,8 +106,6 @@ public:
 
 	void Update();
 	TraceHit FindFirstHit(const FVector3& rayStart, const FVector3& rayEnd);
-	// Planes face inward, in Doom world coordinates. Visits live triangle indices only.
-	void VisitTrianglesInFrustum(const std::array<FVector4, 6>& planes, const std::function<void(int)>& visit) const;
 
 	void PrintStats();
 	// Only a fully closed opt-in snapshot is eligible for a GPU publication join.

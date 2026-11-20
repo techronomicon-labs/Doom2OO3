@@ -163,7 +163,6 @@ public:
 	}
 
 	void BeginFrame(FLevelLocals& doomMap);
-	void CollectFlashlightCasters(const VSMatrix& lightProjection, const sector_t& source, TArray<FVector3>& triangles) const;
 	bool TraceSky(const FVector3& start, FVector3 direction, float dist);
 	void DumpMesh(const FString& objFilename, const FString& mtlFilename) const;
 

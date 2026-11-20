@@ -33,50 +33,75 @@ bool UseStructuralRelief(DynLightInfo light)
 		(STAGE_B_WORLD_LIGHTING && (light.flags & LIGHTINFO_STAGE_B_EMITTER) != 0);
 }
 
+#if !defined(SIMPLE)
+float MapLightVisibility(DynLightInfo light, vec3 position, bool flashlight)
+{
+	// Trace from the geometric receiver, before relief/normal mapping.
+	float coordinateScale = max(max(abs(position.x), abs(position.y)), abs(position.z));
+	float bias = max(1.0 / 64.0, coordinateScale * 2.3841858e-7);
+	// Unlit sprite normals may be zero or undefined after normalization.
+	vec3 normal = flashlight && LIGHT_NONORMALS ? vec3(0.0) : vWorldNormal.xyz;
+	if (flashlight && dot(normal, light.pos.xyz - position) < 0.0)
+		normal = -normal; // Either face of a masked wall can receive the beam.
+	vec3 origin = position + normal * bias;
+	vec3 toLight = light.pos.xyz - origin;
+	float dist = length(toLight);
+	if (dist <= 2.0 * bias) return 1.0;
+	vec3 dir = toLight / dist;
+	return TraceMapHit(origin, dir, dist - bias, light.shadowIndex, flashlight) ? 0.0 : 1.0;
+}
+#endif
+
 #if !defined(SHADOW_PUPPET_VERTEX_STAGE) && !defined(SIMPLE)
 #include <shaders/scene/shadowpuppet_depth.glsl>
 
-// All tagged spots share one optical origin. Evaluate visibility once for
-// this fragment, while each lobe keeps its own falloff and colour.
+// The beam lobes normally share an optical origin. Trace once per fragment
+// at that origin and keep the sprite silhouette test independent.
+float cachedMapVisibility = -1.0;
+vec3 cachedMapOrigin;
+int cachedMapGroup;
 float cachedPuppetVisibility = -1.0;
 
 float WorldLightVisibility(DynLightInfo light, vec3 position, ivec2 pixel)
 {
-	if ((light.flags & LIGHTINFO_POINT_MAP_SHADOW) != 0)
+	float visibility = 1.0;
+	if ((light.flags & (LIGHTINFO_POINT_MAP_SHADOW | LIGHTINFO_FLASHLIGHT_MAP_SHADOW)) != 0)
 	{
-		// Start just above the actual receiver plane. The PBR normal and
-		// relief-displaced lighting position can lie inside the receiver.
-		// Scale the contact bias by two float epsilons on large maps.
-		float coordinateScale = max(max(abs(position.x), abs(position.y)), abs(position.z));
-		float bias = max(1.0 / 64.0, coordinateScale * 2.3841858e-7);
-		vec3 origin = position + vWorldNormal.xyz * bias;
-		vec3 toLight = light.pos.xyz - origin;
-		float dist = length(toLight);
-		if (dist <= 2.0 * bias) return 1.0;
-		return TraceOpaqueMapHit(origin, toLight / dist, dist - bias, light.shadowIndex) ? 0.0 : 1.0;
+		bool flashlight = (light.flags & LIGHTINFO_FLASHLIGHT_MAP_SHADOW) != 0;
+		if (flashlight && cachedMapVisibility >= 0.0 && cachedMapGroup == light.shadowIndex &&
+			all(equal(cachedMapOrigin, light.pos.xyz)))
+		{
+			visibility = cachedMapVisibility;
+		}
+		else
+		{
+			visibility = MapLightVisibility(light, position, flashlight);
+			if (!flashlight) return visibility;
+			cachedMapVisibility = visibility;
+			cachedMapGroup = light.shadowIndex;
+			cachedMapOrigin = light.pos.xyz;
+		}
 	}
 
-	if ((light.flags & LIGHTINFO_SHADOW_PUPPET) == 0 ||
-		data[uDataIndex].uShadowPuppetReceiver == 0)
-		return 1.0;
-	if (cachedPuppetVisibility >= 0.0) return cachedPuppetVisibility;
-	float mapVisibility = 1.0;
-	if (uFlashlightMapTexture > 0)
-		mapVisibility = FlashlightMapVisibility(light, position, uFlashlightMapTexture);
-	cachedPuppetVisibility = mapVisibility;
-	if (mapVisibility == 0.0 || uShadowPuppetTexture <= 0) return mapVisibility;
-	int image = uShadowPuppetTexture;
-	if (uShadowPuppetMode == 1)
+	if (visibility == 0.0 || (light.flags & LIGHTINFO_SHADOW_PUPPET) == 0 ||
+		data[uDataIndex].uShadowPuppetReceiver == 0 || uShadowPuppetTexture <= 0)
+		return visibility;
+
+	if (cachedPuppetVisibility < 0.0)
 	{
-		ivec2 size = textureSize(textures[nonuniformEXT(image)], 0);
-		if (any(lessThan(pixel, ivec2(0))) || any(greaterThanEqual(pixel, size))) return mapVisibility;
-		cachedPuppetVisibility *= texelFetch(textures[nonuniformEXT(image)], pixel, 0).r;
+		int image = uShadowPuppetTexture;
+		if (uShadowPuppetMode == 1)
+		{
+			ivec2 size = textureSize(textures[nonuniformEXT(image)], 0);
+			if (any(lessThan(pixel, ivec2(0))) || any(greaterThanEqual(pixel, size))) return visibility;
+			cachedPuppetVisibility = texelFetch(textures[nonuniformEXT(image)], pixel, 0).r;
+		}
+		else
+		{
+			cachedPuppetVisibility = ShadowPuppetDepthVisibility(light, position, image);
+		}
 	}
-	else
-	{
-		cachedPuppetVisibility *= ShadowPuppetDepthVisibility(light, position, image);
-	}
-	return cachedPuppetVisibility;
+	return visibility * cachedPuppetVisibility;
 }
 #endif
 
@@ -116,6 +141,9 @@ float SDVKFullbrightReliefScale(vec4 relief)
 		float beam = smoothstep(light.spotOuterAngle, light.spotInnerAngle, dot(lightDir, light.spotDir.xyz));
 		if (beam <= 0.0)
 			continue;
+#if !defined(SHADOW_PUPPET_VERTEX_STAGE) && !defined(SIMPLE)
+		beam *= WorldLightVisibility(light, pixelpos.xyz, ivec2(gl_FragCoord.xy));
+#endif
 
 		vec3 toDisplacedLight = light.pos.xyz - displacedPosition;
 		float displacedDistance = length(toDisplacedLight);

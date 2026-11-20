@@ -263,10 +263,13 @@ sector_t* RenderViewpoint(FRenderViewpoint& mainvp, AActor* camera, IntRect* bou
 		di->Set3DViewport(RenderState);
 		di->SetViewArea();
 		auto cm = di->SetFullbrightFlags(mainview ? vp.camera->player : nullptr);
-		di->ShadowPuppetsEligible = contextType == HWRenderContextType::MainView && eyeCount == 1 &&
+		const bool localShadowView = contextType == HWRenderContextType::MainView && eyeCount == 1 &&
 			!specialVision && !di->isFullbrightScene() && screen->IsVulkan() && V_IsTrueColor() &&
 			gl_lights && !gl_levelmesh && !gl_raytrace && !gl_ubershaders && !lm_dynlights &&
-			RenderState.GetPassType() == NORMAL_PASS && !netgame;
+			!netgame;
+		di->ShadowPuppetsEligible = localShadowView && RenderState.GetPassType() == NORMAL_PASS;
+		di->FlashlightMapShadows = localShadowView && gl_flashlight_map_shadows && !di->outer &&
+			di->Level->levelMesh && !(di->Level->flags3 & LEVEL3_NOSHADOWMAP);
 		if (emitterLighting && !di->isFullbrightScene())
 		{
 			di->VPUniforms.mPalLightLevels |= HWViewpointUniforms::EmitterLighting;

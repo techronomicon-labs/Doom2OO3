@@ -116,6 +116,8 @@ bool Trace(const DVector3 &start, sector_t *sector, const DVector3 &direction, d
 	ActorFlags ActorMask, uint32_t WallMask, AActor *ignore, FTraceResults &res, uint32_t traceFlags = 0,
 	ETraceStatus(*callback)(FTraceResults &res, void *) = NULL, void *callbackdata = NULL);
 
+DVector3 P_ClipFlashlightMount(const DVector3& eye, sector_t* sector, const DVector3& offset);
+
 // [ZZ] this is the object that's used for ZScript
 class DLineTracer : public DObject
 {

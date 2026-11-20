@@ -31,6 +31,7 @@ struct LevelMeshSurface
 
 	bool IsSky = false;
 	bool OpaqueMapCaster = false;
+	bool MaskedMapCaster = false;
 	int PortalIndex = 0;
 	int SectorGroup = 0;
 

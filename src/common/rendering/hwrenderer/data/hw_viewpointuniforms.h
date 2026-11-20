@@ -54,7 +54,7 @@ struct HWViewpointUniforms
 	int ShadowPuppetMode = 0;
 	float ShadowPuppetSoftness = 1.0f;
 	VSMatrix ShadowPuppetProjection = VSMatrix::identity();
-	alignas(16) int FlashlightMapTexture = 0;
+	alignas(16) int Padding = 0;
 
 	void CalcDependencies()
 	{
@@ -66,7 +66,7 @@ static_assert(offsetof(HWViewpointUniforms, StageBAmbient) == 268);
 static_assert(offsetof(HWViewpointUniforms, StageBIntensity) == 300);
 static_assert(offsetof(HWViewpointUniforms, StageBAmbientSpecular) == 304);
 static_assert(offsetof(HWViewpointUniforms, ShadowPuppetProjection) == 320);
-static_assert(offsetof(HWViewpointUniforms, FlashlightMapTexture) == 384);
+static_assert(offsetof(HWViewpointUniforms, Padding) == 384);
 static_assert(sizeof(HWViewpointUniforms) == 400);
 
 

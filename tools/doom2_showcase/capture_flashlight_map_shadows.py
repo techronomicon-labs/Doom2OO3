@@ -18,7 +18,8 @@ from gallery import Map, wad
 
 SIZE = (640, 480)
 MAP = "MAPSHADE"
-CASES = ("closed", "lifting", "opened", "lowering", "offscreen", "far-room")
+CASES = ("closed", "lifting", "opened", "lowering", "offscreen", "far-room",
+         "near-mount", "near-mount-decor", "near-mount-decor-pair", "near-mount-bars", "bars", "blocked-mount")
 FAR_X, FAR_Y = 8192, -8192
 
 
@@ -37,24 +38,57 @@ def fixture(path, case, torch, animate=False):
     if case == "offscreen":
         # The pillar is outside the camera's 90-degree frustum. The offset beam sees it.
         add_first_caster(room, 13, -76, 15, -72, sector)
-    corners = [(-128, -128), (-128, 164), (128, 164), (128, -128)]
-    for a, b in zip(corners, corners[1:] + corners[:1]):
-        room.line(a, b, sector, texture="BRICK7")
-    if case not in ("far-room", "offscreen"):
+    if case == "blocked-mount":
+        # The player's collision box ends at x=16. The requested diagonal mount
+        # reaches x=22.63 across this freestanding pillar.
+        add_first_caster(room, 18, -86, 20, -77, sector)
+    near_mount = case.startswith("near-mount")
+    if near_mount:
+        # The lamp is at (16, -82). This opaque sill fits entirely inside
+        # the old depth camera's one-unit near plane and outside the eye's view.
+        add_first_caster(room, 16, -81.5, 32, -81.25, sector)
+        if case == "near-mount-decor":
+            room.thing(30, 16, 16)  # A green pillar straddles the shadow boundary.
+        elif case == "near-mount-decor-pair":
+            for x in (-8, 40):
+                room.thing(30, x, 16)  # One pillar is fully lit, the other fully occluded.
+    if case in ("near-mount-bars", "bars"):
+        beyond = room.sector(0, "FLOOR5_4", 100)
+        room.rows["sector"][beyond].update(heightceiling=120, textureceiling="CEIL3_5")
+        for cell, vertices in ((sector, [(128, -32), (128, -128), (-128, -128), (-128, -32)]),
+                               (beyond, [(-128, -32), (-128, 164), (128, 164), (128, -32)])):
+            for a, b in zip(vertices, vertices[1:]):
+                room.line(a, b, cell, texture="BRICK7")
+        room.line((-128, -32), (128, -32), sector, beyond)
+        for side in room.rows["sidedef"][-2:]:
+            side.update(texturemiddle="MIDBARS1", scalex_mid=1, scaley_mid=1)
+    else:
+        corners = [(-128, -128), (-128, 164), (128, 164), (128, -128)]
+        for a, b in zip(corners, corners[1:] + corners[:1]):
+            room.line(a, b, sector, texture="BRICK7")
+    if not near_mount and case not in ("far-room", "offscreen", "bars", "blocked-mount"):
         door = room.sector(0, "FLOOR5_4", 100)
         room.rows["sector"][door].update(heightceiling=0, textureceiling="CEIL3_5", id=1)
         room.rect(-24, -28, 24, -20, sector, door, "BIGDOOR2")
-    room.thing(1, 0, -82, angle=90)
+    room.thing(1, 0, -82, angle=45 if case == "blocked-mount" else 90)
     room.thing(30121, -40, 76, z=32, arg0=40, arg1=75, arg2=180, arg3=60)
     # Let the real mover reach the open stop before activating the downward motion.
     moving = case in ("lifting", "opened", "lowering")
-    height = {"closed": 0, "lifting": 32, "opened": 116, "lowering": 32, "offscreen": 120, "far-room": 120}[case]
+    height = {"closed": 0, "lifting": 32, "opened": 116, "lowering": 32}.get(case, 120)
     dx, dy = (FAR_X, FAR_Y) if case == "far-room" else (0, 0)
     if dx or dy:
         for row in room.rows["vertex"] + room.rows["thing"]:
             row["x"] += dx
             row["y"] += dy
     pose = "level.time >= 24 && z <= 32" if case == "lowering" else f"level.time >= 4 && z >= {height}"
+    mount_probe = ""
+    if case == "blocked-mount" and torch:
+        mount_probe = '''if (level.time == 10)
+        {
+            let it = ThinkerIterator.Create("SDVKLocalFlashlightBeam", Thinker.STAT_DLIGHT);
+            let beam = Actor(it.Next());
+            if (beam != null) Console.Printf("MOUNT_X %.4f", beam.Pos.X);
+        }'''
     script = f'''version "4.10"
 class MapShadowFixture : EventHandler
 {{
@@ -65,6 +99,7 @@ class MapShadowFixture : EventHandler
         {"if (level.time == 22) Door_Close(1, 64);" if case == "lowering" else ""}
         let sector = level.PointInSector(({dx}, {dy - 24}));
         double z = sector.ceilingplane.ZatPoint(({dx}, {dy - 24}));
+        {mount_probe}
         if (!captured && {pose})
         {{
             captured = true;
@@ -105,8 +140,10 @@ class MapShadowFixture : EventHandler
         archive.writestr("ZSCRIPT", script)
 
 
-def capture(exe, iwad, root, case, enabled, torch, mode, animate=False):
+def capture(exe, iwad, root, case, enabled, torch, mode, animate=False, sprite_lighting=2):
     label = "moving" if animate else f"{'torch' if torch else 'fill'}-{int(enabled)}-sprites-{mode}"
+    if sprite_lighting != 2:
+        label += f"-lighting-{sprite_lighting}"
     folder = root / case / label
     folder.mkdir(parents=True)
     package = folder / "fixture.pk3"
@@ -125,12 +162,14 @@ def capture(exe, iwad, root, case, enabled, torch, mode, animate=False):
             "+vid_rendermode", "4", "+vid_setsize", width, height,
             "+gl_levelmesh", "false", "+gl_raytrace", "false", "+lm_dynlights", "false",
             "+gl_ubershaders", "false", "+gl_lightprobe", "false", "+gl_world_relief", "true",
-            "+gl_lights", "true", "+gl_light_shadows", "0", "+gl_ssao", "0", "+gl_multisample", "4",
+            "+gl_lights", "true", "+gl_light_shadows", "0", "+gl_light_sprites", "true", "+gl_spritelight", str(sprite_lighting),
+            "+gl_ssao", "0", "+gl_multisample", "4",
             "+gl_emitter_lighting", "false", "+gl_bloom", "false", "+gl_shadow_puppets", str(mode),
             "+gl_flashlight_map_shadows", str(enabled).lower(), "+r_drawplayersprites", "false",
             "+screenblocks", "12", "+fov", "90", "+crosshair", "0", "+cl_capfps", "true",
             "+con_notifylines", "0", "+show_messages", "false", "+vid_vsync", "false", "+use_mouse", "false",
-            "+sdvk_fl_offset_x", "0", "+sdvk_fl_offset_y", "16",
+            "+i_pauseinbackground", "false", "+vid_activeinbackground", "true",
+            "+sdvk_fl_offset_x", "16" if case == "blocked-mount" else "0", "+sdvk_fl_offset_y", "16",
             "+sdvk_fl_offset_z", "16", "+sdvk_fl_aim_pitch", "0", "+sdvk_fl_horizontal", "84",
             "+sdvk_fl_vertical", "84", "+sdvk_fl_range", "640", "+map", MAP]
     if animate:
@@ -143,6 +182,9 @@ def capture(exe, iwad, root, case, enabled, torch, mode, animate=False):
     require("Unknown command" not in messages, f"Unsupported setting in {log}")
     match = re.search(r"MAP_SHADOW_CAPTURE ceiling ([\d.]+)", messages)
     require(animate or match is not None, f"Test pose did not freeze in {log}")
+    if case == "blocked-mount" and torch:
+        mount = re.search(r"MOUNT_X ([-\d.]+)", messages)
+        require(mount is not None and 17 <= float(mount[1]) < 18, f"Mount crossed the pillar in {log}")
     report = json.loads(prefix.with_suffix(".renderer.json").read_text())
     require(report["status"] == "COLLECTED_PENDING_VALIDATION" and report["dropped_records"] == 0
             and report["build"]["backend"] == "vulkan" and report["screenshot"]["available"],
@@ -152,8 +194,8 @@ def capture(exe, iwad, root, case, enabled, torch, mode, animate=False):
     require(all(frame["map"] == MAP and frame["camera"]["position"][:2] == expected_xy
                 and frame["relief_flashlight_lights"] == int(torch) for frame in frames),
             f"Unexpected light or view in {folder}")
-    passes = [r["data"] for r in report["records"] if r["kind"] == "flashlight-map-shadow"]
-    require((len(passes) == len(frames) and all(p["triangles"] > 0 for p in passes)) if enabled and torch else not passes,
+    passes = [r["data"] for r in report["records"] if r["kind"] == "flashlight-map-shadows"]
+    require((len(passes) == len(frames) and all(p["light_links"] > 0 for p in passes)) if enabled and torch else not passes,
             f"Unexpected geometry shadow pass in {folder}")
     if animate:
         sequence = [r["data"] for r in report["records"] if r["kind"] == "frame-sequence"]
@@ -194,15 +236,66 @@ def measure(case, camera, door_z, unshadowed, shadowed, fill):
     usable = interior & (direct >= 16)
     restored_fill = np.max(np.abs(shadowed - fill), axis=2) <= 3
     retained_light = np.max(np.abs(shadowed - unshadowed), axis=2) <= 3
-    special_witnesses = {}
+    shadow_witnesses = {}
+    lit_witnesses = {}
 
-    if case == "offscreen":
+    if case == "blocked-mount":
+        # The camera sees beyond the pillar's north edge. A ray from the
+        # clipped mount to any of these pixels immediately hits its west face.
+        region = usable & (x > 50) & (y - eye[1] < 2 * (x - 18))
+        count = int(np.sum(region))
+        correct = int(np.sum(region & restored_fill))
+        require(count > 1000 and correct >= .99 * count, f"Mount leaked through the pillar: {correct}/{count}")
+        return {"blocked mount": [correct, count]}
+    if case.startswith("near-mount"):
+        if case.startswith("near-mount-decor"):
+            # Intersect the camera-facing COL1 sprite with the view rays. Select
+            # green interior texels to exclude transparent sprite corners and
+            # the gray/brown room that shows through them.
+            sprite_t = (16 - eye[1]) / dy
+            x = eye[0] + sprite_t * dx
+            y = np.full_like(x, 16)
+            z = eye[2] + sprite_t * dz
+            red, green, blue = unshadowed.transpose(2, 0, 1)
+            interiors = abs(x - 16) < 12 if case == "near-mount-decor" else (abs(x + 8) < 12) | (abs(x - 40) < 12)
+            usable = interiors & (z > 4) & (z < 51) & (green > red * 1.2) & (green > blue * 1.2) & (direct >= 12)
+        if case == "near-mount-bars":
+            grate_t = (-32 - eye[1]) / dy
+            x = eye[0] + grate_t * dx
+            y = np.full_like(x, -32)
+            z = eye[2] + grate_t * dz
+            column = (x + 128) % 16
+            usable = (column > 7.15) & (column < 8.85) & (z > 24) & (z < 94) & (direct >= 12)
+        # A ray to the right of x=16 hits the sill; one to its left clears it.
+        # Leave a margin for the light bias and for sprite pixel footprints.
+        x_at_sill = 16 + 0.5 * (x - 16) / (y - eye[1])
+        lit = x_at_sill < 15.985
+        dark = x_at_sill > 16.015
+        if case == "near-mount":
+            shadow_witnesses = {"near-mount sill onto floor": dark & (floor_t < wall_t),
+                                 "near-mount sill onto wall": dark & (floor_t > wall_t)}
+    elif case == "bars":
+        # The source MIDBARS1 patch has five opaque columns at 6..10 of
+        # each 16-texel repeat between its top and bottom rails. Ignore the
+        # outer texels of each bar, the rails, and pixels hidden from the eye.
+        at_grate = (-32 - eye[1]) / (y - eye[1])
+        camera_column = (at_grate * x + 128) % 16
+        beam_column = (16 + at_grate * (x - 16) + 128) % 16
+        camera_z = eye[2] + at_grate * (z - eye[2])
+        beam_z = eye[2] + 16 + at_grate * (z - eye[2] - 16)
+        usable &= ((camera_column < 3) | (camera_column > 13)) & (camera_z > 24) & (camera_z < 94)
+        usable &= (beam_z > 24) & (beam_z < 94)
+        dark = (beam_column > 7.15) & (beam_column < 8.85)
+        lit = (beam_column < 3) | (beam_column > 13)
+        shadow_witnesses["opaque bars onto floor"] = dark & (floor_t < wall_t)
+        lit_witnesses["open slots onto wall"] = lit & (floor_t > wall_t)
+    elif case == "offscreen":
         def cross_x(at_y):
             return 16 + (at_y - eye[1]) / (y - eye[1]) * (x - 16)
         # Exclude a margin along the projected silhouette.
         lit = (cross_x(-76) < 12.4) | (cross_x(-72) > 15.6)
         dark = (cross_x(-76) > 13.35) & (cross_x(-72) < 14.65)
-        special_witnesses = {"offscreen pillar onto floor": dark & (floor_t < wall_t),
+        shadow_witnesses = {"offscreen pillar onto floor": dark & (floor_t < wall_t),
                              "offscreen pillar onto wall": dark & (floor_t > wall_t)}
     else:
         front, back = ((edge - eye[1]) / (y - eye[1]) for edge in (-28, -20))
@@ -221,7 +314,7 @@ def measure(case, camera, door_z, unshadowed, shadowed, fill):
             # Both rays pass within the width of the door. Only its height
             # determines whether the beam can reach this visible floor.
             centre = (abs(front * x) < 22) & (abs(16 + front * (x - 16)) < 22)
-            special_witnesses["under the lintel"] = centre & dark & (floor_t < wall_t)
+            shadow_witnesses["under the lintel"] = centre & dark & (floor_t < wall_t)
     results = {}
     for label, region, matches in (("shadow", dark, restored_fill),
                                    ("lit", lit, retained_light)):
@@ -230,11 +323,12 @@ def measure(case, camera, door_z, unshadowed, shadowed, fill):
         results[label] = [correct, total]
         if label == "lit" or case != "opened":
             require(total >= 100 and correct >= total * .95, f"{case}: {label} {correct}/{total}")
-    for label, region in special_witnesses.items():
-        count = int(np.sum(usable & region))
-        correct = int(np.sum(usable & region & restored_fill))
-        require(count >= 100 and correct >= .95 * count, f"{case}: {label} {correct}/{count}")
-        results[label] = [correct, count]
+    for witnesses, matches in ((shadow_witnesses, restored_fill), (lit_witnesses, retained_light)):
+        for label, region in witnesses.items():
+            count = int(np.sum(usable & region))
+            correct = int(np.sum(usable & region & matches))
+            require(count >= 100 and correct >= .95 * count, f"{case}: {label} {correct}/{count}")
+            results[label] = [correct, count]
     return results
 
 
@@ -281,17 +375,18 @@ def main():
     build_flashlight(root)
     cases = args.case or CASES
     for case in cases:
-        off, camera, door_z = capture(exe, iwad, root, case, False, True, 0)
-        on, _, _ = capture(exe, iwad, root, case, True, True, 0)
-        fill, _, _ = capture(exe, iwad, root, case, True, False, 0)
-        results = measure(case, camera, door_z, off, on, fill)
+        for lighting in ((0, 1) if case == "near-mount-decor-pair" else (2,)):
+            off, camera, door_z = capture(exe, iwad, root, case, False, True, 0, sprite_lighting=lighting)
+            on, _, _ = capture(exe, iwad, root, case, True, True, 0, sprite_lighting=lighting)
+            fill, _, _ = capture(exe, iwad, root, case, True, False, 0, sprite_lighting=lighting)
+            results = measure(case, camera, door_z, off, on, fill)
+            print(f"{case}, ceiling {door_z:g}, sprite lighting {lighting}, {results}", flush=True)
         if case == "lifting":
             control, _, _ = capture(exe, iwad, root, case, False, False, 0)
             require(np.array_equal(control, fill), "Map shadows changed independent lighting with the torch off")
             for mode in (1, 2):
                 same, _, _ = capture(exe, iwad, root, case, True, True, mode)
                 require(np.array_equal(same, on), f"Map shadow changed with sprite shadow mode {mode}")
-        print(f"{case}, ceiling {door_z:g}, {results}", flush=True)
     if "lifting" in cases and "opened" in cases:
         verify_motion(exe, iwad, root)
 

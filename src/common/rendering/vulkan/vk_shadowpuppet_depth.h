@@ -10,7 +10,7 @@ class VulkanRenderDevice;
 class VkShadowPuppetDepth
 {
 public:
-	VkShadowPuppetDepth(VulkanRenderDevice* device, bool mapGeometry) : Fb(device), MapGeometry(mapGeometry) {}
+	explicit VkShadowPuppetDepth(VulkanRenderDevice* device) : Fb(device) {}
 	~VkShadowPuppetDepth();
 
 	// Triangle vertices and projection use Vulkan scene coordinates (X, Z, Y).
@@ -21,7 +21,6 @@ private:
 	bool CreateResources();
 
 	VulkanRenderDevice* Fb;
-	const bool MapGeometry;
 	VkTextureImage Depth;
 	std::unique_ptr<VulkanSampler> Sampler;
 	std::unique_ptr<VulkanRenderPass> Pass;

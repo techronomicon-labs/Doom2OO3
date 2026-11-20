@@ -5,6 +5,8 @@
 
 struct FDynamicLight;
 struct FRenderViewpoint;
+struct HWDrawInfo;
+struct sector_t;
 
 struct HWFlashlightPose
 {
@@ -34,3 +36,4 @@ const HWFlashlightPose* HWPresentedFlashlight(const FDynamicLight* light);
 DVector3 HWLightPosition(const FDynamicLight* light);
 DVector3 HWLightPositionRelative(const FDynamicLight* light, int portalGroup);
 DVector3 HWSpotDirection(const FDynamicLight* light);
+int HWFlashlightMapGroup(const HWDrawInfo* view, const FDynamicLight* light, int portalGroup, const sector_t* receiver);

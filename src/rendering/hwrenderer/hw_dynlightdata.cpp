@@ -39,6 +39,7 @@
 #include "hwrenderer/scene/hw_drawinfo.h"
 #include "hwrenderer/scene/hw_drawstructs.h"
 #include "g_levellocals.h"
+#include "p_trace.h"
 #include "quaternion.h"
 #include "r_utility.h"
 #include "types.h"
@@ -67,6 +68,7 @@ HWFlashlightView::HWFlashlightView(const FRenderViewpoint* view) : Previous(Curr
 		return;
 
 	const auto rotation = DQuaternion::FromAngles(view->Angles.Yaw, view->Angles.Pitch, view->Angles.Roll);
+	DVector3 lastMount, clippedOrigin;
 	for (auto* light = view->ViewLevel->lights; light; light = light->next)
 	{
 		const auto* beam = light->target.Get();
@@ -77,11 +79,12 @@ HWFlashlightView::HWFlashlightView(const FRenderViewpoint* view) : Previous(Curr
 		const auto& localDir = *reinterpret_cast<const DVector3*>(data + direction->Offset);
 		if (!(std::abs(localDir.LengthSquared() - 1.0) <= 1e-5)) continue;
 		const auto& localPos = *reinterpret_cast<const DVector3*>(data + offset->Offset);
-		const DVector3 origin = view->Pos + rotation * localPos;
-		if (!std::isfinite(origin.X) || !std::isfinite(origin.Y) || !std::isfinite(origin.Z) ||
-			view->ViewLevel->PointInRenderSubsector(origin)->sector->PortalGroup != light->Sector->PortalGroup)
-			continue;
-		Poses[Count++] = { light, origin, rotation * localDir };
+		if (Count == 0 || localPos != lastMount)
+		{
+			clippedOrigin = P_ClipFlashlightMount(view->Pos, view->sector, rotation * localPos);
+			lastMount = localPos;
+		}
+		Poses[Count++] = { light, clippedOrigin, rotation * localDir };
 		if (Count == Poses.size()) break;
 	}
 	if (Count) Current = this;
@@ -139,6 +142,17 @@ bool FDynamicLight::IsLocalFlashlight() const
 	return IsSpot() && actor && actor->IsKindOf(beamClass);
 }
 
+int HWFlashlightMapGroup(const HWDrawInfo* view, const FDynamicLight* light, int portalGroup, const sector_t* receiver)
+{
+	if (!view || !view->UsesFlashlightMapShadows() || !receiver || !light->IsLocalFlashlight() ||
+		light->target->master != view->Viewpoint.camera || !light->Sector || light->Sector->PortalGroup != portalGroup)
+		return 0;
+
+	const auto& groups = view->Level->levelMesh->sectorGroup;
+	const int group = groups[receiver->Index()];
+	return group == groups[light->Sector->Index()] ? group : 0;
+}
+
 bool FDynamicLight::IsStageBEmitter() const
 {
 	static const FName pointClass("SDVKStageBPointEmitter");
@@ -191,19 +205,30 @@ bool GetLight(FDynLightData& dld, int group, Plane & p, FDynamicLight * light, b
 		return false;
 	}
 
-	HWDrawInfo* mapShadowView = nullptr;
+	int mapGroup = HWFlashlightMapGroup(worldView, light, group, mapReceiver);
+	int mapShadowFlag = mapGroup ? LIGHTINFO_FLASHLIGHT_MAP_SHADOW : 0;
 	const bool emitter = light->IsStageBEmitter();
 	const bool neighboringFixture = emitter && emitterReceiver && emitterReceiver != light->Sector
 		&& !light->IsStageBDirectional() && (light->Level->flags3 & LEVEL3_STAGEBLAYOUT);
 	if (worldView && worldView->DrawingOpaqueMapShadows && mapReceiver && light->Sector->PortalGroup == group
+		&& !light->IsSpot() && !light->DontShadowmap()
 		&& (neighboringFixture || (gl_projectile_map_shadows && light->IsProjectileLight())))
 	{
 		// Portal links can put a light on a disconnected receiver even when both have portal group zero.
 		const auto& groups = worldView->Level->levelMesh->sectorGroup;
-		if (groups[mapReceiver->Index()] == groups[light->Sector->Index()]) mapShadowView = worldView;
+		if (groups[mapReceiver->Index()] == groups[light->Sector->Index()])
+		{
+			mapGroup = groups[mapReceiver->Index()];
+			mapShadowFlag = LIGHTINFO_POINT_MAP_SHADOW;
+		}
 	}
-	if (emitter && !StageBEmitterAllowed(dld, light, emitterReceiver, mapShadowView != nullptr)) return false;
-	AddLightToList(dld, group, light, radius, false, false, mapShadowView);
+	if (emitter && !StageBEmitterAllowed(dld, light, emitterReceiver, mapShadowFlag != 0)) return false;
+	AddLightToList(dld, group, light, radius, false, false, mapShadowFlag, mapGroup);
+	if (mapShadowFlag && SdvkDiagnostics::StateEnabled())
+	{
+		if (mapShadowFlag == LIGHTINFO_FLASHLIGHT_MAP_SHADOW) ++worldView->FlashlightMapShadowLinks;
+		else if (!emitter && light->GetProjectileLightScale() > 0) ++worldView->ProjectileMapShadowLinks;
+	}
 	return true;
 }
 
@@ -212,7 +237,8 @@ bool GetLight(FDynLightData& dld, int group, Plane & p, FDynamicLight * light, b
 // Add one dynamic light to the light data list
 //
 //==========================================================================
-void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, float radius, bool forceAttenuate, bool doTrace, HWDrawInfo* mapShadowView)
+void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, float radius, bool forceAttenuate, bool doTrace,
+	int mapShadowFlag, int mapGroup)
 {
 	FDynLightInfo info = {};
 	const bool emitter = light->IsStageBEmitter();
@@ -270,12 +296,10 @@ void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, float 
 		i = LIGHTARRAY_SUBTRACTIVE;
 	}
 
-	if (mapShadowView && !light->IsSpot() && !light->DontShadowmap() && cs > 0)
+	if (mapShadowFlag && cs > 0)
 	{
-		info.flags |= LIGHTINFO_POINT_MAP_SHADOW;
-		// A traced point light uses this slot for its connected map geometry group.
-		info.shadowIndex = mapShadowView->Level->levelMesh->sectorGroup[light->Sector->Index()];
-		if (!emitter && SdvkDiagnostics::StateEnabled()) ++mapShadowView->ProjectileMapShadowLinks;
+		info.flags |= mapShadowFlag;
+		info.shadowIndex = mapGroup;
 	}
 	else if ((light->shadowmapped || emitter) && screen->mShadowMap->Enabled())
 	{
@@ -308,7 +332,7 @@ void AddLightToList(FDynLightData &dld, int group, FDynamicLight * light, float 
 		info.spotDirZ = float(-direction.Y);
 	}
 
-	if (light->Trace() && doTrace && !(info.flags & LIGHTINFO_POINT_MAP_SHADOW))
+	if (light->Trace() && doTrace && !mapShadowFlag)
 	{
 		info.flags |= (LIGHTINFO_TRACE | LIGHTINFO_SHADOWMAPPED);
 	}

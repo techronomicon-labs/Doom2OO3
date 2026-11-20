@@ -1,6 +1,6 @@
 # Emitter lighting evaluation
 
-The Doom II emitter launcher starts in Entryway with fixture lighting enabled. Press **B** to compare the original sector lighting from the same spot. **F1** opens the emitter settings and comparison rooms. **L** toggles the flashlight, **J** cycles flashlight shadows through Off, Stencil and Depth, and **O** opens beam and shadow settings. **R** compares world relief and **V** compares sprite relief.
+The Doom II emitter launcher starts in Entryway with fixture lighting enabled. Press **B** to compare the original sector lighting from the same spot. **F1** opens the emitter settings and comparison rooms. **L** toggles the flashlight, **J** cycles its sprite shadows through Off, Stencil and Depth, and **O** opens beam and map-shadow settings. **R** compares world relief and **V** compares sprite relief.
 
 **Legacy ambient fill** controls room brightness from the original sector lighting, lightmaps, diffuse probe lighting, and map sunlight. **PBR ambient reflections** controls how strongly PBR materials reflect ambient light, including reflections from light probes where present. New campaign profiles start at **0.04 legacy fill** and **0.08 ambient reflections**. Both sliders range from 0 to 1. For an existing profile, choose **F1 → Dark campaign lighting** to apply these values and set emitter intensity to 1. Direct highlights from the flashlight and authored emitters respond to their own light settings.
 
@@ -12,7 +12,7 @@ The flashlight starts 16 map units forward and 12 below eye level, with a 4Â° 
 
 Open **Options → Projectile lighting** in Doom II or DBP50 to adjust light output from projectiles in flight and on impact. Plasma, rockets, and the BFG each have separate sliders. Other projectiles and bullet impacts have their own controls. **100%** is the authored intensity, **0%** removes the emitted light, and **1200%** is the maximum. The settings save to the active launcher profile.
 
-**Map geometry shadows** in that menu defaults to on. Fire a rocket at the side of an Entryway pillar and watch the floor behind it as you compare the two settings. Opaque walls, floors and ceilings block each projectile or impact light independently. The campaign launchers use this in the single-player Vulkan world view, including on GPUs without hardware ray tracing. Transformed portal views use their existing lighting. The flashlight has its own map-shadow switch under **O**.
+**Map geometry shadows** in that menu defaults to on. Fire a rocket at the side of an Entryway pillar and watch the floor behind it as you compare the two settings. Opaque walls, floors and ceilings block each projectile or impact light independently. The campaign launchers use this in the single-player Vulkan world view, including on GPUs without hardware ray tracing. Transformed portal views use their existing lighting. For the flashlight, use **O → Map geometry shadows**. Aim across the same pillar or through a barred opening and toggle the option to compare the beam on the floor beyond. [Flashlight shadow controls](SHADOW_PUPPETS.md)
 
 ## Edit a material
 
